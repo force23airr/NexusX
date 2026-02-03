@@ -1,0 +1,745 @@
+// ═══════════════════════════════════════════════════════════════
+// NexusX — Prisma Schema
+// packages/database/prisma/schema.prisma
+//
+// Complete data model for the AI Data & API Marketplace.
+// Covers: Users, Listings, Auction Engine state, Transactions,
+//         Settlements, API Keys, Wallets, Subscriptions, and
+//         AI Router query logs.
+// ═══════════════════════════════════════════════════════════════
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearch", "postgresqlExtensions"]
+  binaryTargets   = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgcrypto, pg_trgm]
+}
+
+// ─────────────────────────────────────────────────────────────
+// ENUMS
+// ─────────────────────────────────────────────────────────────
+
+enum UserRole {
+  PROVIDER
+  BUYER
+  ADMIN
+}
+
+enum KycStatus {
+  NONE
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum ListingStatus {
+  DRAFT
+  PENDING_REVIEW
+  ACTIVE
+  PAUSED
+  SUSPENDED
+  DEPRECATED
+}
+
+enum ListingType {
+  REST_API
+  GRAPHQL_API
+  WEBSOCKET
+  DATASET
+  MODEL_INFERENCE
+  COMPOSITE
+}
+
+enum DemandSignalType {
+  API_CALL
+  VIEW
+  WATCHLIST_ADD
+  SANDBOX_TEST
+  SUBSCRIPTION
+  UNSUBSCRIPTION
+  RATE_LIMITED
+}
+
+enum TransactionStatus {
+  PENDING
+  CONFIRMED
+  FAILED
+  REFUNDED
+  DISPUTED
+}
+
+enum SettlementStatus {
+  PENDING
+  BATCHED
+  SUBMITTED
+  CONFIRMED
+  FAILED
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+  EXPIRED
+}
+
+enum ApiKeyStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+enum PayoutStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  SUSPEND
+  ACTIVATE
+  PAYOUT
+  REFUND
+  PRICE_OVERRIDE
+}
+
+// ─────────────────────────────────────────────────────────────
+// USERS & AUTHENTICATION
+// ─────────────────────────────────────────────────────────────
+
+/// Core user account. A single user can be both a provider and buyer.
+model User {
+  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  externalId    String?   @unique @map("external_id")
+  email         String    @unique
+  displayName   String    @map("display_name")
+  avatarUrl     String?   @map("avatar_url")
+  roles         UserRole[]
+  kycStatus     KycStatus @default(NONE) @map("kyc_status")
+  isActive      Boolean   @default(true) @map("is_active")
+  metadata      Json?     @default("{}")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  wallet            Wallet?
+  providerProfile   ProviderProfile?
+  apiKeys           ApiKey[]
+  listings          Listing[]
+  transactions      Transaction[]       @relation("BuyerTransactions")
+  ratings           Rating[]
+  watchlistItems    WatchlistItem[]
+  subscriptions     Subscription[]
+  queryLogs         QueryLog[]
+  auditLogs         AuditLog[]          @relation("AuditActor")
+
+  @@index([email])
+  @@index([kycStatus])
+  @@map("users")
+}
+
+/// Extended profile for providers with payout and verification details.
+model ProviderProfile {
+  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId              String    @unique @map("user_id") @db.Uuid
+  companyName         String?   @map("company_name")
+  website             String?
+  description         String?
+  totalRevenue        Decimal   @default(0) @map("total_revenue") @db.Decimal(18, 6)
+  totalPayouts        Decimal   @default(0) @map("total_payouts") @db.Decimal(18, 6)
+  pendingBalance      Decimal   @default(0) @map("pending_balance") @db.Decimal(18, 6)
+  payoutAddress       String?   @map("payout_address")
+  autoPayoutEnabled   Boolean   @default(false) @map("auto_payout_enabled")
+  autoPayoutThreshold Decimal   @default(100) @map("auto_payout_threshold") @db.Decimal(18, 6)
+  createdAt           DateTime  @default(now()) @map("created_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  payouts Payout[]
+
+  @@index([payoutAddress])
+  @@map("provider_profiles")
+}
+
+// ─────────────────────────────────────────────────────────────
+// WALLETS (Coinbase Embedded Wallets on Base L2)
+// ─────────────────────────────────────────────────────────────
+
+/// Embedded USDC wallet linked to a user. One wallet per user.
+model Wallet {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId          String    @unique @map("user_id") @db.Uuid
+  address         String    @unique
+  chainId         Int       @default(8453) @map("chain_id")
+  balanceUsdc     Decimal   @default(0) @map("balance_usdc") @db.Decimal(18, 6)
+  escrowUsdc      Decimal   @default(0) @map("escrow_usdc") @db.Decimal(18, 6)
+  nonce           Int       @default(0)
+  lastSyncedAt    DateTime? @map("last_synced_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([address])
+  @@index([chainId])
+  @@map("wallets")
+}
+
+// ─────────────────────────────────────────────────────────────
+// CATEGORIES & LISTINGS
+// ─────────────────────────────────────────────────────────────
+
+/// Hierarchical category tree for marketplace taxonomy.
+model Category {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug        String    @unique
+  name        String
+  description String?
+  parentId    String?   @map("parent_id") @db.Uuid
+  depth       Int       @default(0)
+  sortOrder   Int       @default(0) @map("sort_order")
+  isActive    Boolean   @default(true) @map("is_active")
+  metadata    Json?     @default("{}")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryTree")
+  listings Listing[]
+
+  @@index([parentId])
+  @@index([slug])
+  @@map("categories")
+}
+
+/// A provider's API/data listing on the marketplace.
+/// This is the central entity — everything else references it.
+model Listing {
+  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  providerId        String        @map("provider_id") @db.Uuid
+  categoryId        String        @map("category_id") @db.Uuid
+  slug              String        @unique
+  name              String
+  description       String
+  listingType       ListingType   @map("listing_type")
+  status            ListingStatus @default(DRAFT)
+
+  // Endpoint configuration
+  baseUrl           String        @map("base_url")
+  healthCheckUrl    String?       @map("health_check_url")
+  docsUrl           String?       @map("docs_url")
+  sandboxUrl        String?       @map("sandbox_url")
+  authType          String        @default("api_key") @map("auth_type")
+
+  // Pricing (provider-configured bounds)
+  floorPriceUsdc    Decimal       @map("floor_price_usdc") @db.Decimal(18, 6)
+  ceilingPriceUsdc  Decimal?      @map("ceiling_price_usdc") @db.Decimal(18, 6)
+  currentPriceUsdc  Decimal       @map("current_price_usdc") @db.Decimal(18, 6)
+
+  // Capacity
+  capacityPerMinute Int           @default(60) @map("capacity_per_minute")
+  isUnique          Boolean       @default(false) @map("is_unique")
+
+  // Discovery metadata
+  tags              String[]      @default([])
+  sampleRequest     Json?         @map("sample_request")
+  sampleResponse    Json?         @map("sample_response")
+  schemaSpec        Json?         @map("schema_spec")
+
+  // Aggregate counters (denormalized for query performance)
+  totalCalls        BigInt        @default(0) @map("total_calls")
+  totalRevenue      Decimal       @default(0) @map("total_revenue") @db.Decimal(18, 6)
+  avgRating         Decimal       @default(0) @map("avg_rating") @db.Decimal(3, 2)
+  ratingCount       Int           @default(0) @map("rating_count")
+
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+  publishedAt       DateTime?     @map("published_at")
+  deprecatedAt      DateTime?     @map("deprecated_at")
+
+  // Relations
+  provider          User                @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  category          Category            @relation(fields: [categoryId], references: [id])
+  demandSignals     DemandSignal[]
+  demandSnapshots   DemandSnapshot[]
+  qualitySnapshots  QualitySnapshot[]
+  supplySnapshots   SupplySnapshot[]
+  priceSnapshots    PriceSnapshot[]
+  auctionResults    AuctionResult[]
+  transactions      Transaction[]
+  ratings           Rating[]
+  watchlistItems    WatchlistItem[]
+  subscriptions     Subscription[]
+  queryLogs         QueryLog[]
+  providerMetrics   ProviderMetricRaw[]
+
+  @@index([providerId])
+  @@index([categoryId])
+  @@index([status])
+  @@index([listingType])
+  @@index([currentPriceUsdc])
+  @@index([totalCalls])
+  @@index([avgRating])
+  @@index([tags], type: Gin)
+  @@index([createdAt])
+  @@map("listings")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AUCTION ENGINE — Demand Tracking
+// ─────────────────────────────────────────────────────────────
+
+/// Individual demand signal captured from the gateway.
+/// High-write table — partitioned by timestamp in production.
+model DemandSignal {
+  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId   String           @map("listing_id") @db.Uuid
+  buyerId     String?          @map("buyer_id") @db.Uuid
+  type        DemandSignalType
+  weight      Decimal          @db.Decimal(6, 3)
+  metadata    Json?            @default("{}")
+  capturedAt  DateTime         @default(now()) @map("captured_at")
+
+  // Relations
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, capturedAt])
+  @@index([listingId, type])
+  @@index([buyerId])
+  @@index([capturedAt])
+  @@map("demand_signals")
+}
+
+/// Point-in-time demand state snapshot for a listing.
+/// Written by the DemandTracker service every window cycle.
+model DemandSnapshot {
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId     String   @map("listing_id") @db.Uuid
+  score         Decimal  @db.Decimal(6, 2)
+  rawSignalSum  Decimal  @map("raw_signal_sum") @db.Decimal(12, 3)
+  uniqueBuyers  Int      @map("unique_buyers")
+  velocity      Decimal  @db.Decimal(8, 4)
+  windowMs      Int      @map("window_ms")
+  computedAt    DateTime @map("computed_at")
+
+  // Relations
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, computedAt])
+  @@index([computedAt])
+  @@map("demand_snapshots")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AUCTION ENGINE — Quality Scoring
+// ─────────────────────────────────────────────────────────────
+
+/// Raw provider metrics ingested from the gateway health checks.
+/// Feeds into the QualityScorer service.
+model ProviderMetricRaw {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId       String   @map("listing_id") @db.Uuid
+  successCount    Int      @map("success_count")
+  failureCount    Int      @map("failure_count")
+  medianLatencyMs Decimal  @map("median_latency_ms") @db.Decimal(10, 2)
+  p99LatencyMs    Decimal  @map("p99_latency_ms") @db.Decimal(10, 2)
+  uptimeMinutes   Int      @map("uptime_minutes")
+  totalMinutes    Int      @map("total_minutes")
+  periodStart     DateTime @map("period_start")
+  periodEnd       DateTime @map("period_end")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  // Relations
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, periodEnd])
+  @@index([periodEnd])
+  @@map("provider_metrics_raw")
+}
+
+/// Computed quality snapshot for a listing.
+/// Written by the QualityScorer service.
+model QualitySnapshot {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId        String   @map("listing_id") @db.Uuid
+  uptimePercent    Decimal  @map("uptime_percent") @db.Decimal(6, 3)
+  medianLatencyMs  Decimal  @map("median_latency_ms") @db.Decimal(10, 2)
+  p99LatencyMs     Decimal  @map("p99_latency_ms") @db.Decimal(10, 2)
+  errorRatePercent Decimal  @map("error_rate_percent") @db.Decimal(6, 3)
+  averageRating    Decimal  @map("average_rating") @db.Decimal(3, 2)
+  ratingCount      Int      @map("rating_count")
+  compositeScore   Decimal  @map("composite_score") @db.Decimal(6, 2)
+  computedAt       DateTime @map("computed_at")
+
+  // Relations
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, computedAt])
+  @@index([compositeScore])
+  @@map("quality_snapshots")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AUCTION ENGINE — Supply & Scarcity
+// ─────────────────────────────────────────────────────────────
+
+/// Point-in-time supply state for a listing.
+/// Written by the scarcity computation job.
+model SupplySnapshot {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId         String   @map("listing_id") @db.Uuid
+  categoryId        String   @map("category_id") @db.Uuid
+  competitorCount   Int      @map("competitor_count")
+  isUnique          Boolean  @map("is_unique")
+  capacityPerMinute Int      @map("capacity_per_minute")
+  utilizationPct    Decimal  @map("utilization_pct") @db.Decimal(6, 2)
+  computedAt        DateTime @map("computed_at")
+
+  // Relations
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, computedAt])
+  @@index([categoryId, computedAt])
+  @@map("supply_snapshots")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AUCTION ENGINE — Price State & Results
+// ─────────────────────────────────────────────────────────────
+
+/// Historical price snapshot for a listing.
+/// Captures the full multiplier breakdown for audit transparency.
+model PriceSnapshot {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId          String   @map("listing_id") @db.Uuid
+  floorPrice         Decimal  @map("floor_price") @db.Decimal(18, 6)
+  ceilingPrice       Decimal? @map("ceiling_price") @db.Decimal(18, 6)
+  currentPrice       Decimal  @map("current_price") @db.Decimal(18, 6)
+  previousPrice      Decimal  @map("previous_price") @db.Decimal(18, 6)
+  priceChangePct     Decimal  @map("price_change_pct") @db.Decimal(8, 4)
+  demandMultiplier   Decimal  @map("demand_multiplier") @db.Decimal(8, 4)
+  scarcityMultiplier Decimal  @map("scarcity_multiplier") @db.Decimal(8, 4)
+  qualityMultiplier  Decimal  @map("quality_multiplier") @db.Decimal(8, 4)
+  momentumMultiplier Decimal  @map("momentum_multiplier") @db.Decimal(8, 4)
+  temporalMultiplier Decimal  @map("temporal_multiplier") @db.Decimal(8, 4)
+  combinedMultiplier Decimal  @map("combined_multiplier") @db.Decimal(8, 4)
+  windowsAtFloor     Int      @default(0) @map("windows_at_floor")
+  windowsAtCeiling   Int      @default(0) @map("windows_at_ceiling")
+  computedAt         DateTime @map("computed_at")
+
+  // Relations
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, computedAt])
+  @@index([computedAt])
+  @@map("price_snapshots")
+}
+
+/// Complete auction result record.
+/// One row per pricing engine computation cycle per listing.
+model AuctionResult {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId      String   @map("listing_id") @db.Uuid
+  price          Decimal  @db.Decimal(18, 6)
+  floorPrice     Decimal  @map("floor_price") @db.Decimal(18, 6)
+  multipliers    Json
+  inputs         Json
+  computeTimeUs  Int      @map("compute_time_us")
+  computedAt     DateTime @map("computed_at")
+
+  // Relations
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, computedAt])
+  @@index([computedAt])
+  @@map("auction_results")
+}
+
+// ─────────────────────────────────────────────────────────────
+// TRANSACTIONS & SETTLEMENT
+// ─────────────────────────────────────────────────────────────
+
+/// Individual API call transaction billed to a buyer.
+/// Maps 1:1 to a gateway request that was priced and charged.
+model Transaction {
+  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId          String            @map("listing_id") @db.Uuid
+  buyerId            String            @map("buyer_id") @db.Uuid
+  status             TransactionStatus @default(PENDING)
+
+  // Pricing at time of call
+  priceUsdc          Decimal           @map("price_usdc") @db.Decimal(18, 6)
+  platformFeeUsdc    Decimal           @map("platform_fee_usdc") @db.Decimal(18, 6)
+  providerAmountUsdc Decimal           @map("provider_amount_usdc") @db.Decimal(18, 6)
+  feeRateApplied     Decimal           @map("fee_rate_applied") @db.Decimal(6, 4)
+
+  // Gateway metadata
+  requestId          String            @unique @map("request_id")
+  responseTimeMs     Int?              @map("response_time_ms")
+  httpStatus         Int?              @map("http_status")
+  bytesTransferred   Int?              @map("bytes_transferred")
+
+  // Settlement reference
+  settlementId       String?           @map("settlement_id") @db.Uuid
+  settledAt          DateTime?         @map("settled_at")
+
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+
+  // Relations
+  listing    Listing     @relation(fields: [listingId], references: [id])
+  buyer      User        @relation("BuyerTransactions", fields: [buyerId], references: [id])
+  settlement Settlement? @relation(fields: [settlementId], references: [id])
+
+  @@index([listingId, createdAt])
+  @@index([buyerId, createdAt])
+  @@index([settlementId])
+  @@index([status])
+  @@index([requestId])
+  @@index([createdAt])
+  @@map("transactions")
+}
+
+/// Batch settlement of transactions on Base L2.
+/// Transactions are grouped into settlements for gas efficiency.
+model Settlement {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  status           SettlementStatus @default(PENDING)
+  totalUsdc        Decimal          @map("total_usdc") @db.Decimal(18, 6)
+  platformFeeUsdc  Decimal          @map("platform_fee_usdc") @db.Decimal(18, 6)
+  providerPayUsdc  Decimal          @map("provider_pay_usdc") @db.Decimal(18, 6)
+  transactionCount Int              @map("transaction_count")
+
+  // On-chain reference
+  txHash           String?          @unique @map("tx_hash")
+  blockNumber      BigInt?          @map("block_number")
+  chainId          Int              @default(8453) @map("chain_id")
+  gasUsed          BigInt?          @map("gas_used")
+  gasCostUsdc      Decimal?         @map("gas_cost_usdc") @db.Decimal(18, 6)
+
+  batchedAt        DateTime         @default(now()) @map("batched_at")
+  submittedAt      DateTime?        @map("submitted_at")
+  confirmedAt      DateTime?        @map("confirmed_at")
+  failedAt         DateTime?        @map("failed_at")
+  failureReason    String?          @map("failure_reason")
+
+  // Relations
+  transactions Transaction[]
+
+  @@index([status])
+  @@index([txHash])
+  @@index([batchedAt])
+  @@map("settlements")
+}
+
+/// Provider payout record — funds moved from platform to provider wallet.
+model Payout {
+  id              String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  providerId      String       @map("provider_id") @db.Uuid
+  status          PayoutStatus @default(PENDING)
+  amountUsdc      Decimal      @map("amount_usdc") @db.Decimal(18, 6)
+  destinationAddr String       @map("destination_addr")
+  txHash          String?      @unique @map("tx_hash")
+  chainId         Int          @default(8453) @map("chain_id")
+  initiatedAt     DateTime     @default(now()) @map("initiated_at")
+  completedAt     DateTime?    @map("completed_at")
+  failedAt        DateTime?    @map("failed_at")
+  failureReason   String?      @map("failure_reason")
+
+  // Relations
+  provider ProviderProfile @relation(fields: [providerId], references: [id])
+
+  @@index([providerId, initiatedAt])
+  @@index([status])
+  @@index([txHash])
+  @@map("payouts")
+}
+
+// ─────────────────────────────────────────────────────────────
+// API KEYS & ACCESS
+// ─────────────────────────────────────────────────────────────
+
+/// Buyer API key for gateway authentication.
+/// Supports multiple keys per user for different environments.
+model ApiKey {
+  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId        String       @map("user_id") @db.Uuid
+  name          String
+  keyHash       String       @unique @map("key_hash")
+  keyPrefix     String       @map("key_prefix") @db.VarChar(8)
+  status        ApiKeyStatus @default(ACTIVE)
+  rateLimitRpm  Int          @default(60) @map("rate_limit_rpm")
+  allowedIps    String[]     @default([]) @map("allowed_ips")
+  lastUsedAt    DateTime?    @map("last_used_at")
+  expiresAt     DateTime?    @map("expires_at")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  revokedAt     DateTime?    @map("revoked_at")
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([keyHash])
+  @@index([keyPrefix])
+  @@index([userId])
+  @@index([status])
+  @@map("api_keys")
+}
+
+// ─────────────────────────────────────────────────────────────
+// SUBSCRIPTIONS & WATCHLISTS
+// ─────────────────────────────────────────────────────────────
+
+/// Buyer subscription to a listing — enables recurring access.
+model Subscription {
+  id                 String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyerId            String             @map("buyer_id") @db.Uuid
+  listingId          String             @map("listing_id") @db.Uuid
+  status             SubscriptionStatus @default(ACTIVE)
+  monthlyBudgetUsdc  Decimal?           @map("monthly_budget_usdc") @db.Decimal(18, 6)
+  spentThisMonthUsdc Decimal            @default(0) @map("spent_this_month_usdc") @db.Decimal(18, 6)
+  totalSpentUsdc     Decimal            @default(0) @map("total_spent_usdc") @db.Decimal(18, 6)
+  totalCalls         BigInt             @default(0) @map("total_calls")
+  startedAt          DateTime           @default(now()) @map("started_at")
+  pausedAt           DateTime?          @map("paused_at")
+  cancelledAt        DateTime?          @map("cancelled_at")
+  expiresAt          DateTime?          @map("expires_at")
+  updatedAt          DateTime           @updatedAt @map("updated_at")
+
+  // Relations
+  buyer   User    @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id])
+
+  @@unique([buyerId, listingId])
+  @@index([buyerId])
+  @@index([listingId])
+  @@index([status])
+  @@map("subscriptions")
+}
+
+/// Buyer's watchlist entry for a listing.
+/// Generates WATCHLIST_ADD demand signals.
+model WatchlistItem {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyerId   String   @map("buyer_id") @db.Uuid
+  listingId String   @map("listing_id") @db.Uuid
+  alertOnPriceDrop Boolean @default(false) @map("alert_on_price_drop")
+  alertThreshold   Decimal? @map("alert_threshold") @db.Decimal(18, 6)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  buyer   User    @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+
+  @@unique([buyerId, listingId])
+  @@index([buyerId])
+  @@index([listingId])
+  @@map("watchlist_items")
+}
+
+// ─────────────────────────────────────────────────────────────
+// RATINGS & REVIEWS
+// ─────────────────────────────────────────────────────────────
+
+/// Buyer rating/review of a listing.
+/// Feeds into QualityScorer's Bayesian-adjusted rating.
+model Rating {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId String   @map("listing_id") @db.Uuid
+  buyerId   String   @map("buyer_id") @db.Uuid
+  score     Int      @db.SmallInt
+  title     String?
+  body      String?
+  isPublic  Boolean  @default(true) @map("is_public")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Relations
+  listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  buyer   User    @relation(fields: [buyerId], references: [id], onDelete: Cascade)
+
+  @@unique([listingId, buyerId])
+  @@index([listingId])
+  @@index([buyerId])
+  @@index([score])
+  @@map("ratings")
+}
+
+// ─────────────────────────────────────────────────────────────
+// AI ROUTER — Query Logs
+// ─────────────────────────────────────────────────────────────
+
+/// Logs every AI Router query and the matched listing.
+/// Used for routing quality improvement and analytics.
+model QueryLog {
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyerId          String   @map("buyer_id") @db.Uuid
+  rawQuery         String   @map("raw_query")
+  normalizedQuery  String?  @map("normalized_query")
+  intentClassified String?  @map("intent_classified")
+  matchedListingId String?  @map("matched_listing_id") @db.Uuid
+  confidenceScore  Decimal? @map("confidence_score") @db.Decimal(5, 4)
+  alternativeIds   String[] @default([]) @map("alternative_ids")
+  routeTimeMs      Int?     @map("route_time_ms")
+  wasAccepted      Boolean? @map("was_accepted")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  // Relations
+  buyer          User     @relation(fields: [buyerId], references: [id])
+  matchedListing Listing? @relation(fields: [matchedListingId], references: [id])
+
+  @@index([buyerId, createdAt])
+  @@index([matchedListingId])
+  @@index([intentClassified])
+  @@index([createdAt])
+  @@map("query_logs")
+}
+
+// ─────────────────────────────────────────────────────────────
+// PLATFORM CONFIGURATION & AUDIT
+// ─────────────────────────────────────────────────────────────
+
+/// Global platform configuration — singleton-ish key-value store.
+/// Used for runtime feature flags and pricing config overrides.
+model PlatformConfig {
+  key       String   @id
+  value     Json
+  updatedBy String?  @map("updated_by") @db.Uuid
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("platform_config")
+}
+
+/// Immutable audit log for all critical platform actions.
+model AuditLog {
+  id         String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorId    String      @map("actor_id") @db.Uuid
+  action     AuditAction
+  entityType String      @map("entity_type")
+  entityId   String      @map("entity_id") @db.Uuid
+  before     Json?
+  after      Json?
+  ipAddress  String?     @map("ip_address")
+  userAgent  String?     @map("user_agent")
+  createdAt  DateTime    @default(now()) @map("created_at")
+
+  // Relations
+  actor User @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("audit_logs")
+}

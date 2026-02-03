@@ -1,0 +1,34 @@
+{
+  "name": "nexusx",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NexusX — AI Data & API Marketplace with auction-based pricing and USDC settlement on Base L2",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "type-check": "npm run type-check --workspaces --if-present",
+    "format": "prettier --write \"**/*.{ts,tsx,json,md}\"",
+    "db:generate": "npm run generate --workspace=@nexusx/database",
+    "db:migrate": "npm run migrate:dev --workspace=@nexusx/database",
+    "db:migrate:deploy": "npm run migrate:deploy --workspace=@nexusx/database",
+    "db:seed": "npm run seed --workspace=@nexusx/database",
+    "db:reset": "npm run reset --workspace=@nexusx/database",
+    "db:studio": "npm run studio --workspace=@nexusx/database",
+    "setup": "bash infrastructure/scripts/dev-setup.sh",
+    "docker:up": "docker compose -f infrastructure/docker/docker-compose.yml up -d",
+    "docker:down": "docker compose -f infrastructure/docker/docker-compose.yml down",
+    "docker:logs": "docker compose -f infrastructure/docker/docker-compose.yml logs -f",
+    "smoke:staging": "bash infrastructure/scripts/smoke-test.sh staging",
+    "smoke:production": "bash infrastructure/scripts/smoke-test.sh production"
+  },
+  "engines": {
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
+  }
+}

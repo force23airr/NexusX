@@ -1,0 +1,164 @@
+# ═══════════════════════════════════════════════════════════════
+# NexusX — Docker Compose (Local Development)
+# infrastructure/docker/docker-compose.yml
+#
+# Full local stack:
+#   - PostgreSQL 16
+#   - Redis 7
+#   - API Gateway (:3100)
+#   - Auction Engine (:3200)
+#   - AI Router (:3300)
+#   - Web Dashboard (:3000)
+#   - Prisma Studio (:5555)
+# ═══════════════════════════════════════════════════════════════
+
+version: "3.9"
+
+services:
+  # ─── Infrastructure ───
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: nexusx-postgres
+    environment:
+      POSTGRES_USER: nexusx
+      POSTGRES_PASSWORD: nexusx_local
+      POSTGRES_DB: nexusx_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexusx"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexusx
+
+  redis:
+    image: redis:7-alpine
+    container_name: nexusx-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - nexusx
+
+  # ─── Application Services ───
+
+  gateway:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.gateway
+    container_name: nexusx-gateway
+    ports:
+      - "3100:3100"
+    environment:
+      NODE_ENV: development
+      PORT: 3100
+      DATABASE_URL: postgresql://nexusx:nexusx_local@postgres:5432/nexusx_dev
+      REDIS_URL: redis://redis:6379
+      AUCTION_ENGINE_URL: http://auction-engine:3200
+      AI_ROUTER_URL: http://ai-router:3300
+      PLATFORM_FEE_RATE: "0.12"
+      SANDBOX_ENABLED: "true"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3100/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - nexusx
+
+  auction-engine:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.auction-engine
+    container_name: nexusx-auction
+    ports:
+      - "3200:3200"
+    environment:
+      NODE_ENV: development
+      PORT: 3200
+      DATABASE_URL: postgresql://nexusx:nexusx_local@postgres:5432/nexusx_dev
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - nexusx
+
+  ai-router:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.ai-router
+    container_name: nexusx-router
+    ports:
+      - "3300:3300"
+    environment:
+      NODE_ENV: development
+      PORT: 3300
+      DATABASE_URL: postgresql://nexusx:nexusx_local@postgres:5432/nexusx_dev
+      REDIS_URL: redis://redis:6379
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      CLASSIFIER_MODE: rule_based
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - nexusx
+
+  web:
+    build:
+      context: ../..
+      dockerfile: infrastructure/docker/Dockerfile.web
+    container_name: nexusx-web
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3100
+    depends_on:
+      - gateway
+    networks:
+      - nexusx
+
+  # ─── Dev Utilities ───
+
+  prisma-studio:
+    image: node:20-slim
+    container_name: nexusx-studio
+    working_dir: /app
+    command: npx prisma studio --port 5555 --browser none
+    ports:
+      - "5555:5555"
+    environment:
+      DATABASE_URL: postgresql://nexusx:nexusx_local@postgres:5432/nexusx_dev
+    volumes:
+      - ../../packages/database:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - nexusx
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  nexusx:
+    driver: bridge

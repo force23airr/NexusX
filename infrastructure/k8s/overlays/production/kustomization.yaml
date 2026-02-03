@@ -1,0 +1,82 @@
+# ═══════════════════════════════════════════════════════════════
+# NexusX — Production Overlay
+# infrastructure/k8s/overlays/production/kustomization.yaml
+# ═══════════════════════════════════════════════════════════════
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: nexusx-prod
+
+resources:
+  - ../../base
+
+namePrefix: prod-
+
+patches:
+  # ─── Production replica counts ───
+  - target:
+      kind: Deployment
+      name: gateway
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 3
+  - target:
+      kind: Deployment
+      name: auction-engine
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  - target:
+      kind: Deployment
+      name: ai-router
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 2
+  - target:
+      kind: Deployment
+      name: web
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 2
+
+  # ─── Production resource limits ───
+  - target:
+      kind: Deployment
+      name: gateway
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/resources
+        value:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: "2"
+            memory: 1Gi
+
+configMapGenerator:
+  - name: nexusx-config
+    behavior: merge
+    literals:
+      - SANDBOX_ENABLED=false
+      - LOG_LEVEL=warn
+      - CLASSIFIER_MODE=llm
+
+images:
+  - name: nexusx/gateway
+    newName: ghcr.io/nexusx/gateway
+    newTag: latest
+  - name: nexusx/auction-engine
+    newName: ghcr.io/nexusx/auction-engine
+    newTag: latest
+  - name: nexusx/ai-router
+    newName: ghcr.io/nexusx/ai-router
+    newTag: latest
+  - name: nexusx/web
+    newName: ghcr.io/nexusx/web
+    newTag: latest

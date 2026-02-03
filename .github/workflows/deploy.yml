@@ -1,0 +1,184 @@
+# ═══════════════════════════════════════════════════════════════
+# NexusX — CD Pipeline
+# .github/workflows/deploy.yml
+#
+# Triggered on push to main (after CI passes):
+#   1. Build & push Docker images to GHCR
+#   2. Deploy to staging (automatic)
+#   3. Run smoke tests on staging
+#   4. Deploy to production (manual approval)
+# ═══════════════════════════════════════════════════════════════
+
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Deploy target"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - staging
+          - production
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ghcr.io/${{ github.repository_owner }}/nexusx
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+jobs:
+  # ─────────────────────────────────────────────────────────
+  # Build & Push Images
+  # ─────────────────────────────────────────────────────────
+  build-images:
+    name: Build & Push
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        service: [gateway, auction-engine, ai-router, web]
+
+    outputs:
+      image-tag: ${{ steps.meta.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE_PREFIX }}/${{ matrix.service }}
+          tags: |
+            type=sha,prefix=
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value={{date 'YYYYMMDD-HHmmss'}}
+
+      - name: Build & push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: infrastructure/docker/Dockerfile.${{ matrix.service }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+
+  # ─────────────────────────────────────────────────────────
+  # Deploy to Staging
+  # ─────────────────────────────────────────────────────────
+  deploy-staging:
+    name: Deploy → Staging
+    needs: build-images
+    runs-on: ubuntu-latest
+    environment: staging
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Set kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG_STAGING }}" | base64 -d > $HOME/.kube/config
+
+      - name: Update image tags
+        run: |
+          cd infrastructure/k8s/overlays/staging
+          kustomize edit set image \
+            nexusx/gateway=${{ env.IMAGE_PREFIX }}/gateway:${{ github.sha }} \
+            nexusx/auction-engine=${{ env.IMAGE_PREFIX }}/auction-engine:${{ github.sha }} \
+            nexusx/ai-router=${{ env.IMAGE_PREFIX }}/ai-router:${{ github.sha }} \
+            nexusx/web=${{ env.IMAGE_PREFIX }}/web:${{ github.sha }}
+
+      - name: Apply to staging
+        run: |
+          kubectl apply -k infrastructure/k8s/overlays/staging
+          kubectl rollout status deployment/gateway -n nexusx-staging --timeout=300s
+          kubectl rollout status deployment/auction-engine -n nexusx-staging --timeout=300s
+          kubectl rollout status deployment/ai-router -n nexusx-staging --timeout=300s
+          kubectl rollout status deployment/web -n nexusx-staging --timeout=300s
+
+      - name: Smoke tests
+        run: |
+          bash infrastructure/scripts/smoke-test.sh staging
+        env:
+          STAGING_URL: ${{ secrets.STAGING_URL }}
+
+  # ─────────────────────────────────────────────────────────
+  # Deploy to Production (Manual Gate)
+  # ─────────────────────────────────────────────────────────
+  deploy-production:
+    name: Deploy → Production
+    needs: deploy-staging
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure kubectl
+        uses: azure/setup-kubectl@v3
+
+      - name: Set kubeconfig
+        run: |
+          mkdir -p $HOME/.kube
+          echo "${{ secrets.KUBE_CONFIG_PRODUCTION }}" | base64 -d > $HOME/.kube/config
+
+      - name: Update image tags
+        run: |
+          cd infrastructure/k8s/overlays/production
+          kustomize edit set image \
+            nexusx/gateway=${{ env.IMAGE_PREFIX }}/gateway:${{ github.sha }} \
+            nexusx/auction-engine=${{ env.IMAGE_PREFIX }}/auction-engine:${{ github.sha }} \
+            nexusx/ai-router=${{ env.IMAGE_PREFIX }}/ai-router:${{ github.sha }} \
+            nexusx/web=${{ env.IMAGE_PREFIX }}/web:${{ github.sha }}
+
+      - name: Apply to production
+        run: |
+          kubectl apply -k infrastructure/k8s/overlays/production
+          kubectl rollout status deployment/gateway -n nexusx-prod --timeout=600s
+          kubectl rollout status deployment/auction-engine -n nexusx-prod --timeout=600s
+          kubectl rollout status deployment/ai-router -n nexusx-prod --timeout=600s
+          kubectl rollout status deployment/web -n nexusx-prod --timeout=600s
+
+      - name: Post-deploy smoke tests
+        run: |
+          bash infrastructure/scripts/smoke-test.sh production
+        env:
+          PRODUCTION_URL: ${{ secrets.PRODUCTION_URL }}
+
+      - name: Notify deployment
+        if: success()
+        run: |
+          echo "🚀 NexusX deployed to production"
+          echo "   Commit: ${{ github.sha }}"
+          echo "   Time: $(date -u)"

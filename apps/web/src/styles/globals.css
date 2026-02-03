@@ -1,0 +1,97 @@
+/* ═══════════════════════════════════════════════════════════════
+   NexusX — Global Styles
+   apps/web/src/app/globals.css
+   ═══════════════════════════════════════════════════════════════ */
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    @apply border-surface-4;
+  }
+
+  html {
+    color-scheme: dark;
+    scroll-behavior: smooth;
+  }
+
+  ::selection {
+    @apply bg-brand-600/40 text-white;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-surface-5 rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-zinc-600;
+  }
+}
+
+@layer components {
+  /* Card surface */
+  .card {
+    @apply bg-surface-2 border border-surface-4 rounded-xl;
+  }
+
+  /* Stat card with subtle glow */
+  .stat-card {
+    @apply card px-5 py-4 relative overflow-hidden;
+  }
+  .stat-card::before {
+    content: "";
+    @apply absolute inset-0 bg-gradient-to-br from-brand-500/5 to-transparent pointer-events-none;
+  }
+
+  /* Glass effect */
+  .glass {
+    @apply bg-surface-1/80 backdrop-blur-xl border border-white/5;
+  }
+
+  /* Price flash animations */
+  .price-up {
+    @apply animate-price-up;
+  }
+  .price-down {
+    @apply animate-price-down;
+  }
+
+  /* Input base */
+  .input-base {
+    @apply bg-surface-1 border border-surface-4 rounded-lg px-3 py-2
+           text-sm text-zinc-100 placeholder-zinc-500
+           focus:outline-none focus:ring-1 focus:ring-brand-500/50 focus:border-brand-600
+           transition-colors duration-150;
+  }
+
+  /* Button variants */
+  .btn-primary {
+    @apply bg-brand-600 hover:bg-brand-500 text-white
+           px-4 py-2 rounded-lg text-sm font-medium
+           transition-all duration-150 active:scale-[0.98];
+  }
+  .btn-secondary {
+    @apply bg-surface-3 hover:bg-surface-4 text-zinc-200
+           px-4 py-2 rounded-lg text-sm font-medium
+           transition-all duration-150 active:scale-[0.98];
+  }
+  .btn-ghost {
+    @apply hover:bg-surface-3 text-zinc-400 hover:text-zinc-200
+           px-3 py-1.5 rounded-lg text-sm
+           transition-all duration-150;
+  }
+
+  /* Badge */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded-md text-2xs font-medium;
+  }
+}

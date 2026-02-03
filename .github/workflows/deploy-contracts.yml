@@ -1,0 +1,132 @@
+# ═══════════════════════════════════════════════════════════════
+# NexusX — Contract Deployment Workflow
+# .github/workflows/deploy-contracts.yml
+#
+# Manual trigger for deploying/upgrading settlement contracts:
+#   1. Build & test contracts
+#   2. Deploy to selected network (Base Sepolia / Base Mainnet)
+#   3. Verify on Basescan
+#   4. Record deployment artifacts
+# ═══════════════════════════════════════════════════════════════
+
+name: Deploy Contracts
+
+on:
+  workflow_dispatch:
+    inputs:
+      network:
+        description: "Target network"
+        required: true
+        default: "base-sepolia"
+        type: choice
+        options:
+          - base-sepolia
+          - base-mainnet
+      usdc_address:
+        description: "USDC contract address (leave empty for default)"
+        required: false
+        type: string
+
+concurrency:
+  group: contracts-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to ${{ inputs.network }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.network == 'base-mainnet' && 'production' || 'staging' }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Foundry
+        uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: nightly
+
+      - name: Install dependencies
+        run: forge install
+        working-directory: apps/settlement
+
+      - name: Build contracts
+        run: forge build
+        working-directory: apps/settlement
+
+      - name: Run tests (pre-deploy verification)
+        run: forge test -vvv
+        working-directory: apps/settlement
+
+      - name: Set RPC URL
+        id: rpc
+        run: |
+          if [ "${{ inputs.network }}" = "base-mainnet" ]; then
+            echo "rpc_url=${{ secrets.BASE_MAINNET_RPC_URL }}" >> "$GITHUB_OUTPUT"
+            echo "chain_id=8453" >> "$GITHUB_OUTPUT"
+            echo "etherscan_url=https://api.basescan.org/api" >> "$GITHUB_OUTPUT"
+            echo "usdc=${{ inputs.usdc_address || '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "rpc_url=${{ secrets.BASE_SEPOLIA_RPC_URL }}" >> "$GITHUB_OUTPUT"
+            echo "chain_id=84532" >> "$GITHUB_OUTPUT"
+            echo "etherscan_url=https://api-sepolia.basescan.org/api" >> "$GITHUB_OUTPUT"
+            echo "usdc=${{ inputs.usdc_address || '0x036CbD53842c5426634e7929541eC2318f3dCF7e' }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Deploy NexusXSettlement
+        run: |
+          forge script scripts/Deploy.s.sol:DeployNexusX \
+            --rpc-url ${{ steps.rpc.outputs.rpc_url }} \
+            --private-key ${{ secrets.DEPLOYER_PRIVATE_KEY }} \
+            --broadcast \
+            --verify \
+            --etherscan-api-key ${{ secrets.BASESCAN_API_KEY }} \
+            -vvvv
+        working-directory: apps/settlement
+        env:
+          USDC_ADDRESS: ${{ steps.rpc.outputs.usdc }}
+
+      - name: Extract deployment address
+        id: deployed
+        run: |
+          ADDR=$(cat apps/settlement/broadcast/Deploy.s.sol/${{ steps.rpc.outputs.chain_id }}/run-latest.json \
+            | jq -r '.transactions[0].contractAddress')
+          echo "address=$ADDR" >> "$GITHUB_OUTPUT"
+          echo "🔗 NexusXSettlement deployed at: $ADDR"
+
+      - name: Save deployment artifact
+        run: |
+          mkdir -p deployments/${{ inputs.network }}
+          cat > deployments/${{ inputs.network }}/settlement.json << EOF
+          {
+            "network": "${{ inputs.network }}",
+            "chainId": ${{ steps.rpc.outputs.chain_id }},
+            "address": "${{ steps.deployed.outputs.address }}",
+            "usdcAddress": "${{ steps.rpc.outputs.usdc }}",
+            "deployer": "${{ secrets.DEPLOYER_ADDRESS }}",
+            "txHash": "$(cat apps/settlement/broadcast/Deploy.s.sol/${{ steps.rpc.outputs.chain_id }}/run-latest.json | jq -r '.transactions[0].hash')",
+            "blockNumber": $(cat apps/settlement/broadcast/Deploy.s.sol/${{ steps.rpc.outputs.chain_id }}/run-latest.json | jq '.receipts[0].blockNumber'),
+            "deployedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "gitSha": "${{ github.sha }}"
+          }
+          EOF
+
+      - name: Upload deployment artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-${{ inputs.network }}-${{ github.sha }}
+          path: deployments/
+          retention-days: 90
+
+      - name: Summary
+        run: |
+          echo "## 🚀 Contract Deployment" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Field | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          echo "| Network | ${{ inputs.network }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Chain ID | ${{ steps.rpc.outputs.chain_id }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Address | \`${{ steps.deployed.outputs.address }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| USDC | \`${{ steps.rpc.outputs.usdc }}\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| Git SHA | \`${{ github.sha }}\` |" >> $GITHUB_STEP_SUMMARY

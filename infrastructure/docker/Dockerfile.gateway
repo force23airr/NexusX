@@ -1,0 +1,73 @@
+# ═══════════════════════════════════════════════════════════════
+# NexusX — Gateway Dockerfile
+# infrastructure/docker/Dockerfile.gateway
+#
+# Multi-stage build:
+#   1. deps    — Install production + dev dependencies
+#   2. build   — Compile TypeScript, generate Prisma client
+#   3. runtime — Slim Node.js image with only production deps
+# ═══════════════════════════════════════════════════════════════
+
+# ─── Stage 1: Dependencies ───
+FROM node:20-slim AS deps
+WORKDIR /app
+
+COPY package.json package-lock.json ./
+COPY apps/gateway/package.json ./apps/gateway/
+COPY packages/database/package.json ./packages/database/
+COPY packages/types/package.json ./packages/types/
+
+RUN npm ci --workspace=@nexusx/gateway --workspace=@nexusx/database --workspace=@nexusx/types
+
+# ─── Stage 2: Build ───
+FROM node:20-slim AS build
+WORKDIR /app
+
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/apps/gateway/node_modules ./apps/gateway/node_modules
+COPY --from=deps /app/packages/database/node_modules ./packages/database/node_modules
+
+COPY package.json tsconfig.base.json ./
+COPY apps/gateway/ ./apps/gateway/
+COPY packages/database/ ./packages/database/
+COPY packages/types/ ./packages/types/
+
+# Generate Prisma client.
+RUN npx prisma generate --schema=packages/database/prisma/schema.prisma
+
+# Compile TypeScript.
+WORKDIR /app/apps/gateway
+RUN npx tsc --project tsconfig.json
+
+# ─── Stage 3: Runtime ───
+FROM node:20-slim AS runtime
+WORKDIR /app
+
+ARG GIT_SHA=unknown
+ARG BUILD_DATE=unknown
+ENV GIT_SHA=${GIT_SHA} \
+    BUILD_DATE=${BUILD_DATE} \
+    NODE_ENV=production
+
+# Install only production dependencies.
+COPY package.json package-lock.json ./
+COPY apps/gateway/package.json ./apps/gateway/
+COPY packages/database/package.json ./packages/database/
+COPY packages/types/package.json ./packages/types/
+RUN npm ci --omit=dev --workspace=@nexusx/gateway --workspace=@nexusx/database --workspace=@nexusx/types
+
+# Copy compiled output + Prisma client.
+COPY --from=build /app/apps/gateway/dist ./apps/gateway/dist
+COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=build /app/packages/database/prisma/schema.prisma ./packages/database/prisma/schema.prisma
+
+# Non-root user.
+RUN addgroup --system nexusx && adduser --system --ingroup nexusx nexusx
+USER nexusx
+
+EXPOSE 3100
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD node -e "fetch('http://localhost:3100/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"
+
+CMD ["node", "apps/gateway/dist/server.js"]
