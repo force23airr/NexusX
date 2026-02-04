@@ -24,6 +24,8 @@ export interface ProxyRouteConfig {
   proxyService: ProxyService;
   billingService: BillingService;
   emitSignal: (signal: DemandSignalEvent) => void;
+  /** When true, x402 handles billing — skip billingService.processCall(). */
+  x402Enabled?: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -121,12 +123,16 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     );
 
     // ─── 7. Bill the call ───
+    // When x402 is enabled, settlement already happened in x402 middleware.
+    // Only use billingService for legacy API key auth flow.
     let txRecord;
-    try {
-      txRecord = await billingService.processCall(ctx, route, proxyResult);
-    } catch (err) {
-      console.error("[Proxy] Billing error:", err);
-      // Don't fail the request — billing errors are non-blocking.
+    if (!config.x402Enabled || ctx.authMode !== "x402") {
+      try {
+        txRecord = await billingService.processCall(ctx, route, proxyResult);
+      } catch (err) {
+        console.error("[Proxy] Billing error:", err);
+        // Don't fail the request — billing errors are non-blocking.
+      }
     }
 
     // ─── 8. Send response to buyer ───
@@ -135,12 +141,17 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       res.setHeader(key, value);
     }
 
-    // Add NexusX billing headers.
+    // Add NexusX headers.
     res.setHeader("X-NexusX-Request-Id", ctx.requestId);
     res.setHeader("X-NexusX-Listing", listingSlug);
     res.setHeader("X-NexusX-Latency-Ms", proxyResult.latencyMs.toString());
 
-    if (txRecord && txRecord.priceUsdc > 0) {
+    if (ctx.authMode === "x402" && ctx.x402) {
+      res.setHeader("X-NexusX-Price-USDC", ctx.x402.amountUsdc.toFixed(6));
+      res.setHeader("X-NexusX-Fee-USDC", ctx.x402.platformFeeUsdc.toFixed(6));
+      res.setHeader("X-NexusX-Payment", "x402");
+      res.setHeader("X-NexusX-TxHash", ctx.x402.txHash);
+    } else if (txRecord && txRecord.priceUsdc > 0) {
       res.setHeader("X-NexusX-Price-USDC", txRecord.priceUsdc.toFixed(6));
       res.setHeader("X-NexusX-Fee-USDC", txRecord.platformFeeUsdc.toFixed(6));
     }

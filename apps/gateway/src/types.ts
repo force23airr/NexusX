@@ -11,13 +11,39 @@ export interface RequestContext {
   buyerId: string;
   /** Buyer's wallet address on Base L2. */
   buyerAddress: string;
-  /** API key ID used for this request. */
+  /** API key ID used for this request (empty string for x402 auth). */
   apiKeyId: string;
   /** Rate limit (requests per minute) for this key. */
   rateLimitRpm: number;
   /** Unique request ID for tracing. */
   requestId: string;
   /** Timestamp when the request entered the gateway. */
+  receivedAt: number;
+  /** Auth mode used for this request. */
+  authMode?: "api_key" | "x402";
+  /** x402 payment context, present when authMode is "x402". */
+  x402?: X402PaymentContext;
+}
+
+/** Payment context from a verified x402 payment. */
+export interface X402PaymentContext {
+  /** Payer's wallet address (from x402 payment proof). */
+  payerAddress: string;
+  /** Total amount paid in USDC (includes platform fee). */
+  amountUsdc: number;
+  /** Platform fee portion in USDC. */
+  platformFeeUsdc: number;
+  /** Provider's share in USDC (amountUsdc - platformFeeUsdc). */
+  providerAmountUsdc: number;
+  /** On-chain transaction hash from facilitator settlement. */
+  txHash: string;
+  /** Network identifier (e.g. "eip155:8453"). */
+  network: string;
+  /** Listing slug this payment is for. */
+  listingSlug: string;
+  /** Unique request ID for tracing. */
+  requestId: string;
+  /** Timestamp when payment was received. */
   receivedAt: number;
 }
 
@@ -91,6 +117,14 @@ export interface GatewayConfig {
   routeCacheTtlMs: number;
   /** Health check interval for upstream providers (ms). */
   healthCheckIntervalMs: number;
+  /** Whether x402 payment protocol is enabled. */
+  x402Enabled: boolean;
+  /** x402 facilitator URL for payment verification/settlement. */
+  x402FacilitatorUrl: string;
+  /** x402 network identifier (e.g. "eip155:8453" for Base mainnet). */
+  x402Network: string;
+  /** Platform wallet address that receives x402 payments (fee split happens off-chain). */
+  x402PlatformAddress: string;
 }
 
 export const DEFAULT_GATEWAY_CONFIG: GatewayConfig = {
@@ -102,4 +136,8 @@ export const DEFAULT_GATEWAY_CONFIG: GatewayConfig = {
   sandboxEnabled: true,
   routeCacheTtlMs: 60_000,         // 1 minute
   healthCheckIntervalMs: 300_000,  // 5 minutes
+  x402Enabled: false,
+  x402FacilitatorUrl: "https://x402.org/facilitator",
+  x402Network: "eip155:84532",     // Base Sepolia (dev default)
+  x402PlatformAddress: "",         // Must be set when x402Enabled=true
 };

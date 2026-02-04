@@ -3,10 +3,10 @@
 // apps/web/src/app/buyer/wallet/page.tsx
 //
 // Buyer's wallet view:
-//   - USDC balance + escrow display
-//   - Base L2 address
+//   - USDC balance on Base L2
+//   - x402 pay-per-call info
 //   - Transaction history table
-//   - Deposit / Withdraw actions
+//   - Fund wallet via Coinbase Onramp
 // ═══════════════════════════════════════════════════════════════
 
 "use client";
@@ -55,29 +55,17 @@ export default function BuyerWalletPage() {
 
       {/* Balance Cards */}
       {wallet && (
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 gap-4">
           {/* Available */}
           <div className="stat-card">
             <div className="absolute inset-0 bg-gradient-to-br from-brand-500/10 to-transparent pointer-events-none" />
             <p className="text-2xs text-zinc-500 uppercase tracking-wider font-semibold relative">
-              Available Balance
+              USDC Balance
             </p>
             <p className="text-2xl font-bold font-mono text-zinc-100 mt-1 relative">
               {formatUsdc(wallet.balanceUsdc)}
             </p>
-            <p className="text-2xs text-zinc-500 mt-1 relative">USDC</p>
-          </div>
-
-          {/* Escrow */}
-          <div className="stat-card">
-            <div className="absolute inset-0 bg-gradient-to-br from-amber-500/10 to-transparent pointer-events-none" />
-            <p className="text-2xs text-zinc-500 uppercase tracking-wider font-semibold relative">
-              In Escrow
-            </p>
-            <p className="text-2xl font-bold font-mono text-amber-300 mt-1 relative">
-              {formatUsdc(wallet.escrowUsdc)}
-            </p>
-            <p className="text-2xs text-zinc-500 mt-1 relative">Locked for pending calls</p>
+            <p className="text-2xs text-zinc-500 mt-1 relative">Available on Base L2</p>
           </div>
 
           {/* Address */}
@@ -96,9 +84,19 @@ export default function BuyerWalletPage() {
         </div>
       )}
 
+      {/* How x402 Works */}
+      <div className="card p-5 border border-brand-500/20">
+        <h3 className="text-sm font-semibold text-zinc-200 mb-2">How it works</h3>
+        <p className="text-sm text-zinc-400 leading-relaxed">
+          Pay per API call — no escrow or prepayment needed. Your wallet signs each request
+          and payment settles instantly on Base via the x402 protocol. Just make sure you have
+          enough USDC in your wallet to cover API call costs.
+        </p>
+      </div>
+
       {/* Action Buttons */}
       <div className="flex items-center gap-3">
-        <button className="btn-primary">Deposit USDC</button>
+        <a href="/buyer/fund" className="btn-primary">Deposit USDC</a>
         <button className="btn-secondary">Withdraw</button>
         {wallet?.lastSyncedAt && (
           <span className="text-2xs text-zinc-500 ml-auto">

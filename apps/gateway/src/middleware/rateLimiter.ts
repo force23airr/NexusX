@@ -141,7 +141,12 @@ export function createRateLimitMiddleware(
       return;
     }
 
-    const result = limiter.check(ctx.apiKeyId, ctx.rateLimitRpm);
+    // Rate limit key: wallet address for x402, API key ID for traditional auth.
+    const rateLimitKey = ctx.authMode === "x402"
+      ? ctx.buyerAddress
+      : ctx.apiKeyId;
+
+    const result = limiter.check(rateLimitKey, ctx.rateLimitRpm);
 
     // Always set rate limit headers.
     res.setHeader("X-RateLimit-Limit", ctx.rateLimitRpm.toString());
@@ -158,7 +163,8 @@ export function createRateLimitMiddleware(
           type: "RATE_LIMITED",
           weight: 1.5,
           metadata: {
-            apiKeyId: ctx.apiKeyId,
+            rateLimitKey,
+            authMode: ctx.authMode || "api_key",
             currentCount: result.current,
             limit: ctx.rateLimitRpm,
           },

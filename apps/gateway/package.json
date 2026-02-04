@@ -15,7 +15,10 @@
   "dependencies": {
     "express": "^4.21.0",
     "@nexusx/database": "*",
-    "@nexusx/types": "*"
+    "@nexusx/types": "*",
+    "@x402/core": "^0.1.0",
+    "@x402/evm": "^0.1.0",
+    "@x402/express": "^0.1.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",

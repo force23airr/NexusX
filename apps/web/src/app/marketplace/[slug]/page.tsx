@@ -423,6 +423,25 @@ export default function ListingDetailPage() {
         </div>
       </div>
 
+      {/* Payment Info (x402) */}
+      <div className="card p-5 border border-brand-500/20">
+        <h3 className="text-sm font-semibold text-zinc-300 mb-4">Payment</h3>
+        <div className="grid grid-cols-2 gap-4">
+          <DetailRow label="Protocol" value="x402 — HTTP native payments" />
+          <DetailRow
+            label="Current Price"
+            value={formatPricePerCall(listing.currentPriceUsdc) + " per call"}
+            mono
+          />
+          <DetailRow label="Network" value="Base L2 (USDC)" />
+          <DetailRow label="Auth Required" value="No API key needed — pay per request" />
+        </div>
+        <p className="text-2xs text-zinc-500 mt-4">
+          Prices are set by the NexusX auction engine and adjust dynamically based on demand.
+          Payment is verified and settled instantly via the x402 protocol on Base.
+        </p>
+      </div>
+
       {/* Quality Metrics */}
       <div className="card p-5">
         <h3 className="text-sm font-semibold text-zinc-300 mb-4">Quality Metrics</h3>

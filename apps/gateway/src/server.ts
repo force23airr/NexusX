@@ -13,6 +13,7 @@ import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import { createAuthMiddleware } from "./middleware/auth";
 import { RateLimiter, createRateLimitMiddleware } from "./middleware/rateLimiter";
+import { createX402PaymentMiddleware } from "./middleware/x402Payment";
 import { ProxyService } from "./services/proxyService";
 import { RouteResolver } from "./services/routeResolver";
 import { BillingService } from "./services/billingService";
@@ -107,7 +108,7 @@ export function createGatewayApp(
     })
   );
 
-  // ─── Authenticated routes ───
+  // ─── Auth + payment middleware ───
   const authMiddleware = createAuthMiddleware(deps.lookupApiKey, deps.touchApiKey);
 
   const rateLimitMiddleware = createRateLimitMiddleware(
@@ -121,18 +122,41 @@ export function createGatewayApp(
     }
   );
 
+  const proxyRoute = createProxyRoute({
+    routeResolver,
+    proxyService,
+    billingService,
+    emitSignal: deps.emitDemandSignal,
+    x402Enabled: cfg.x402Enabled,
+  });
+
   // Proxy routes: /v1/:listingSlug/*
-  app.use(
-    "/v1",
-    authMiddleware,
-    rateLimitMiddleware,
-    createProxyRoute({
+  // When x402 is enabled, use x402 payment middleware instead of API key auth.
+  // When disabled, fall back to the traditional API key auth flow.
+  if (cfg.x402Enabled) {
+    const x402Middleware = createX402PaymentMiddleware({
       routeResolver,
-      proxyService,
-      billingService,
       emitSignal: deps.emitDemandSignal,
-    })
-  );
+      gatewayConfig: cfg,
+      persistTransaction: deps.persistTransaction,
+    });
+
+    app.use(
+      "/v1/:listingSlug",
+      x402Middleware,
+      rateLimitMiddleware,
+      proxyRoute
+    );
+
+    console.log("[Gateway] x402 payment protocol enabled.");
+  } else {
+    app.use(
+      "/v1",
+      authMiddleware,
+      rateLimitMiddleware,
+      proxyRoute
+    );
+  }
 
   // ─── 404 catch-all ───
   app.use((_req: Request, res: Response) => {
@@ -180,6 +204,11 @@ export function startGateway(
     console.log(`[Gateway] Fee rate: ${(cfg.platformFeeRate * 100).toFixed(1)}%`);
     console.log(`[Gateway] Upstream timeout: ${cfg.upstreamTimeoutMs}ms`);
     console.log(`[Gateway] Route cache TTL: ${cfg.routeCacheTtlMs}ms`);
+    console.log(`[Gateway] x402 enabled: ${cfg.x402Enabled}`);
+    if (cfg.x402Enabled) {
+      console.log(`[Gateway] x402 facilitator: ${cfg.x402FacilitatorUrl}`);
+      console.log(`[Gateway] x402 network: ${cfg.x402Network}`);
+    }
   });
 
   // Graceful shutdown.
