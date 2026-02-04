@@ -18,7 +18,8 @@ import { SearchBar } from "@/components/marketplace/SearchBar";
 import { PriceTicker } from "@/components/marketplace/PriceTicker";
 import { ListingCard } from "@/components/marketplace/ListingCard";
 import { CategoryFilter } from "@/components/marketplace/CategoryFilter";
-import type { Listing, PriceTick, RouteResult, PaginatedResponse } from "@/types";
+import { usePriceTicker } from "@/hooks/usePriceTicker";
+import type { Listing, RouteResult, PaginatedResponse } from "@/types";
 
 const CATEGORIES = [
   { slug: "all", name: "All" },
@@ -59,7 +60,7 @@ const SECTORS = [
 
 export default function MarketplacePage() {
   const [listings, setListings] = useState<Listing[]>([]);
-  const [priceTicks, setPriceTicks] = useState<PriceTick[]>([]);
+  const priceTicks = usePriceTicker();
   const [searchResults, setSearchResults] = useState<RouteResult | null>(null);
   const [activeCategory, setActiveCategory] = useState("all");
   const [sortBy, setSortBy] = useState("popular");
@@ -104,22 +105,9 @@ export default function MarketplacePage() {
     }
   }, [activeCategory, sectors, sortBy]);
 
-  // ─── Load Price Ticker ───
-  const loadPriceTicker = useCallback(async () => {
-    try {
-      const ticks = await marketplace.getPriceTicker();
-      setPriceTicks(ticks);
-    } catch (err) {
-      console.error("Failed to load price ticker:", err);
-    }
-  }, []);
-
   useEffect(() => {
     loadListings();
-    loadPriceTicker();
-    const tickerInterval = setInterval(loadPriceTicker, 15_000);
-    return () => clearInterval(tickerInterval);
-  }, [loadListings, loadPriceTicker]);
+  }, [loadListings]);
 
   // ─── AI Search ───
   const handleSearch = async (query: string) => {

@@ -8,6 +8,7 @@
 import { PrismaClient } from "@prisma/client";
 import { startGateway } from "./server";
 import type { GatewayDependencies } from "./server";
+import { PriceWebSocketServer } from "./services/priceWebSocket";
 
 const prisma = new PrismaClient();
 
@@ -100,4 +101,7 @@ const deps: GatewayDependencies = {
   },
 };
 
-startGateway(deps);
+const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+const priceWs = new PriceWebSocketServer(redisUrl);
+
+startGateway(deps, undefined, priceWs);

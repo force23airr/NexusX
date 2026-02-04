@@ -17,6 +17,7 @@ import { createX402PaymentMiddleware } from "./middleware/x402Payment";
 import { ProxyService } from "./services/proxyService";
 import { RouteResolver } from "./services/routeResolver";
 import { BillingService } from "./services/billingService";
+import { PriceWebSocketServer } from "./services/priceWebSocket";
 import { createProxyRoute, extractListingSlug } from "./routes/proxy";
 import { createHealthRoutes } from "./routes/health";
 import type {
@@ -182,7 +183,7 @@ export function createGatewayApp(
     console.log("[Gateway] Cleaned up resources.");
   }
 
-  return { app, cleanup, config: cfg };
+  return { app, cleanup, config: cfg, rateLimiter, routeResolver, billingService };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -195,11 +196,12 @@ export function createGatewayApp(
  */
 export function startGateway(
   deps: GatewayDependencies,
-  config?: Partial<GatewayConfig>
+  config?: Partial<GatewayConfig>,
+  priceWs?: PriceWebSocketServer,
 ): void {
   const { app, cleanup, config: cfg } = createGatewayApp(deps, config);
 
-  const server = app.listen(cfg.port, () => {
+  const server = app.listen(cfg.port, async () => {
     console.log(`[Gateway] NexusX API Gateway listening on port ${cfg.port}`);
     console.log(`[Gateway] Fee rate: ${(cfg.platformFeeRate * 100).toFixed(1)}%`);
     console.log(`[Gateway] Upstream timeout: ${cfg.upstreamTimeoutMs}ms`);
@@ -209,11 +211,26 @@ export function startGateway(
       console.log(`[Gateway] x402 facilitator: ${cfg.x402FacilitatorUrl}`);
       console.log(`[Gateway] x402 network: ${cfg.x402Network}`);
     }
+
+    // Attach WebSocket price stream
+    if (priceWs) {
+      try {
+        await priceWs.attach(server);
+        console.log(`[Gateway] WebSocket price stream available at ws://localhost:${cfg.port}/ws/prices`);
+      } catch (err) {
+        console.error("[Gateway] Failed to attach WebSocket price server:", err);
+      }
+    }
   });
 
   // Graceful shutdown.
-  const shutdown = (signal: string) => {
+  const shutdown = async (signal: string) => {
     console.log(`[Gateway] Received ${signal}. Shutting down gracefully...`);
+
+    if (priceWs) {
+      await priceWs.destroy();
+    }
+
     server.close(() => {
       cleanup();
       console.log("[Gateway] Server closed.");
