@@ -1,0 +1,6 @@
+{
+  "name": "@nexusx/config",
+  "version": "1.0.0",
+  "private": true,
+  "description": "NexusX shared ESLint, Prettier, and TypeScript configs"
+}

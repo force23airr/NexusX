@@ -40,7 +40,7 @@ export function createHealthRoutes(config: HealthRouteConfig): Router {
   // Returns current price and fee split for a listing.
   // Public — no auth required.
   router.get("/pricing/:listingSlug", async (req: Request, res: Response) => {
-    const slug = req.params.listingSlug;
+    const slug = req.params.listingSlug as string;
 
     try {
       const route = await routeResolver.resolveBySlug(slug);

@@ -23,7 +23,7 @@ import type {
 // CONFIG
 // ─────────────────────────────────────────────────────────────
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3100";
+const API_BASE = typeof window !== "undefined" ? "" : "http://localhost:3000";
 
 class ApiError extends Error {
   constructor(

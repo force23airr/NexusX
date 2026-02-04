@@ -51,7 +51,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       return;
     }
 
-    const listingSlug = req.params.listingSlug;
+    const listingSlug = req.params.listingSlug as string;
 
     // ─── 1. Resolve listing route ───
     let route: ListingRoute | null;

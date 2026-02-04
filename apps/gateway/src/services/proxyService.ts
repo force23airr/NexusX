@@ -107,7 +107,6 @@ export class ProxyService {
           ? request.body
           : undefined,
         signal: controller.signal,
-        // @ts-expect-error — Node.js fetch supports duplex
         duplex: "half",
       });
 
