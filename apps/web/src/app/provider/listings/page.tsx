@@ -12,6 +12,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { provider } from "@/lib/api";
 import {
   cn,
@@ -28,6 +29,7 @@ import type { Listing, ProviderProfile, PaginatedResponse } from "@/types";
 const STATUS_TABS = ["all", "ACTIVE", "DRAFT", "PAUSED", "PENDING_REVIEW", "DEPRECATED"];
 
 export default function ProviderListingsPage() {
+  const router = useRouter();
   const [profile, setProfile] = useState<ProviderProfile | null>(null);
   const [listings, setListings] = useState<Listing[]>([]);
   const [statusFilter, setStatusFilter] = useState("all");
@@ -63,7 +65,10 @@ export default function ProviderListingsPage() {
           <h1 className="text-3xl font-bold tracking-tight">My Listings</h1>
           <p className="mt-1 text-zinc-400">Manage your APIs and datasets on the marketplace.</p>
         </div>
-        <button className="btn-primary flex items-center gap-2">
+        <button
+          onClick={() => router.push("/provider/listings/new")}
+          className="btn-primary flex items-center gap-2"
+        >
           <span>+</span> New Listing
         </button>
       </div>

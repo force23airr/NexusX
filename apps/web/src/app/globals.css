@@ -95,3 +95,13 @@
     @apply inline-flex items-center px-2 py-0.5 rounded-md text-2xs font-medium;
   }
 }
+
+/* Ticker scroll animation */
+@keyframes ticker-scroll {
+  0% {
+    transform: translateX(0);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
