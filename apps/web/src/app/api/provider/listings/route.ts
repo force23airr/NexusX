@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 
-const prisma = new PrismaClient();
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
@@ -75,4 +74,81 @@ export async function GET(req: NextRequest) {
     pageSize,
     hasMore: page * pageSize < total,
   });
+}
+
+export async function POST(req: NextRequest) {
+  const body = await req.json();
+
+  // Validate required fields
+  const required = ["name", "description", "listingType", "categoryId", "baseUrl", "floorPriceUsdc"];
+  for (const field of required) {
+    if (!body[field]) {
+      return NextResponse.json(
+        { error: `Missing required field: ${field}` },
+        { status: 400 }
+      );
+    }
+  }
+
+  // Demo: fetch first provider
+  const profile = await prisma.providerProfile.findFirst({
+    orderBy: { createdAt: "asc" },
+  });
+  if (!profile) {
+    return NextResponse.json(
+      { error: "No provider profile found" },
+      { status: 403 }
+    );
+  }
+
+  // Generate slug — deduplicate if needed
+  let slug = body.slug || body.name
+    .toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+
+  const existing = await prisma.listing.findUnique({ where: { slug } });
+  if (existing) {
+    slug = `${slug}-${Date.now().toString(36)}`;
+  }
+
+  // Store videoUrl in schemaSpec JSON
+  const schemaSpec = body.videoUrl ? { videoUrl: body.videoUrl } : undefined;
+
+  // Merge user tags with sector tags (sector:value convention for filtering)
+  const tags: string[] = body.tags || [];
+  const sectors: string[] = body.sectors || [];
+  for (const s of sectors) {
+    tags.push(`sector:${s}`);
+  }
+
+  const listing = await prisma.listing.create({
+    data: {
+      providerId: profile.userId,
+      categoryId: body.categoryId,
+      slug,
+      name: body.name,
+      description: body.description,
+      listingType: body.listingType,
+      status: "DRAFT",
+      baseUrl: body.baseUrl,
+      healthCheckUrl: body.healthCheckUrl || null,
+      docsUrl: body.docsUrl || null,
+      sandboxUrl: body.sandboxUrl || null,
+      authType: body.authType || "api_key",
+      floorPriceUsdc: body.floorPriceUsdc,
+      ceilingPriceUsdc: body.ceilingPriceUsdc || null,
+      currentPriceUsdc: body.floorPriceUsdc,
+      capacityPerMinute: body.capacityPerMinute || 60,
+      isUnique: body.isUnique || false,
+      tags,
+      sampleRequest: body.sampleRequest || undefined,
+      sampleResponse: body.sampleResponse || undefined,
+      schemaSpec: schemaSpec || undefined,
+    },
+  });
+
+  return NextResponse.json({ id: listing.id, slug: listing.slug }, { status: 201 });
 }

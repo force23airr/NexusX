@@ -27,6 +27,7 @@ const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
   {
     title: "Buyer",
     items: [
+      { label: "Watchlist", href: "/buyer/watchlist", icon: "☆" },
       { label: "API Keys", href: "/buyer/keys", icon: "⚿" },
       { label: "Subscriptions", href: "/buyer/subscriptions", icon: "↻" },
       { label: "Wallet", href: "/buyer/wallet", icon: "◆" },

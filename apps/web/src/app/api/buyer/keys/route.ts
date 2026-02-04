@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 import { randomBytes, createHash } from "crypto";
 
-const prisma = new PrismaClient();
 
 export async function GET() {
   // Demo: fetch first buyer user

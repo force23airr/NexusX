@@ -162,6 +162,57 @@ export interface PaginatedResponse<T> {
   hasMore: boolean;
 }
 
+// ─── Listing Detail (extended) ───
+
+export interface ListingDetail extends Listing {
+  docsUrl: string | null;
+  sandboxUrl: string | null;
+  videoUrl: string | null;
+  authType: string;
+  sampleRequest: unknown | null;
+  sampleResponse: unknown | null;
+  errorRatePercent: number;
+  priceHistory: { timestamp: string; price: number; changePercent: number }[];
+}
+
+// ─── Watchlist ───
+
+export interface WatchlistItem {
+  id: string;
+  listingId: string;
+  listingName: string;
+  listingSlug: string;
+  currentPriceUsdc: number;
+  alertOnPriceDrop: boolean;
+  alertThreshold: number | null;
+  createdAt: string;
+}
+
+// ─── API Playground ───
+
+export interface PlaygroundRequest {
+  url: string;
+  method: "GET" | "POST" | "PUT" | "DELETE";
+  headers: Record<string, string>;
+  body?: string;
+}
+
+export interface PlaygroundResponse {
+  status: number;
+  headers: Record<string, string>;
+  body: string;
+  responseTimeMs: number;
+}
+
+// ─── Price History ───
+
+export interface PriceHistoryResponse {
+  points: { timestamp: string; price: number; changePercent: number }[];
+  high: number;
+  low: number;
+  current: number;
+}
+
 // ─── Price Ticker ───
 
 export interface PriceTick {

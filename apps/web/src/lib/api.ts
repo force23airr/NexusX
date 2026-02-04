@@ -9,6 +9,7 @@
 
 import type {
   Listing,
+  ListingDetail,
   RouteResult,
   Transaction,
   Wallet,
@@ -17,6 +18,10 @@ import type {
   DashboardStats,
   PaginatedResponse,
   PriceTick,
+  WatchlistItem,
+  PlaygroundRequest,
+  PlaygroundResponse,
+  PriceHistoryResponse,
 } from "@/types";
 
 // ─────────────────────────────────────────────────────────────
@@ -90,6 +95,7 @@ export const marketplace = {
   async browse(params?: {
     category?: string;
     type?: string;
+    sectors?: string[];
     sort?: string;
     page?: number;
     pageSize?: number;
@@ -97,6 +103,7 @@ export const marketplace = {
     const qs = new URLSearchParams();
     if (params?.category) qs.set("category", params.category);
     if (params?.type) qs.set("type", params.type);
+    if (params?.sectors?.length) qs.set("sectors", params.sectors.join(","));
     if (params?.sort) qs.set("sort", params.sort);
     if (params?.page) qs.set("page", String(params.page));
     if (params?.pageSize) qs.set("pageSize", String(params.pageSize));
@@ -108,6 +115,25 @@ export const marketplace = {
     return apiFetch(`/api/listings/${slug}`);
   },
 
+  /** Get a single listing with full detail (price history, samples, etc). */
+  async getListingDetail(slug: string): Promise<ListingDetail> {
+    return apiFetch(`/api/listings/${slug}`);
+  },
+
+  /** Get price history for a listing. */
+  async getPriceHistory(slug: string, period?: string): Promise<PriceHistoryResponse> {
+    const qs = period ? `?period=${period}` : "";
+    return apiFetch(`/api/listings/${slug}/price-history${qs}`);
+  },
+
+  /** Send a request through the API playground proxy. */
+  async sendPlaygroundRequest(data: PlaygroundRequest): Promise<PlaygroundResponse> {
+    return apiFetch("/api/playground", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
   /** Get live price ticks for all active listings. */
   async getPriceTicker(): Promise<PriceTick[]> {
     return apiFetch("/api/prices/ticker");
@@ -116,6 +142,13 @@ export const marketplace = {
   /** Get marketplace-wide stats. */
   async getStats(): Promise<DashboardStats> {
     return apiFetch("/api/stats");
+  },
+
+  /** Get all active categories for dropdowns. */
+  async getCategories(): Promise<
+    { id: string; slug: string; name: string; depth: number }[]
+  > {
+    return apiFetch("/api/categories");
   },
 };
 
@@ -160,6 +193,30 @@ export const buyer = {
   /** Revoke an API key. */
   async revokeApiKey(keyId: string): Promise<void> {
     await apiFetch(`/api/buyer/keys/${keyId}`, { method: "DELETE" });
+  },
+
+  /** Get buyer's watchlist. */
+  async getWatchlist(): Promise<WatchlistItem[]> {
+    return apiFetch("/api/buyer/watchlist");
+  },
+
+  /** Add a listing to the watchlist. */
+  async addToWatchlist(data: {
+    listingId: string;
+    alertOnPriceDrop?: boolean;
+    alertThreshold?: number;
+  }): Promise<{ id: string; status: string }> {
+    return apiFetch("/api/buyer/watchlist", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  },
+
+  /** Remove a listing from the watchlist. */
+  async removeFromWatchlist(listingId: string): Promise<void> {
+    await apiFetch(`/api/buyer/watchlist?listingId=${listingId}`, {
+      method: "DELETE",
+    });
   },
 
   /** Get buyer's subscriptions. */
@@ -225,6 +282,34 @@ export const provider = {
     return apiFetch("/api/provider/payouts", {
       method: "POST",
       body: JSON.stringify({ amountUsdc }),
+    });
+  },
+
+  /** Create a new listing as DRAFT. */
+  async createListing(data: {
+    name: string;
+    slug: string;
+    listingType: string;
+    categoryId: string;
+    sectors: string[];
+    description: string;
+    videoUrl?: string;
+    baseUrl: string;
+    healthCheckUrl?: string;
+    docsUrl?: string;
+    sandboxUrl?: string;
+    authType: string;
+    floorPriceUsdc: number;
+    ceilingPriceUsdc?: number;
+    capacityPerMinute: number;
+    tags: string[];
+    isUnique: boolean;
+    sampleRequest?: unknown;
+    sampleResponse?: unknown;
+  }): Promise<{ id: string; slug: string }> {
+    return apiFetch("/api/provider/listings", {
+      method: "POST",
+      body: JSON.stringify(data),
     });
   },
 };

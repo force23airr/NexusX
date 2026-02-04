@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "@/lib/prisma";
 
-const prisma = new PrismaClient();
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const category = searchParams.get("category");
   const type = searchParams.get("type");
+  const sectorsParam = searchParams.get("sectors");
   const sort = searchParams.get("sort") || "popular";
   const page = parseInt(searchParams.get("page") || "1", 10);
   const pageSize = parseInt(searchParams.get("pageSize") || "20", 10);
@@ -14,6 +14,10 @@ export async function GET(req: NextRequest) {
   const where: any = { status: "ACTIVE" };
   if (category) where.category = { slug: category };
   if (type) where.listingType = type;
+  if (sectorsParam) {
+    const sectorTags = sectorsParam.split(",").map((s) => `sector:${s}`);
+    where.tags = { hasSome: sectorTags };
+  }
 
   const orderBy: any =
     sort === "price_asc"

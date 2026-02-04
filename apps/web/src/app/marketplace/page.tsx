@@ -12,7 +12,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { marketplace } from "@/lib/api";
+import { marketplace, buyer } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import { SearchBar } from "@/components/marketplace/SearchBar";
 import { PriceTicker } from "@/components/marketplace/PriceTicker";
 import { ListingCard } from "@/components/marketplace/ListingCard";
@@ -37,14 +38,53 @@ const SORT_OPTIONS = [
   { value: "newest", label: "Newest" },
 ];
 
+const SECTORS = [
+  { value: "consumer-products", label: "Consumer Products" },
+  { value: "hardware", label: "Hardware" },
+  { value: "military-defense", label: "Military & Defense" },
+  { value: "logistics", label: "Logistics" },
+  { value: "shopping-commerce", label: "Shopping & Commerce" },
+  { value: "healthcare", label: "Healthcare" },
+  { value: "fintech", label: "Fintech & Banking" },
+  { value: "education", label: "Education" },
+  { value: "real-estate", label: "Real Estate" },
+  { value: "automotive", label: "Automotive" },
+  { value: "energy", label: "Energy & Utilities" },
+  { value: "media-entertainment", label: "Media & Entertainment" },
+  { value: "agriculture", label: "Agriculture" },
+  { value: "telecommunications", label: "Telecommunications" },
+  { value: "travel-hospitality", label: "Travel & Hospitality" },
+  { value: "general-purpose", label: "General Purpose / Cross-Industry" },
+];
+
 export default function MarketplacePage() {
   const [listings, setListings] = useState<Listing[]>([]);
   const [priceTicks, setPriceTicks] = useState<PriceTick[]>([]);
   const [searchResults, setSearchResults] = useState<RouteResult | null>(null);
   const [activeCategory, setActiveCategory] = useState("all");
   const [sortBy, setSortBy] = useState("popular");
+  const [sectors, setSectors] = useState<string[]>([]);
+  const [sectorOpen, setSectorOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSearching, setIsSearching] = useState(false);
+  const [watchedIds, setWatchedIds] = useState<Set<string>>(new Set());
+
+  // ─── Load Watchlist IDs ───
+  useEffect(() => {
+    buyer
+      .getWatchlist()
+      .then((items) => setWatchedIds(new Set(items.map((w) => w.listingId))))
+      .catch(() => {});
+  }, []);
+
+  const handleWatchlistToggle = useCallback((listingId: string, watched: boolean) => {
+    setWatchedIds((prev) => {
+      const next = new Set(prev);
+      if (watched) next.add(listingId);
+      else next.delete(listingId);
+      return next;
+    });
+  }, []);
 
   // ─── Load Listings ───
   const loadListings = useCallback(async () => {
@@ -52,6 +92,7 @@ export default function MarketplacePage() {
     try {
       const res: PaginatedResponse<Listing> = await marketplace.browse({
         category: activeCategory === "all" ? undefined : activeCategory,
+        sectors: sectors.length > 0 ? sectors : undefined,
         sort: sortBy,
         pageSize: 20,
       });
@@ -61,7 +102,7 @@ export default function MarketplacePage() {
     } finally {
       setIsLoading(false);
     }
-  }, [activeCategory, sortBy]);
+  }, [activeCategory, sectors, sortBy]);
 
   // ─── Load Price Ticker ───
   const loadPriceTicker = useCallback(async () => {
@@ -160,17 +201,91 @@ export default function MarketplacePage() {
             active={activeCategory}
             onChange={setActiveCategory}
           />
-          <select
-            value={sortBy}
-            onChange={(e) => setSortBy(e.target.value)}
-            className="input-base w-48"
-          >
-            {SORT_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2">
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setSectorOpen((v) => !v)}
+                className={cn(
+                  "input-base flex items-center gap-2 min-w-[200px] text-left",
+                  sectors.length > 0 && "border-brand-600/40"
+                )}
+              >
+                <span className="flex-1 truncate">
+                  {sectors.length === 0
+                    ? "Sector / Industry"
+                    : sectors.length === 1
+                      ? SECTORS.find((s) => s.value === sectors[0])?.label
+                      : `${sectors.length} sectors`}
+                </span>
+                {sectors.length > 0 && (
+                  <span
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setSectors([]);
+                    }}
+                    className="text-zinc-500 hover:text-zinc-300 text-xs"
+                  >
+                    &times;
+                  </span>
+                )}
+                <span className="text-zinc-500 text-xs">{sectorOpen ? "\u25B2" : "\u25BC"}</span>
+              </button>
+              {sectorOpen && (
+                <>
+                  <div
+                    className="fixed inset-0 z-10"
+                    onClick={() => setSectorOpen(false)}
+                  />
+                  <div className="absolute right-0 top-full mt-1 w-72 max-h-80 overflow-y-auto rounded-lg bg-surface-2 border border-surface-4 shadow-xl z-20 py-1">
+                    {SECTORS.map((s) => {
+                      const selected = sectors.includes(s.value);
+                      return (
+                        <button
+                          key={s.value}
+                          type="button"
+                          onClick={() => {
+                            if (selected) {
+                              setSectors(sectors.filter((v) => v !== s.value));
+                            } else {
+                              setSectors([...sectors, s.value]);
+                            }
+                          }}
+                          className={cn(
+                            "w-full px-3 py-2 text-left text-xs flex items-center gap-2 transition-colors",
+                            selected
+                              ? "bg-brand-600/10 text-brand-300"
+                              : "text-zinc-400 hover:bg-surface-3 hover:text-zinc-200"
+                          )}
+                        >
+                          <span className={cn(
+                            "w-4 h-4 rounded border flex items-center justify-center text-[10px] shrink-0",
+                            selected
+                              ? "bg-brand-600 border-brand-500 text-white"
+                              : "border-zinc-600"
+                          )}>
+                            {selected && "\u2713"}
+                          </span>
+                          {s.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+            <select
+              value={sortBy}
+              onChange={(e) => setSortBy(e.target.value)}
+              className="input-base w-48"
+            >
+              {SORT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
 
@@ -190,6 +305,8 @@ export default function MarketplacePage() {
               matchScore={searchResults?.matches[i]?.score}
               matchReasons={searchResults?.matches[i]?.matchReasons}
               style={{ animationDelay: `${i * 50}ms` }}
+              isWatched={watchedIds.has(listing.id)}
+              onWatchlistToggle={handleWatchlistToggle}
             />
           ))}
         </div>
