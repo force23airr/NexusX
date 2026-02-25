@@ -489,7 +489,12 @@ const redisClient = new Redis(redisUrl);
 deps.redis = redisClient;
 deps.prisma = prisma;
 
-startGateway(deps, undefined, priceWs);
+startGateway(deps, {
+  x402Enabled: process.env.X402_ENABLED === "true",
+  x402FacilitatorUrl: process.env.X402_FACILITATOR_URL || "https://x402.org/facilitator",
+  x402Network: process.env.X402_NETWORK || "eip155:84532",
+  x402PlatformAddress: process.env.X402_PLATFORM_ADDRESS || "",
+}, priceWs);
 
 async function loadFinalizedResult(
   tx: Prisma.TransactionClient,
