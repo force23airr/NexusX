@@ -9,8 +9,8 @@
 //   1. Resolve listing via RouteResolver (get current auction price)
 //   2. Check for X-PAYMENT header
 //   3. If missing → 402 with payment requirements
-//   4. If present → verify + settle via facilitator
-//   5. On success → attach RequestContext with x402 payment info
+//   4. If present → verify via facilitator (settlement deferred to proxy)
+//   5. On success → attach RequestContext with deferred payment info
 //
 // Sandbox mode (X-NexusX-Sandbox: true) bypasses payment.
 // ═══════════════════════════════════════════════════════════════
@@ -19,8 +19,7 @@ import { randomUUID } from "crypto";
 import type { Request, Response, NextFunction } from "express";
 import type { RouteResolver } from "../services/routeResolver";
 import { X402Adapter } from "../services/x402Adapter";
-import type { TransactionPersistFn } from "../services/billingService";
-import type { RequestContext, DemandSignalEvent, GatewayConfig, TransactionRecord } from "../types";
+import type { RequestContext, DemandSignalEvent, GatewayConfig } from "../types";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -30,8 +29,6 @@ export interface X402MiddlewareConfig {
   routeResolver: RouteResolver;
   emitSignal: (signal: DemandSignalEvent) => void;
   gatewayConfig: GatewayConfig;
-  /** Persist transaction records so provider payouts can be computed. */
-  persistTransaction: TransactionPersistFn;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -46,7 +43,7 @@ export interface X402MiddlewareConfig {
  * current auction price as the payment requirement.
  */
 export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
-  const { routeResolver, emitSignal, gatewayConfig, persistTransaction } = config;
+  const { routeResolver, emitSignal, gatewayConfig } = config;
 
   const adapter = new X402Adapter({
     facilitatorUrl: gatewayConfig.x402FacilitatorUrl,
@@ -173,29 +170,9 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
       return;
     }
 
-    // ─── Settle payment ───
-    const settleResult = await adapter.settlePayment(paymentHeader, requirement);
-
-    if (!settleResult.success) {
-      console.error("[x402] Settlement failed:", settleResult.error, { requestId });
-      res.status(402).json({
-        error: "PAYMENT_SETTLEMENT_FAILED",
-        message: settleResult.error || "Payment settlement failed.",
-        requestId,
-        paymentRequirements: [requirement],
-      });
-      return;
-    }
-
-    // ─── Payment verified + settled — attach context ───
-    const paymentContext = adapter.buildPaymentContext(
-      verifyResult.payerAddress!,
-      route.currentPriceUsdc,
-      settleResult.txHash || verifyResult.txHash || "",
-      listingSlug,
-      requestId
-    );
-
+    // ─── Payment verified — defer settlement until upstream succeeds ───
+    // Store payment proof in context so the proxy route can settle
+    // after confirming the upstream returned a non-5xx response.
     const ctx: RequestContext = {
       buyerId: verifyResult.payerAddress!,
       buyerAddress: verifyResult.payerAddress!,
@@ -204,32 +181,20 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
       requestId,
       receivedAt: Date.now(),
       authMode: "x402",
-      x402: paymentContext,
+      x402DeferredPayment: {
+        paymentHeader,
+        paymentRequirement: requirement,
+        payerAddress: verifyResult.payerAddress!,
+        currentPriceUsdc: route.currentPriceUsdc,
+        listingSlug,
+        route,
+      },
     };
 
     (req as any).ctx = ctx;
 
     // Emit API_CALL demand signal.
     emitSignal(adapter.buildCallSignal(route, verifyResult.payerAddress!, requestId));
-
-    // Persist transaction record for provider payout tracking.
-    // The full payment went to the platform wallet; this record
-    // tracks how much is owed to the provider.
-    const txRecord: TransactionRecord = {
-      requestId,
-      listingId: route.listingId,
-      buyerId: verifyResult.payerAddress!,
-      priceUsdc: route.currentPriceUsdc,
-      platformFeeUsdc: paymentContext.platformFeeUsdc,
-      providerAmountUsdc: paymentContext.providerAmountUsdc,
-      feeRateApplied: gatewayConfig.platformFeeRate,
-      responseTimeMs: 0, // Updated after proxy completes (downstream)
-      httpStatus: 0,     // Updated after proxy completes (downstream)
-      bytesTransferred: 0,
-    };
-    persistTransaction(txRecord).catch((err) =>
-      console.error("[x402] Transaction persist error:", err, { requestId })
-    );
 
     next();
   };

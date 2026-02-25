@@ -17,6 +17,7 @@ import { createX402PaymentMiddleware } from "./middleware/x402Payment";
 import { ProxyService } from "./services/proxyService";
 import { RouteResolver } from "./services/routeResolver";
 import { BillingService } from "./services/billingService";
+import { CredentialService } from "./services/credentialService";
 import { PriceWebSocketServer } from "./services/priceWebSocket";
 import { ReliabilityAggregator } from "./services/reliability-aggregator";
 import { createProxyRoute, extractListingSlug } from "./routes/proxy";
@@ -125,6 +126,7 @@ export function createGatewayApp(
   const reliabilityAggregator = deps.redis
     ? new ReliabilityAggregator(deps.redis)
     : undefined;
+  const credentialService = new CredentialService();
 
   // ─── Public routes (no auth) ───
   app.use(
@@ -177,6 +179,9 @@ export function createGatewayApp(
     emitSignal: deps.emitDemandSignal,
     x402Enabled: cfg.x402Enabled,
     reliabilityAggregator,
+    credentialService,
+    gatewayConfig: cfg,
+    persistTransaction: deps.persistTransaction,
   });
 
   // Proxy routes: /v1/:listingSlug/*
@@ -187,7 +192,6 @@ export function createGatewayApp(
       routeResolver,
       emitSignal: deps.emitDemandSignal,
       gatewayConfig: cfg,
-      persistTransaction: deps.persistTransaction,
     });
 
     app.use(

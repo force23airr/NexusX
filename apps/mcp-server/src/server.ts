@@ -27,6 +27,7 @@ import { createFindApiHandler } from "./prompts/discovery";
 import { createPriceTrajectoryHandler } from "./prompts/trajectory";
 import { createCompareToolsHandler } from "./prompts/compare";
 import { BundleEngine } from "./services/bundle-engine";
+import { OrchestratorService } from "./services/orchestrator";
 import type { PrismaClient } from "@prisma/client";
 
 export interface McpServerContext {
@@ -115,6 +116,24 @@ export async function createMcpServer(
       },
     );
   }
+
+  // ─── Register Orchestrator Tool ───
+  // The `nexusx` tool is the single entry point for any agent.
+  // It interprets natural language tasks, selects optimal APIs,
+  // chains them if needed, and handles payment automatically.
+  const orchestrator = new OrchestratorService(executor, discovery, registry);
+
+  server.tool(
+    "nexusx",
+    "NexusX AI API Orchestrator — describe what you need in natural language and I'll select the optimal API(s), chain them if needed, and return the result. Handles payment automatically. Examples: \"translate this to French\", \"analyze the sentiment of this text\", \"translate to Spanish then analyze sentiment\", \"generate embeddings for this text\".",
+    {
+      task: z.string().describe("What you need done in natural language (e.g., 'translate this to French then analyze sentiment')"),
+      input: z.record(z.unknown()).optional().describe("Input data — text, messages, image_url, etc. Fields depend on the task."),
+      budget_max_usdc: z.number().optional().describe("Maximum USDC to spend on this task"),
+      priority_mode: z.enum(["frugal", "balanced", "mission_critical"]).optional().describe("API selection priority: frugal (cheapest), balanced (price × quality), mission_critical (best quality)"),
+    },
+    async (args) => orchestrator.execute(args as any),
+  );
 
   // ─── Register Resources ───
 

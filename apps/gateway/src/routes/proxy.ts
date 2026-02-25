@@ -15,11 +15,15 @@ import type {
   ListingRoute,
   DemandSignalEvent,
   BundleSessionRecord,
+  TransactionRecord,
+  GatewayConfig,
 } from "../types";
 import type { RouteResolver } from "../services/routeResolver";
 import type { ProxyService } from "../services/proxyService";
-import type { BillingService } from "../services/billingService";
+import type { BillingService, TransactionPersistFn } from "../services/billingService";
 import type { ReliabilityAggregator } from "../services/reliability-aggregator";
+import type { CredentialService } from "../services/credentialService";
+import { X402Adapter, type PaymentRequirement } from "../services/x402Adapter";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -35,6 +39,12 @@ export interface ProxyRouteConfig {
   x402Enabled?: boolean;
   /** Records call results for real-time reliability scoring. */
   reliabilityAggregator?: ReliabilityAggregator;
+  /** Injects upstream provider credentials per listing slug. */
+  credentialService?: CredentialService;
+  /** Gateway config for x402 deferred settlement. */
+  gatewayConfig?: GatewayConfig;
+  /** Persist transaction records (for x402 deferred settlement). */
+  persistTransaction?: TransactionPersistFn;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -201,6 +211,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       : undefined;
 
     // ─── 6. Proxy to upstream ───
+    const credential = config.credentialService?.getCredential(listingSlug);
     const proxyResult = await proxyService.forward(
       route,
       {
@@ -210,11 +221,70 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
         headers: req.headers,
         body,
       },
-      ctx.requestId
+      ctx.requestId,
+      credential
     );
 
+    // ─── 6b. Settle deferred x402 payment (pay-on-success) ───
+    // If the middleware verified an x402 payment but deferred settlement,
+    // settle now only if the upstream returned a non-5xx status.
+    if (ctx.x402DeferredPayment && proxyResult.statusCode < 500) {
+      const deferred = ctx.x402DeferredPayment;
+      const adapter = new X402Adapter({
+        facilitatorUrl: config.gatewayConfig?.x402FacilitatorUrl || "",
+        network: config.gatewayConfig?.x402Network || "",
+        platformAddress: config.gatewayConfig?.x402PlatformAddress || "",
+        platformFeeRate: config.gatewayConfig?.platformFeeRate || 0.12,
+      });
+
+      const settleResult = await adapter.settlePayment(
+        deferred.paymentHeader,
+        deferred.paymentRequirement as PaymentRequirement
+      );
+
+      if (settleResult.success) {
+        // Build x402 context now that settlement is complete.
+        const paymentContext = adapter.buildPaymentContext(
+          deferred.payerAddress,
+          deferred.currentPriceUsdc,
+          settleResult.txHash || "",
+          deferred.listingSlug,
+          ctx.requestId
+        );
+        ctx.x402 = paymentContext;
+
+        // Persist transaction record.
+        if (config.persistTransaction) {
+          const txRecordX402: TransactionRecord = {
+            requestId: ctx.requestId,
+            listingId: route.listingId,
+            buyerId: deferred.payerAddress,
+            priceUsdc: deferred.currentPriceUsdc,
+            platformFeeUsdc: paymentContext.platformFeeUsdc,
+            providerAmountUsdc: paymentContext.providerAmountUsdc,
+            feeRateApplied: config.gatewayConfig?.platformFeeRate || 0.12,
+            responseTimeMs: proxyResult.latencyMs,
+            httpStatus: proxyResult.statusCode,
+            bytesTransferred: proxyResult.bytesTransferred,
+          };
+          config.persistTransaction(txRecordX402).catch((err) =>
+            console.error("[Proxy] x402 transaction persist error:", err, { requestId: ctx.requestId })
+          );
+        }
+
+        console.log(`[Proxy] x402 settled after success: ${settleResult.txHash} (${deferred.listingSlug})`);
+      } else {
+        console.error(`[Proxy] x402 post-success settlement failed: ${settleResult.error}`, { requestId: ctx.requestId });
+        // Upstream succeeded but payment settlement failed — still return the response
+        // but log for manual reconciliation. The buyer got their response.
+      }
+    } else if (ctx.x402DeferredPayment && proxyResult.statusCode >= 500) {
+      // Upstream failed — do NOT settle. Buyer keeps their USDC.
+      console.log(`[Proxy] x402 NOT settled — upstream returned ${proxyResult.statusCode} (${ctx.x402DeferredPayment.listingSlug})`);
+    }
+
     // ─── 7. Bill the call ───
-    // When x402 is enabled, settlement already happened in x402 middleware.
+    // When x402 is enabled, settlement happened above (deferred).
     // Only use billingService for legacy API key auth flow.
     let txRecord;
     if (!config.x402Enabled || ctx.authMode !== "x402") {

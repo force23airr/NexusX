@@ -21,8 +21,17 @@ export interface RequestContext {
   receivedAt: number;
   /** Auth mode used for this request. */
   authMode?: "api_key" | "x402";
-  /** x402 payment context, present when authMode is "x402". */
+  /** x402 payment context, present when authMode is "x402" and settlement is complete. */
   x402?: X402PaymentContext;
+  /** Deferred x402 payment proof — verified but not yet settled. Settled after upstream success. */
+  x402DeferredPayment?: {
+    paymentHeader: string;
+    paymentRequirement: unknown; // PaymentRequirement from x402Adapter
+    payerAddress: string;
+    currentPriceUsdc: number;
+    listingSlug: string;
+    route: unknown; // ListingRoute snapshot
+  };
 }
 
 /** Payment context from a verified x402 payment. */

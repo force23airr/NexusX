@@ -163,14 +163,14 @@ export class X402Adapter {
         return { valid: false, invalidReason: `Facilitator error: ${response.status} ${body}` };
       }
 
-      const result = await response.json();
+      const result = await response.json() as Record<string, unknown>;
       // Facilitator returns { isValid, payer, invalidReason, invalidMessage }
       const isValid = result.isValid === true;
       return {
         valid: isValid,
-        payerAddress: result.payer ?? result.payerAddress,
-        txHash: result.txHash,
-        invalidReason: isValid ? undefined : (result.invalidReason || result.invalidMessage || "Payment verification failed"),
+        payerAddress: (result.payer ?? result.payerAddress) as string | undefined,
+        txHash: result.txHash as string | undefined,
+        invalidReason: isValid ? undefined : ((result.invalidReason || result.invalidMessage || "Payment verification failed") as string),
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -207,11 +207,11 @@ export class X402Adapter {
         return { success: false, error: `Settlement failed: ${response.status} ${body}` };
       }
 
-      const result = await response.json();
+      const result = await response.json() as Record<string, unknown>;
       return {
         success: result.success === true,
-        txHash: result.txHash ?? result.transaction,
-        error: result.success ? undefined : (result.errorReason || result.error || "Settlement failed"),
+        txHash: (result.txHash ?? result.transaction) as string | undefined,
+        error: result.success ? undefined : ((result.errorReason || result.error || "Settlement failed") as string),
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -9,6 +9,7 @@
 
 import type { IncomingHttpHeaders } from "http";
 import type { ListingRoute, ProxyResult } from "../types";
+import type { UpstreamCredential } from "./credentialService";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -86,15 +87,16 @@ export class ProxyService {
   async forward(
     route: ListingRoute,
     request: ProxyRequest,
-    requestId: string
+    requestId: string,
+    credential?: UpstreamCredential | null
   ): Promise<ProxyResult> {
     const startTime = performance.now();
 
     // Build upstream URL.
     const upstreamUrl = this.buildUpstreamUrl(route.baseUrl, request.path, request.queryString);
 
-    // Build forwarded headers.
-    const headers = this.buildHeaders(request.headers, requestId);
+    // Build forwarded headers (with optional upstream credential injection).
+    const headers = this.buildHeaders(request.headers, requestId, credential);
 
     try {
       const controller = new AbortController();
@@ -186,7 +188,8 @@ export class ProxyService {
 
   private buildHeaders(
     incomingHeaders: IncomingHttpHeaders,
-    requestId: string
+    requestId: string,
+    credential?: UpstreamCredential | null
   ): Record<string, string> {
     const headers: Record<string, string> = {};
 
@@ -205,6 +208,11 @@ export class ProxyService {
     }
 
     headers["x-nexusx-request-id"] = requestId;
+
+    // Inject upstream provider credential (after stripping buyer auth).
+    if (credential) {
+      headers[credential.headerName.toLowerCase()] = credential.headerValue;
+    }
 
     return headers;
   }
