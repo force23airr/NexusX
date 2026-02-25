@@ -53,6 +53,7 @@ export async function createMcpServer(
       walletPrivateKey: config.cdpWalletPrivateKey,
       apiKeyName: config.cdpApiKeyName,
       apiKeyPrivateKey: config.cdpApiKeyPrivateKey,
+      walletSecret: config.cdpWalletSecret,
       networkId: config.cdpNetworkId,
       walletDataFile: config.cdpWalletDataFile,
     });

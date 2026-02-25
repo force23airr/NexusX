@@ -19,6 +19,7 @@ export interface McpServerConfig {
   cdpWalletPrivateKey?: string;
   cdpApiKeyName?: string;
   cdpApiKeyPrivateKey?: string;
+  cdpWalletSecret?: string;
   cdpNetworkId: string;
   cdpWalletDataFile: string;
 }

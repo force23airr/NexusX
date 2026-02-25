@@ -27,6 +27,7 @@ const configSchema = z.object({
   cdpWalletPrivateKey: z.string().optional(), // Local EOA mode (simpler)
   cdpApiKeyName: z.string().optional(),        // CDP platform mode
   cdpApiKeyPrivateKey: z.string().optional(),  // CDP platform mode
+  cdpWalletSecret: z.string().optional(),        // CDP v2 wallet secret
   cdpNetworkId: z.string().default("base-mainnet"),
   cdpWalletDataFile: z.string().default(".cdp-wallet.json"),
 });
@@ -46,6 +47,7 @@ export function loadConfig(): McpServerConfig {
     cdpWalletPrivateKey: process.env.CDP_WALLET_PRIVATE_KEY,
     cdpApiKeyName: process.env.CDP_API_KEY_NAME,
     cdpApiKeyPrivateKey: process.env.CDP_API_KEY_PRIVATE_KEY,
+    cdpWalletSecret: process.env.CDP_WALLET_SECRET,
     cdpNetworkId: process.env.CDP_NETWORK_ID,
     cdpWalletDataFile: process.env.CDP_WALLET_DATA_FILE,
   };
