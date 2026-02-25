@@ -17,6 +17,7 @@ import Redis from "ioredis";
 import { getPricingEngine } from "../services/pricingEngine";
 import { GROWTH_CONFIG } from "../config/weights";
 import type {
+  AuctionResult,
   DemandState,
   QualityMetrics,
   SupplyState,
@@ -34,6 +35,33 @@ interface PriceTickMessage {
   previousPrice: number;
   changePercent: number;
   direction: "up" | "down" | "flat";
+  timestamp: number;
+  // Enriched fields for agent trajectory awareness
+  multipliers: {
+    demand: number;
+    scarcity: number;
+    quality: number;
+    momentum: number;
+    temporal: number;
+    combined: number;
+  };
+  demandScore: number;
+  demandVelocity: number;
+}
+
+/** Entry stored in Redis sorted set for price history queries. */
+interface PriceHistoryEntry {
+  price: number;
+  floor: number;
+  multipliers: {
+    demand: number;
+    scarcity: number;
+    quality: number;
+    momentum: number;
+    temporal: number;
+    combined: number;
+  };
+  demand: { score: number; velocity: number };
   timestamp: number;
 }
 
@@ -144,24 +172,33 @@ export class PriceUpdater {
             ? ((result.price - previousPrice) / previousPrice) * 100
             : 0;
 
-        // Publish to Redis
+        const now = Date.now();
+        const roundedChangePercent = Math.round(changePercent * 100) / 100;
+
+        // Publish enriched tick to Redis pub/sub (real-time stream)
         const tick: PriceTickMessage = {
           slug: listing.slug,
           name: listing.name,
           listingId: listing.id,
           currentPrice: result.price,
           previousPrice,
-          changePercent: Math.round(changePercent * 100) / 100,
+          changePercent: roundedChangePercent,
           direction: changePercent > 0 ? "up" : changePercent < 0 ? "down" : "flat",
-          timestamp: Date.now(),
+          timestamp: now,
+          multipliers: result.multipliers,
+          demandScore: result.inputs.demand.score,
+          demandVelocity: result.inputs.demand.velocity,
         };
         await this.redis.publish("nexusx:prices", JSON.stringify(tick));
 
-        // Persist to DB
+        // Persist current price to listing (critical path)
         await this.prisma.listing.update({
           where: { id: listing.id },
           data: { currentPriceUsdc: result.price },
         });
+
+        // Persist snapshot + auction result + Redis history (non-critical)
+        await this.persistHistory(listing, result, previousPrice, roundedChangePercent, now);
       }
 
       const elapsed = Date.now() - startMs;
@@ -172,6 +209,81 @@ export class PriceUpdater {
       }
     } catch (err) {
       console.error("[PriceUpdater] Cycle error:", err);
+    }
+  }
+
+  // ─── History Persistence ───
+
+  /**
+   * Persist price snapshot, auction result, and Redis history entry.
+   * Wrapped in try/catch — a missing snapshot is acceptable,
+   * a missed price update is not.
+   */
+  private async persistHistory(
+    listing: { id: string; slug: string; floorPriceUsdc: { toNumber(): number }; ceilingPriceUsdc: { toNumber(): number } | null },
+    result: AuctionResult,
+    previousPrice: number,
+    changePercent: number,
+    timestamp: number,
+  ): Promise<void> {
+    try {
+      const floorNum = listing.floorPriceUsdc.toNumber();
+      const ceilingNum = listing.ceilingPriceUsdc?.toNumber() ?? null;
+
+      // 1. Persist PriceSnapshot to database
+      await this.prisma.priceSnapshot.create({
+        data: {
+          listingId: listing.id,
+          floorPrice: floorNum,
+          ceilingPrice: ceilingNum,
+          currentPrice: result.price,
+          previousPrice,
+          priceChangePct: changePercent,
+          demandMultiplier: result.multipliers.demand,
+          scarcityMultiplier: result.multipliers.scarcity,
+          qualityMultiplier: result.multipliers.quality,
+          momentumMultiplier: result.multipliers.momentum,
+          temporalMultiplier: result.multipliers.temporal,
+          combinedMultiplier: result.multipliers.combined,
+          windowsAtFloor: result.price === floorNum ? 1 : 0,
+          windowsAtCeiling: ceilingNum !== null && result.price === ceilingNum ? 1 : 0,
+          computedAt: new Date(timestamp),
+        },
+      });
+
+      // 2. Persist AuctionResult to database
+      await this.prisma.auctionResult.create({
+        data: {
+          listingId: listing.id,
+          price: result.price,
+          floorPrice: result.floorPrice,
+          multipliers: result.multipliers as object,
+          inputs: result.inputs as object,
+          computeTimeUs: result.computeTimeUs,
+          computedAt: new Date(timestamp),
+        },
+      });
+
+      // 3. Push to Redis sorted set for fast history queries
+      const historyKey = `nexusx:price_history:${listing.slug}`;
+      const entry: PriceHistoryEntry = {
+        price: result.price,
+        floor: floorNum,
+        multipliers: result.multipliers,
+        demand: {
+          score: result.inputs.demand.score,
+          velocity: result.inputs.demand.velocity,
+        },
+        timestamp,
+      };
+      await this.redis.zadd(historyKey, timestamp, JSON.stringify(entry));
+
+      // Trim to last 24 hours
+      const cutoff = timestamp - 24 * 60 * 60 * 1000;
+      await this.redis.zremrangebyscore(historyKey, 0, cutoff);
+    } catch (err) {
+      // Non-critical — log and continue
+      console.error("[PriceUpdater] Failed to persist history:", err);
     }
   }
 

@@ -20,6 +20,7 @@ import { BillingService } from "./services/billingService";
 import { PriceWebSocketServer } from "./services/priceWebSocket";
 import { createProxyRoute, extractListingSlug } from "./routes/proxy";
 import { createHealthRoutes } from "./routes/health";
+import { createPriceHistoryRoutes } from "./routes/price-history";
 import type {
   GatewayConfig,
   DemandSignalEvent,
@@ -29,6 +30,8 @@ import { DEFAULT_GATEWAY_CONFIG } from "./types";
 import type { ApiKeyLookupFn, ApiKeyTouchFn } from "./middleware/auth";
 import type { ListingLookupFn, ListingByIdFn } from "./services/routeResolver";
 import type { TransactionPersistFn } from "./services/billingService";
+import type Redis from "ioredis";
+import type { PrismaClient } from "@prisma/client";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -48,6 +51,10 @@ export interface GatewayDependencies {
   persistTransaction: TransactionPersistFn;
   /** Pub/Sub: Emit demand signal to auction engine. */
   emitDemandSignal: (signal: DemandSignalEvent) => void;
+  /** Redis client for price history sorted sets (optional). */
+  redis?: Redis;
+  /** Prisma client for price history fallback (optional). */
+  prisma?: PrismaClient;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -108,6 +115,11 @@ export function createGatewayApp(
       startedAt,
     })
   );
+
+  // Price history endpoint (public, no auth required)
+  if (deps.redis && deps.prisma) {
+    app.use(createPriceHistoryRoutes(deps.redis, deps.prisma));
+  }
 
   // ─── Auth + payment middleware ───
   const authMiddleware = createAuthMiddleware(deps.lookupApiKey, deps.touchApiKey);

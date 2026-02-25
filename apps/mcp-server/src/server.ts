@@ -17,10 +17,11 @@ import { BudgetTracker } from "./services/budget-tracker";
 import { PriceSubscriber } from "./services/price-subscriber";
 import { createListingsResourceHandler, createListingDetailResourceHandler } from "./resources/listings";
 import { createCategoriesResourceHandler } from "./resources/categories";
-import { createPricesResourceHandler } from "./resources/prices";
+import { createPricesResourceHandler, createPriceHistoryResourceHandler } from "./resources/prices";
 import { createWalletResourceHandler } from "./resources/wallet";
 import { createSetBudgetHandler, createBudgetStatusHandler, createPriceCheckHandler } from "./prompts/budget";
 import { createFindApiHandler } from "./prompts/discovery";
+import { createPriceTrajectoryHandler } from "./prompts/trajectory";
 import type { PrismaClient } from "@prisma/client";
 
 export interface McpServerContext {
@@ -41,7 +42,7 @@ export async function createMcpServer(
   const gateway = new GatewayClient(config.gatewayUrl, config.apiKey, config.sandbox);
   const discovery = new DiscoveryService(prisma);
   const budget = new BudgetTracker(config.sessionBudgetUsdc);
-  const priceSubscriber = new PriceSubscriber(config.redisUrl);
+  const priceSubscriber = new PriceSubscriber(config.redisUrl, config.gatewayUrl);
   const registry = new ToolRegistry(discovery);
   const executor = new ToolExecutor(registry, gateway, budget);
 
@@ -133,6 +134,17 @@ export async function createMcpServer(
     }),
   );
 
+  // nexusx://prices/history/{slug} — price history + trajectory analysis
+  const priceHistoryHandler = createPriceHistoryResourceHandler(priceSubscriber);
+  server.resource(
+    "price-history",
+    new ResourceTemplate("nexusx://prices/history/{slug}", { list: undefined }),
+    { description: "Price history and trajectory analysis for a specific API listing. Shows price trends, multiplier breakdown, demand signals, and an actionable recommendation (execute now vs. wait)." },
+    async (uri, { slug }) => ({
+      contents: [{ uri: uri.href, mimeType: "application/json", text: await priceHistoryHandler(slug as string) }],
+    }),
+  );
+
   // nexusx://wallet — agent's wallet balance + session budget
   const walletHandler = createWalletResourceHandler(discovery, budget, config.apiKey);
   server.resource(
@@ -179,6 +191,17 @@ export async function createMcpServer(
       budget_max_usdc: z.string().optional().describe("Maximum price per call in USDC (e.g., '0.01')"),
     },
     async (args) => findApiHandler(args),
+  );
+
+  const priceTrajectoryHandler = createPriceTrajectoryHandler(priceSubscriber, budget);
+  server.prompt(
+    "nexusx_price_trajectory",
+    "Analyze the price trajectory for an API listing. Returns multiplier breakdown, demand trends, and a recommendation on whether to execute now or wait for a better price.",
+    {
+      slug: z.string().describe("Listing slug (e.g., 'openai-gpt4-turbo')"),
+      budget_max_usdc: z.string().optional().describe("Your maximum acceptable price per call in USDC (e.g., '0.01')"),
+    },
+    async (args) => priceTrajectoryHandler(args),
   );
 
   // ─── Cleanup ───

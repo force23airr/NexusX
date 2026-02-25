@@ -6,6 +6,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { PrismaClient } from "@prisma/client";
+import Redis from "ioredis";
 import { startGateway } from "./server";
 import type { GatewayDependencies } from "./server";
 import { PriceWebSocketServer } from "./services/priceWebSocket";
@@ -103,5 +104,11 @@ const deps: GatewayDependencies = {
 
 const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
 const priceWs = new PriceWebSocketServer(redisUrl);
+
+// Redis client for price history queries (separate from pub/sub)
+const redisClient = new Redis(redisUrl);
+
+deps.redis = redisClient;
+deps.prisma = prisma;
 
 startGateway(deps, undefined, priceWs);

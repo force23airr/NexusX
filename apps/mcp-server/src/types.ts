@@ -65,7 +65,7 @@ export interface BudgetState {
   }>;
 }
 
-/** Price tick from the Redis stream. */
+/** Price tick from the Redis stream (enriched with multiplier data). */
 export interface PriceTick {
   listingId: string;
   slug: string;
@@ -74,6 +74,42 @@ export interface PriceTick {
   previousPrice: number;
   changePercent: number;
   direction: "up" | "down" | "flat";
+  timestamp?: number;
+  multipliers?: PriceMultipliers;
+  demandScore?: number;
+  demandVelocity?: number;
+}
+
+/** Multiplier breakdown from the pricing engine. */
+export interface PriceMultipliers {
+  demand: number;
+  scarcity: number;
+  quality: number;
+  momentum: number;
+  temporal: number;
+  combined: number;
+}
+
+/** A single point in price history. */
+export interface PriceHistoryPoint {
+  price: number;
+  timestamp: number;
+  multipliers?: PriceMultipliers;
+  demandScore?: number;
+  demandVelocity?: number;
+}
+
+/** Computed trajectory analysis for agent decision-making. */
+export interface PriceTrajectory {
+  direction: "rising_fast" | "rising" | "stable" | "falling" | "falling_fast";
+  priceChange5m: number;
+  priceChange15m: number;
+  priceChange1h: number;
+  demandTrend: "accelerating" | "stable" | "decelerating";
+  velocityAvg: number;
+  support: number;
+  resistance: number;
+  recommendation: string;
 }
 
 /** Category tree node. */
