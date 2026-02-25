@@ -2,42 +2,61 @@
 // NexusX — MCP Wallet Resource
 // apps/mcp-server/src/resources/wallet.ts
 //
-// Resource: nexusx://wallet — agent's USDC balance + session budget
+// Resource: nexusx://wallet — agent's USDC balance + session spend
+//
+// When a CDP wallet is configured, shows the live on-chain USDC
+// balance from the Coinbase CDP API.
+// Falls back to the internal DB wallet for API key auth mode.
 // ═══════════════════════════════════════════════════════════════
 
 import type { DiscoveryService } from "../services/discovery";
 import type { BudgetTracker } from "../services/budget-tracker";
+import type { CdpWalletService } from "../services/cdp-wallet";
 
 export function createWalletResourceHandler(
   discovery: DiscoveryService,
   budget: BudgetTracker,
   apiKey: string,
+  cdpWallet?: CdpWalletService,
 ) {
   return async (): Promise<string> => {
-    // Extract prefix from API key (first 8 chars after "nxs_")
-    const prefix = apiKey.startsWith("nxs_") ? apiKey.slice(4, 12) : apiKey.slice(0, 8);
-    const wallet = await discovery.getUserWallet(prefix);
     const budgetState = budget.getState();
-
     const result: Record<string, unknown> = {};
 
-    if (wallet) {
+    if (cdpWallet?.isAvailable) {
+      // x402 mode — read live on-chain balance from CDP API
+      const [address, balanceUsdc] = await Promise.all([
+        cdpWallet.getAddress(),
+        cdpWallet.getUsdcBalance(),
+      ]);
       result.wallet = {
-        address: wallet.address,
-        balance: `$${wallet.balanceUsdc.toFixed(6)} USDC`,
-        escrow: `$${wallet.escrowUsdc.toFixed(6)} USDC`,
+        address,
+        balance: `$${balanceUsdc.toFixed(6)} USDC`,
+        source: "cdp_on_chain",
+        network: "Base",
+        note: "Fund this address with USDC on Base to pay for API calls.",
       };
+    } else if (apiKey) {
+      // API key mode — fall back to internal DB wallet
+      const prefix = apiKey.startsWith("nxs_") ? apiKey.slice(4, 12) : apiKey.slice(0, 8);
+      const wallet = await discovery.getUserWallet(prefix);
+      if (wallet) {
+        result.wallet = {
+          address: wallet.address,
+          balance: `$${wallet.balanceUsdc.toFixed(6)} USDC`,
+          escrow: `$${wallet.escrowUsdc.toFixed(6)} USDC`,
+          source: "db_internal",
+        };
+      } else {
+        result.wallet = { message: "No wallet found for this API key." };
+      }
     } else {
-      result.wallet = { message: "No wallet found for this API key." };
+      result.wallet = { message: "No wallet configured. Set CDP_API_KEY_NAME to enable on-chain payments." };
     }
 
-    result.sessionBudget = {
-      limit: budgetState.limitUsdc === 0 ? "unlimited" : `$${budgetState.limitUsdc.toFixed(6)} USDC`,
+    // Session spend tracking — shown in both modes
+    result.sessionSpend = {
       spent: `$${budgetState.spentUsdc.toFixed(6)} USDC`,
-      remaining:
-        budgetState.limitUsdc === 0
-          ? "unlimited"
-          : `$${budgetState.remainingUsdc.toFixed(6)} USDC`,
       callCount: budgetState.callCount,
     };
 

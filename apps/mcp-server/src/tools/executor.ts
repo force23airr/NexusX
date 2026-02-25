@@ -9,8 +9,11 @@
 import type { GatewayClient } from "../services/gateway-client";
 import type { BudgetTracker } from "../services/budget-tracker";
 import type { DiscoveryService } from "../services/discovery";
-import type { BundleDefinition, DiscoveredListing } from "../types";
+import type { CdpWalletService } from "../services/cdp-wallet";
+import type { BundleDefinition, DiscoveredListing, ToolExecutionResult } from "../types";
 import type { ToolRegistry } from "./registry";
+// Used only for type inference of callListing parameters
+type CallListingParams = Parameters<GatewayClient["callListing"]>[0];
 
 interface ExecuteToolArgs {
   path?: string;
@@ -39,6 +42,7 @@ export class ToolExecutor {
     private registry: ToolRegistry,
     private gateway: GatewayClient,
     private budget: BudgetTracker,
+    private cdpWallet?: CdpWalletService,
   ) {}
 
   /** Inject discovery service for alternative suggestions. */
@@ -74,19 +78,8 @@ export class ToolExecutor {
   ): Promise<ToolCallResult> {
     const { path, method, body, query, headers } = args;
 
-    // 1. Pre-call budget check
-    if (!this.budget.canAfford(listing.currentPriceUsdc)) {
-      const state = this.budget.getState();
-      return this.errorResult(
-        `Budget exceeded. This call costs $${listing.currentPriceUsdc.toFixed(6)} USDC, ` +
-        `but you only have $${state.remainingUsdc.toFixed(6)} remaining ` +
-        `(spent $${state.spentUsdc.toFixed(6)} of $${state.limitUsdc.toFixed(6)} limit). ` +
-        `Use the nexusx_set_budget prompt to increase your limit, or choose a cheaper API.`,
-      );
-    }
-
-    // 3. Execute through gateway
-    const result = await this.gateway.callListing({
+    // Execute through gateway with automatic x402 payment retry
+    const result = await this.callWithX402({
       slug: listing.slug,
       method: (method || "POST").toUpperCase(),
       path: path || "/",
@@ -163,16 +156,6 @@ export class ToolExecutor {
     const failFast = args.fail_fast !== false;
     const returnIntermediate = args.return_intermediate === true;
 
-    // Pre-call budget check uses bundle price target (actual settlement).
-    if (!this.budget.canAfford(bundle.bundlePriceUsdc)) {
-      const state = this.budget.getState();
-      return this.errorResult(
-        `Budget exceeded for bundle ${bundle.slug}. This bundle settles at approximately ` +
-        `$${bundle.bundlePriceUsdc.toFixed(6)} USDC (gross list $${bundle.grossPriceUsdc.toFixed(6)}), ` +
-        `but only $${state.remainingUsdc.toFixed(6)} remains.`,
-      );
-    }
-
     let registration;
     try {
       registration = await this.gateway.registerBundleSession({
@@ -213,7 +196,7 @@ export class ToolExecutor {
     for (let i = 0; i < bundle.steps.length; i++) {
       const step = bundle.steps[i];
 
-      const result = await this.gateway.callListing({
+      const result = await this.callWithX402({
         slug: step.slug,
         method,
         path,
@@ -320,6 +303,54 @@ export class ToolExecutor {
     }
 
     return { content: contents };
+  }
+
+  /**
+   * Execute a gateway call with automatic x402 payment retry.
+   *
+   * Flow:
+   *   1. First attempt with no payment header.
+   *   2. If gateway returns 402 and a CDP wallet is available:
+   *      a. Extract payment requirements from response body.
+   *      b. Sign with CDP wallet (EIP-3009 off-chain authorization).
+   *      c. Retry once with X-Payment header.
+   *   3. Any other status code is returned directly.
+   */
+  private async callWithX402(params: CallListingParams): Promise<ToolExecutionResult> {
+    const first = await this.gateway.callListing(params);
+
+    // Not a 402 or no CDP wallet — return as-is
+    if (first.statusCode !== 402 || !this.cdpWallet?.isAvailable) {
+      return first;
+    }
+
+    const requirements = first.paymentRequired;
+    if (!requirements || requirements.length === 0) {
+      // 402 but no parseable payment requirements — surface as error
+      return first;
+    }
+
+    // Sign the first accepted payment requirement
+    let xPayment: string;
+    try {
+      xPayment = await this.cdpWallet.buildPaymentHeader(requirements[0]);
+    } catch (err) {
+      const walletAddress = await this.cdpWallet.getAddress().catch(() => "unknown");
+      const balance = await this.cdpWallet.getUsdcBalance().catch(() => 0);
+      return {
+        ...first,
+        body: JSON.stringify({
+          error: "PAYMENT_SIGNING_FAILED",
+          message:
+            `CDP wallet failed to sign x402 payment: ${err instanceof Error ? err.message : "unknown error"}. ` +
+            `Wallet: ${walletAddress} | Balance: $${balance.toFixed(6)} USDC. ` +
+            `Fund this wallet with USDC on Base to enable autonomous payments.`,
+        }),
+      };
+    }
+
+    // Retry with payment header
+    return this.gateway.callListing({ ...params, xPayment });
   }
 
   /**

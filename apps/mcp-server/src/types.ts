@@ -15,6 +15,12 @@ export interface McpServerConfig {
   redisUrl: string;
   databaseUrl: string;
   debug: boolean;
+  // ─── CDP Server Wallet (x402 on-chain payments) ───
+  cdpWalletPrivateKey?: string;
+  cdpApiKeyName?: string;
+  cdpApiKeyPrivateKey?: string;
+  cdpNetworkId: string;
+  cdpWalletDataFile: string;
 }
 
 /** A discovered listing ready for MCP tool registration. */
@@ -67,6 +73,19 @@ export interface BundleDefinition {
   score: number;
 }
 
+/** x402 payment requirements from a 402 response. */
+export interface X402PaymentRequirements {
+  scheme: string;
+  network: string;
+  maxAmountRequired: string;
+  payTo: string;
+  asset: string;
+  maxTimeoutSeconds: number;
+  resource?: string;
+  description?: string;
+  extra?: { name: string; version: string };
+}
+
 /** Result of executing a tool through the gateway. */
 export interface ToolExecutionResult {
   success: boolean;
@@ -81,6 +100,8 @@ export interface ToolExecutionResult {
   quotedPriceUsdc?: number;
   bundleSessionId?: string;
   bundleStepIndex?: number;
+  /** Populated when statusCode is 402 — contains payment requirements from the gateway. */
+  paymentRequired?: X402PaymentRequirements[];
 }
 
 /** Session-scoped budget state. */

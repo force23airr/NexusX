@@ -13,6 +13,10 @@ build/
 .env.local
 .env.*.local
 
+# CDP wallet seed file — contains private key material, never commit
+.cdp-wallet.json
+*.cdp-wallet.json
+
 # IDE
 .vscode/
 .idea/

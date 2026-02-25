@@ -8,7 +8,7 @@ import type { McpServerConfig } from "./types";
 
 const configSchema = z.object({
   gatewayUrl: z.string().url().default("http://localhost:3100"),
-  apiKey: z.string().min(1, "NEXUSX_API_KEY is required"),
+  apiKey: z.string().optional().default(""),
   transport: z.enum(["stdio", "http"]).default("stdio"),
   httpPort: z.coerce.number().int().positive().default(3400),
   registryRefreshMs: z.coerce.number().int().positive().default(60_000),
@@ -23,6 +23,12 @@ const configSchema = z.object({
     .string()
     .transform((v) => v === "true")
     .default("false"),
+  // ─── CDP Server Wallet ───
+  cdpWalletPrivateKey: z.string().optional(), // Local EOA mode (simpler)
+  cdpApiKeyName: z.string().optional(),        // CDP platform mode
+  cdpApiKeyPrivateKey: z.string().optional(),  // CDP platform mode
+  cdpNetworkId: z.string().default("base-mainnet"),
+  cdpWalletDataFile: z.string().default(".cdp-wallet.json"),
 });
 
 export function loadConfig(): McpServerConfig {
@@ -37,6 +43,11 @@ export function loadConfig(): McpServerConfig {
     redisUrl: process.env.REDIS_URL,
     databaseUrl: process.env.DATABASE_URL,
     debug: process.env.NEXUSX_DEBUG,
+    cdpWalletPrivateKey: process.env.CDP_WALLET_PRIVATE_KEY,
+    cdpApiKeyName: process.env.CDP_API_KEY_NAME,
+    cdpApiKeyPrivateKey: process.env.CDP_API_KEY_PRIVATE_KEY,
+    cdpNetworkId: process.env.CDP_NETWORK_ID,
+    cdpWalletDataFile: process.env.CDP_WALLET_DATA_FILE,
   };
 
   const result = configSchema.safeParse(raw);

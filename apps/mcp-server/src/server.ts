@@ -15,6 +15,7 @@ import { DiscoveryService } from "./services/discovery";
 import { GatewayClient } from "./services/gateway-client";
 import { BudgetTracker } from "./services/budget-tracker";
 import { PriceSubscriber } from "./services/price-subscriber";
+import { CdpWalletService } from "./services/cdp-wallet";
 import { createListingsResourceHandler, createListingDetailResourceHandler } from "./resources/listings";
 import { createCategoriesResourceHandler } from "./resources/categories";
 import { createPricesResourceHandler, createPriceHistoryResourceHandler } from "./resources/prices";
@@ -42,14 +43,31 @@ export async function createMcpServer(
   config: McpServerConfig,
   prisma: PrismaClient,
 ): Promise<McpServerContext> {
+  // ─── CDP Server Wallet (optional — enables x402 on-chain payments) ───
+  let cdpWallet: CdpWalletService | undefined;
+  const hasCdpConfig =
+    !!config.cdpWalletPrivateKey ||
+    (!!config.cdpApiKeyName && !!config.cdpApiKeyPrivateKey);
+  if (hasCdpConfig) {
+    cdpWallet = new CdpWalletService({
+      walletPrivateKey: config.cdpWalletPrivateKey,
+      apiKeyName: config.cdpApiKeyName,
+      apiKeyPrivateKey: config.cdpApiKeyPrivateKey,
+      networkId: config.cdpNetworkId,
+      walletDataFile: config.cdpWalletDataFile,
+    });
+    await cdpWallet.initialize();
+  }
+
   // ─── Services ───
-  const gateway = new GatewayClient(config.gatewayUrl, config.apiKey, config.sandbox);
+  const x402Mode = !!cdpWallet;
+  const gateway = new GatewayClient(config.gatewayUrl, config.apiKey, config.sandbox, x402Mode);
   const discovery = new DiscoveryService(prisma);
   const bundleEngine = new BundleEngine(prisma);
   const budget = new BudgetTracker(config.sessionBudgetUsdc);
   const priceSubscriber = new PriceSubscriber(config.redisUrl, config.gatewayUrl);
   const registry = new ToolRegistry(discovery, bundleEngine);
-  const executor = new ToolExecutor(registry, gateway, budget);
+  const executor = new ToolExecutor(registry, gateway, budget, cdpWallet);
   executor.setDiscoveryService(discovery);
 
   // ─── MCP Server ───
@@ -61,6 +79,7 @@ export async function createMcpServer(
   // ─── Initialize ───
   await registry.initialize();
   console.error(`[MCP] Loaded ${registry.size} tools from marketplace listings.`);
+  console.error(`[MCP] Payment mode: ${x402Mode ? "x402 on-chain (CDP wallet)" : "API key (in-memory budget)"}`);
 
   // Start background services
   registry.startRefresh(config.registryRefreshMs);
@@ -154,7 +173,7 @@ export async function createMcpServer(
   );
 
   // nexusx://wallet — agent's wallet balance + session budget
-  const walletHandler = createWalletResourceHandler(discovery, budget, config.apiKey);
+  const walletHandler = createWalletResourceHandler(discovery, budget, config.apiKey, cdpWallet);
   server.resource(
     "wallet",
     "nexusx://wallet",

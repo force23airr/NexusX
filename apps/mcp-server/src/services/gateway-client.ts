@@ -6,7 +6,7 @@
 // Follows the pattern from packages/sdk/src/common/httpClient.ts.
 // ═══════════════════════════════════════════════════════════════
 
-import type { ToolExecutionResult } from "../types";
+import type { ToolExecutionResult, X402PaymentRequirements } from "../types";
 
 export interface BundleSessionRegistrationResult {
   bundleSessionId: string;
@@ -48,11 +48,19 @@ export class GatewayClient {
   private baseUrl: string;
   private apiKey: string;
   private sandbox: boolean;
+  /** When true, proxy calls use x402 payment headers instead of Bearer auth. */
+  private x402Mode: boolean;
 
-  constructor(gatewayUrl: string, apiKey: string, sandbox: boolean = false) {
+  constructor(
+    gatewayUrl: string,
+    apiKey: string,
+    sandbox: boolean = false,
+    x402Mode: boolean = false,
+  ) {
     this.baseUrl = gatewayUrl.replace(/\/+$/, "");
     this.apiKey = apiKey;
     this.sandbox = sandbox;
+    this.x402Mode = x402Mode;
   }
 
   /**
@@ -68,6 +76,8 @@ export class GatewayClient {
     headers?: Record<string, string>;
     bundleSessionId?: string;
     bundleStepIndex?: number;
+    /** x402 payment header (base64-encoded payment proof). */
+    xPayment?: string;
   }): Promise<ToolExecutionResult> {
     const {
       slug,
@@ -78,6 +88,7 @@ export class GatewayClient {
       headers: extraHeaders,
       bundleSessionId,
       bundleStepIndex,
+      xPayment,
     } = params;
 
     // Build URL: /v1/{slug}/{path}
@@ -90,13 +101,20 @@ export class GatewayClient {
       }
     }
 
-    // Build headers
+    // Build headers.
+    // In x402 mode, omit Authorization and include X-Payment instead.
+    // In API key mode (or when no payment header is present yet), send Bearer auth.
     const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.apiKey}`,
       "Content-Type": "application/json",
       "X-SDK-Client": "nexusx-mcp-server",
       ...extraHeaders,
     };
+
+    if (xPayment) {
+      headers["X-Payment"] = xPayment;
+    } else if (!this.x402Mode && this.apiKey) {
+      headers["Authorization"] = `Bearer ${this.apiKey}`;
+    }
 
     if (this.sandbox) {
       headers["X-NexusX-Sandbox"] = "true";
@@ -119,6 +137,26 @@ export class GatewayClient {
 
     try {
       const response = await fetch(url.toString(), init);
+
+      // ─── Handle 402 Payment Required ───
+      // Return early with parsed payment requirements so the executor
+      // can sign and retry without reading the body twice.
+      if (response.status === 402) {
+        const body402 = await response.text();
+        return {
+          success: false,
+          statusCode: 402,
+          body: body402,
+          paymentRequired: tryParsePaymentRequirements(body402),
+          priceUsdc: 0,
+          platformFeeUsdc: 0,
+          latencyMs: 0,
+          requestId: "",
+          isSandbox: this.sandbox,
+          billingMode: "individual",
+          quotedPriceUsdc: 0,
+        };
+      }
 
       // Extract NexusX metadata headers
       const priceUsdc = parseFloat(response.headers.get("x-nexusx-price-usdc") || "0");
@@ -339,4 +377,27 @@ async function safeJson(response: Response): Promise<any> {
   } catch {
     return { message: text };
   }
+}
+
+/**
+ * Parse x402 payment requirements from a 402 response body.
+ * The spec puts requirements in the `accepts` array.
+ */
+function tryParsePaymentRequirements(body: string): X402PaymentRequirements[] | undefined {
+  try {
+    const parsed = JSON.parse(body) as Record<string, unknown>;
+    if (!Array.isArray(parsed.accepts)) return undefined;
+    return (parsed.accepts as unknown[]).filter(isPaymentRequirement);
+  } catch {
+    return undefined;
+  }
+}
+
+function isPaymentRequirement(v: unknown): v is X402PaymentRequirements {
+  return (
+    typeof v === "object" &&
+    v !== null &&
+    typeof (v as Record<string, unknown>).payTo === "string" &&
+    typeof (v as Record<string, unknown>).maxAmountRequired === "string"
+  );
 }

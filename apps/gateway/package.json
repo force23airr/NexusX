@@ -18,9 +18,9 @@
     "ws": "^8.18.0",
     "@nexusx/database": "*",
     "@nexusx/types": "*",
-    "@x402/core": "^0.1.0",
-    "@x402/evm": "^0.1.0",
-    "@x402/express": "^0.1.0"
+    "@x402/core": "^2.4.0",
+    "@x402/evm": "^2.4.0",
+    "@x402/express": "^2.4.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.0",
