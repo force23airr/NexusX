@@ -68,6 +68,29 @@ Review every changed file against these threat categories. For each finding, ass
 - Unbounded loops or pagination with no limit cap
 - Missing timeouts on external API calls
 
+**Data Leak Detection**
+- API response objects returning more fields than needed — check Prisma `include`/`select` shapes; a missing `select` returns every column including sensitive ones
+- `console.log` / `console.error` statements logging sensitive objects: API keys, wallet addresses, raw queries, payment amounts, private keys, user PII
+- Embedding generation or LLM calls (Anthropic/OpenAI) that include sensitive user data, wallet addresses, or internal pricing state in the prompt payload
+- Redis cache entries storing raw sensitive data with no TTL or an excessively long TTL (e.g. agent query text cached as plain string rather than hashed key)
+- `QueryLog` table storing raw agent queries (`rawQuery`, `normalizedQuery`) — verify rows are scoped to the correct `buyerId` and cannot be read cross-user
+- Error responses including internal DB row IDs, schema field names, SQL fragments, file paths, or stack traces
+- Audit logs (`AuditLog`) containing `before`/`after` JSON snapshots that include secrets or private keys
+- Synthetic query generation sending listing descriptions to external LLM APIs — confirm no user PII or wallet data leaks into that payload
+- Any new field added to a Prisma model that isn't explicitly excluded from API responses
+
+**MCP Agent Trail & Tool Leakage**
+- MCP tool responses that expose internal infrastructure: raw DB UUIDs, internal base URLs, pricing engine multiplier details, or settlement contract addresses beyond what the agent needs
+- `QueryLog` rows not scoped per buyer — one agent being able to read another agent's search history via the `nexusx://` resource endpoints
+- Redis streams/keys (`nexusx:prices:*`, `nexusx:qembed:*`, `nexusx:reliability:*`) accessible without authentication — any new subscriber or key pattern that doesn't require a valid API key
+- Budget tracker state leaking between agent sessions — session budget, spending history, or call log accessible beyond the current session scope
+- Tool registry caching the full listing schema (including `baseUrl`, `healthCheckUrl`, `sandboxUrl`) in MCP tool descriptions where agents can read internal endpoint structure
+- MCP tool error messages revealing gateway URLs, internal service ports, or upstream error details from third-party providers
+- Agent query patterns stored in `QueryLog` in a way that exposes competitive intelligence (e.g., which tools a buyer is evaluating) to providers or other buyers
+- New MCP resources or prompts added without checking whether they require authentication (`apiKey` header validation in the gateway)
+- `AuditLog` entries deletable or mutable — verify `AuditAction` records are append-only
+- Price ticks or demand signals flowing through Redis that could be intercepted to front-run auction pricing
+
 ## Step 3: Report
 
 Output a structured report in this format:

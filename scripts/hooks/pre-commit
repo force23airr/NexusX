@@ -53,6 +53,19 @@ Run `git diff --staged` to get the staged changes, then audit them for:
 8. XSS via dangerouslySetInnerHTML or unsanitised URL interpolation
 9. Weak crypto (Math.random for tokens, MD5/SHA1 for security purposes)
 10. Expensive unguarded operations (DB queries, LLM calls) with no rate limiting
+11. DATA LEAKS — Prisma includes/selects returning more fields than needed; console.log
+    logging sensitive objects (API keys, wallet addresses, payment data, raw queries);
+    LLM API calls (OpenAI/Anthropic) that include sensitive user data in prompts;
+    Redis cache entries storing raw sensitive data with no TTL; error responses leaking
+    DB IDs, schema names, SQL fragments, or stack traces; any new Prisma model field
+    not explicitly excluded from API responses
+12. MCP AGENT TRAIL — MCP tool responses exposing internal infrastructure (raw UUIDs,
+    base URLs, pricing engine state); QueryLog rows not scoped per buyer (cross-agent
+    query history leakage); Redis streams (nexusx:prices:*, nexusx:qembed:*) accessible
+    without auth; budget tracker state leaking between agent sessions; tool registry
+    exposing baseUrl/healthCheckUrl in MCP descriptions; new MCP resources added without
+    API key validation; price ticks/demand signals in Redis that could be intercepted
+    to front-run auction pricing; AuditLog entries that are mutable or deletable
 
 Assign each finding: CRITICAL, HIGH, MEDIUM, or LOW.
 
