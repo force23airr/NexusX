@@ -191,7 +191,7 @@ export function createGatewayApp(
     });
 
     app.use(
-      "/v1/:listingSlug",
+      "/v1",
       x402Middleware,
       rateLimitMiddleware,
       proxyRoute

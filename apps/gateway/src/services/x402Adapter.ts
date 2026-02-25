@@ -65,11 +65,27 @@ export interface SettleResult {
 // ADAPTER
 // ─────────────────────────────────────────────────────────────
 
+// USDC contract addresses per network
+const USDC_ADDRESSES: Record<string, string> = {
+  "base-mainnet": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  "base-sepolia": "0x036CbD53842c5426634e7929541eC2318f3dCF7e",
+};
+
+// EIP-712 domain names for USDC per network (must match the on-chain contract)
+const USDC_DOMAIN_NAMES: Record<string, string> = {
+  "base-mainnet": "USD Coin",
+  "base-sepolia": "USDC",
+};
+
 export class X402Adapter {
   private config: X402AdapterConfig;
+  private readonly usdcAddress: string;
+  private readonly usdcDomainName: string;
 
   constructor(config: X402AdapterConfig) {
     this.config = config;
+    this.usdcAddress = USDC_ADDRESSES[config.network] ?? USDC_ADDRESSES["base-mainnet"];
+    this.usdcDomainName = USDC_DOMAIN_NAMES[config.network] ?? USDC_DOMAIN_NAMES["base-mainnet"];
   }
 
   /**
@@ -94,10 +110,12 @@ export class X402Adapter {
       mimeType: "application/json",
       payTo: this.config.platformAddress,
       maxTimeoutSeconds: 30,
-      asset: "USDC",
+      asset: this.usdcAddress,
       extra: {
-        name: "NexusX",
-        version: "1.0.0",
+        // EIP-712 domain for USDC's transferWithAuthorization (EIP-3009).
+        // Must match the USDC contract's on-chain domain.
+        name: this.usdcDomainName,
+        version: "2",
       },
     };
   }
@@ -123,11 +141,19 @@ export class X402Adapter {
     paymentRequirement: PaymentRequirement
   ): Promise<VerifyResult> {
     try {
+      // Decode the base64 X-Payment header into the payment payload object
+      let paymentPayload: unknown;
+      try {
+        paymentPayload = JSON.parse(Buffer.from(paymentHeader, "base64").toString("utf8"));
+      } catch {
+        return { valid: false, invalidReason: "Invalid X-Payment header: not valid base64 JSON" };
+      }
+
       const response = await fetch(`${this.config.facilitatorUrl}/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          payment: paymentHeader,
+          paymentPayload,
           paymentRequirements: paymentRequirement,
         }),
       });
@@ -138,11 +164,13 @@ export class X402Adapter {
       }
 
       const result = await response.json();
+      // Facilitator returns { isValid, payer, invalidReason, invalidMessage }
+      const isValid = result.isValid === true;
       return {
-        valid: result.valid === true,
-        payerAddress: result.payerAddress,
+        valid: isValid,
+        payerAddress: result.payer ?? result.payerAddress,
         txHash: result.txHash,
-        invalidReason: result.valid ? undefined : (result.invalidReason || "Payment verification failed"),
+        invalidReason: isValid ? undefined : (result.invalidReason || result.invalidMessage || "Payment verification failed"),
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -158,11 +186,18 @@ export class X402Adapter {
     paymentRequirement: PaymentRequirement
   ): Promise<SettleResult> {
     try {
+      let paymentPayload: unknown;
+      try {
+        paymentPayload = JSON.parse(Buffer.from(paymentHeader, "base64").toString("utf8"));
+      } catch {
+        return { success: false, error: "Invalid X-Payment header: not valid base64 JSON" };
+      }
+
       const response = await fetch(`${this.config.facilitatorUrl}/settle`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          payment: paymentHeader,
+          paymentPayload,
           paymentRequirements: paymentRequirement,
         }),
       });
@@ -175,8 +210,8 @@ export class X402Adapter {
       const result = await response.json();
       return {
         success: result.success === true,
-        txHash: result.txHash,
-        error: result.success ? undefined : (result.error || "Settlement failed"),
+        txHash: result.txHash ?? result.transaction,
+        error: result.success ? undefined : (result.errorReason || result.error || "Settlement failed"),
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

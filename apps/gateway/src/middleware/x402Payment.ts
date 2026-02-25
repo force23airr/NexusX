@@ -87,7 +87,9 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
     }
 
     // ─── Extract listing slug ───
-    const listingSlug = req.params.listingSlug as string;
+    // Mounted at /v1, so req.path is /:listingSlug/... — extract first segment.
+    const pathSegments = req.path.split("/").filter(Boolean);
+    const listingSlug = pathSegments[0];
     if (!listingSlug) {
       res.status(400).json({
         error: "BAD_REQUEST",

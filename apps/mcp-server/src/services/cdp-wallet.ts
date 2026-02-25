@@ -48,6 +48,12 @@ const USDC_BASE_MAINNET = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 // Base Sepolia USDC contract address
 const USDC_BASE_SEPOLIA = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 
+// EIP-712 domain names per network (must match on-chain USDC contract)
+const USDC_DOMAIN_NAME: Record<string, string> = {
+  "base-mainnet": "USD Coin",
+  "base-sepolia": "USDC",
+};
+
 // ─────────────────────────────────────────────────────────────
 // SERVICE
 // ─────────────────────────────────────────────────────────────
@@ -61,13 +67,16 @@ export class CdpWalletService {
   private localWalletClient: any = null; // viem WalletClient for local mode
   private readonly chain: Chain;
   private readonly usdcAddress: `0x${string}`;
+  private readonly usdcDomainName: string;
   private readonly walletDataFile: string;
 
   constructor(private readonly config: CdpConfig) {
-    this.chain = resolveChain(config.networkId ?? "base-mainnet");
-    this.usdcAddress = (config.networkId === "base-sepolia"
+    const networkId = config.networkId ?? "base-mainnet";
+    this.chain = resolveChain(networkId);
+    this.usdcAddress = (networkId === "base-sepolia"
       ? USDC_BASE_SEPOLIA
       : USDC_BASE_MAINNET) as `0x${string}`;
+    this.usdcDomainName = USDC_DOMAIN_NAME[networkId] ?? "USD Coin";
     this.walletDataFile = config.walletDataFile ?? ".cdp-wallet.json";
   }
 
@@ -112,7 +121,8 @@ export class CdpWalletService {
   async buildPaymentHeader(req: X402PaymentRequirements): Promise<string> {
     if (!this.address) throw new Error("[CDP] Wallet not initialized");
 
-    const usdcAddr = (req.asset || this.usdcAddress) as `0x${string}`;
+    // req.asset may be a symbol like "USDC" rather than a contract address — always use our known address
+    const usdcAddr = (req.asset?.startsWith("0x") ? req.asset : this.usdcAddress) as `0x${string}`;
     const value = BigInt(req.maxAmountRequired);
     const validBefore = BigInt(
       Math.floor(Date.now() / 1000) + (req.maxTimeoutSeconds ?? 300),
@@ -122,52 +132,83 @@ export class CdpWalletService {
     crypto.getRandomValues(nonceBytes);
     const nonceHex = `0x${Buffer.from(nonceBytes).toString("hex")}` as `0x${string}`;
 
-    const typedData = {
-      domain: {
-        name: req.extra?.name ?? "USD Coin",
-        version: req.extra?.version ?? "2",
-        chainId: this.chain.id,
-        verifyingContract: usdcAddr,
-      },
-      types: {
-        TransferWithAuthorization: [
-          { name: "from", type: "address" },
-          { name: "to", type: "address" },
-          { name: "value", type: "uint256" },
-          { name: "validAfter", type: "uint256" },
-          { name: "validBefore", type: "uint256" },
-          { name: "nonce", type: "bytes32" },
-        ],
-      },
-      primaryType: "TransferWithAuthorization" as const,
-      message: {
-        from: this.address as `0x${string}`,
-        to: req.payTo as `0x${string}`,
-        value,
-        validAfter: BigInt(0),
-        validBefore,
-        nonce: nonceHex,
-      },
-    };
-
+    // viem accepts BigInt natively; CDP SDK needs string values for uint256 fields.
     let signature: string;
     if (this.mode === "local") {
-      signature = await this.localWalletClient.signTypedData(typedData);
+      signature = await this.localWalletClient.signTypedData({
+        domain: {
+          name: req.extra?.name ?? this.usdcDomainName,
+          version: req.extra?.version ?? "2",
+          chainId: this.chain.id,
+          verifyingContract: usdcAddr,
+        },
+        types: {
+          TransferWithAuthorization: [
+            { name: "from", type: "address" },
+            { name: "to", type: "address" },
+            { name: "value", type: "uint256" },
+            { name: "validAfter", type: "uint256" },
+            { name: "validBefore", type: "uint256" },
+            { name: "nonce", type: "bytes32" },
+          ],
+        },
+        primaryType: "TransferWithAuthorization" as const,
+        message: {
+          from: this.address as `0x${string}`,
+          to: req.payTo as `0x${string}`,
+          value,
+          validAfter: BigInt(0),
+          validBefore,
+          nonce: nonceHex,
+        },
+      });
     } else {
-      signature = await this.cdpAccount.signTypedData(typedData);
+      // CDP SDK serializes to JSON for the API — BigInt must be string
+      signature = await this.cdpAccount.signTypedData({
+        domain: {
+          name: req.extra?.name ?? this.usdcDomainName,
+          version: req.extra?.version ?? "2",
+          chainId: this.chain.id,
+          verifyingContract: usdcAddr,
+        },
+        types: {
+          TransferWithAuthorization: [
+            { name: "from", type: "address" },
+            { name: "to", type: "address" },
+            { name: "value", type: "uint256" },
+            { name: "validAfter", type: "uint256" },
+            { name: "validBefore", type: "uint256" },
+            { name: "nonce", type: "bytes32" },
+          ],
+        },
+        primaryType: "TransferWithAuthorization",
+        message: {
+          from: this.address,
+          to: req.payTo,
+          value: String(value),
+          validAfter: "0",
+          validBefore: String(validBefore),
+          nonce: nonceHex,
+        },
+      });
     }
 
+    // x402 facilitator v1 uses network name "base-sepolia", not CAIP "eip155:84532"
+    const networkId = this.config.networkId ?? "base-mainnet";
     const payment = {
+      x402Version: 1,
       scheme: "exact",
-      network: this.config.networkId ?? "base-mainnet",
+      network: networkId,
       payload: {
-        from: this.address,
-        to: req.payTo,
-        value: req.maxAmountRequired,
-        validAfter: "0",
-        validBefore: String(validBefore),
-        nonce: nonceHex,
         signature,
+        authorization: {
+          from: this.address,
+          to: req.payTo,
+          value: req.maxAmountRequired,
+          validAfter: "0",
+          validBefore: String(validBefore),
+          nonce: nonceHex,
+        },
       },
     };
 

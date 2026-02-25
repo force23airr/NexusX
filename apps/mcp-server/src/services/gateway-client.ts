@@ -386,8 +386,10 @@ async function safeJson(response: Response): Promise<any> {
 function tryParsePaymentRequirements(body: string): X402PaymentRequirements[] | undefined {
   try {
     const parsed = JSON.parse(body) as Record<string, unknown>;
-    if (!Array.isArray(parsed.accepts)) return undefined;
-    return (parsed.accepts as unknown[]).filter(isPaymentRequirement);
+    // The x402 spec uses "accepts", but our gateway uses "paymentRequirements"
+    const arr = parsed.paymentRequirements ?? parsed.accepts;
+    if (!Array.isArray(arr)) return undefined;
+    return (arr as unknown[]).filter(isPaymentRequirement);
   } catch {
     return undefined;
   }
