@@ -37,6 +37,11 @@ export const DEFAULT_BILLING_CONFIG: BillingConfig = {
   usdcPrecision: 6,
 };
 
+export interface ProcessCallOptions {
+  bundleSessionId?: string;
+  bundleStepIndex?: number;
+}
+
 // ─────────────────────────────────────────────────────────────
 // SERVICE
 // ─────────────────────────────────────────────────────────────
@@ -70,7 +75,8 @@ export class BillingService {
   async processCall(
     ctx: RequestContext,
     route: ListingRoute,
-    result: ProxyResult
+    result: ProxyResult,
+    options?: ProcessCallOptions
   ): Promise<TransactionRecord> {
     // Only bill for successful upstream responses (2xx/3xx).
     // 4xx/5xx from the provider are still billed — the provider
@@ -89,7 +95,7 @@ export class BillingService {
         });
       }
       // Return zero-value record for tracking.
-      return this.createZeroRecord(ctx, route, result);
+      return this.createZeroRecord(ctx, route, result, options);
     }
 
     // ─── Compute fee split ───
@@ -97,18 +103,44 @@ export class BillingService {
     const platformFee = this.roundUsdc(price * this.config.platformFeeRate);
     const providerAmount = this.roundUsdc(price - platformFee);
 
-    const record: TransactionRecord = {
-      requestId: ctx.requestId,
-      listingId: route.listingId,
-      buyerId: ctx.buyerId,
-      priceUsdc: price,
-      platformFeeUsdc: platformFee,
-      providerAmountUsdc: providerAmount,
-      feeRateApplied: this.config.platformFeeRate,
-      responseTimeMs: result.latencyMs,
-      httpStatus: result.statusCode,
-      bytesTransferred: result.bytesTransferred,
-    };
+    const isBundleStep = !!options?.bundleSessionId;
+    const record: TransactionRecord = isBundleStep
+      ? {
+          requestId: ctx.requestId,
+          listingId: route.listingId,
+          buyerId: ctx.buyerId,
+          status: "PENDING",
+          billingMode: "BUNDLE_STEP",
+          bundleSessionId: options?.bundleSessionId ?? null,
+          bundleStepIndex: options?.bundleStepIndex ?? null,
+          settledViaBundle: false,
+          // Bundle steps are quoted here but charged once at finalization.
+          priceUsdc: 0,
+          platformFeeUsdc: 0,
+          providerAmountUsdc: 0,
+          feeRateApplied: this.config.platformFeeRate,
+          quotedPriceUsdc: price,
+          quotedPlatformFeeUsdc: platformFee,
+          quotedProviderAmountUsdc: providerAmount,
+          responseTimeMs: result.latencyMs,
+          httpStatus: result.statusCode,
+          bytesTransferred: result.bytesTransferred,
+        }
+      : {
+          requestId: ctx.requestId,
+          listingId: route.listingId,
+          buyerId: ctx.buyerId,
+          status: "CONFIRMED",
+          billingMode: "INDIVIDUAL",
+          settledViaBundle: false,
+          priceUsdc: price,
+          platformFeeUsdc: platformFee,
+          providerAmountUsdc: providerAmount,
+          feeRateApplied: this.config.platformFeeRate,
+          responseTimeMs: result.latencyMs,
+          httpStatus: result.statusCode,
+          bytesTransferred: result.bytesTransferred,
+        };
 
     // ─── Persist (fire-and-forget with error logging) ───
     this.persistTransaction(record).catch((err) =>
@@ -124,6 +156,8 @@ export class BillingService {
       metadata: {
         requestId: ctx.requestId,
         priceUsdc: price,
+        billingMode: isBundleStep ? "bundle_step" : "individual",
+        bundleSessionId: options?.bundleSessionId ?? null,
         latencyMs: result.latencyMs,
         httpStatus: result.statusCode,
       },
@@ -164,12 +198,19 @@ export class BillingService {
   private createZeroRecord(
     ctx: RequestContext,
     route: ListingRoute,
-    result: ProxyResult
+    result: ProxyResult,
+    options?: ProcessCallOptions
   ): TransactionRecord {
+    const isBundleStep = !!options?.bundleSessionId;
     return {
       requestId: ctx.requestId,
       listingId: route.listingId,
       buyerId: ctx.buyerId,
+      status: "FAILED",
+      billingMode: isBundleStep ? "BUNDLE_STEP" : "INDIVIDUAL",
+      bundleSessionId: options?.bundleSessionId ?? null,
+      bundleStepIndex: options?.bundleStepIndex ?? null,
+      settledViaBundle: false,
       priceUsdc: 0,
       platformFeeUsdc: 0,
       providerAmountUsdc: 0,

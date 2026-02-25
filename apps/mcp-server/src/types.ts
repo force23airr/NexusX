@@ -40,6 +40,33 @@ export interface DiscoveredListing {
   providerName: string;
 }
 
+/** One step inside a composite bundle. */
+export interface BundleStep {
+  listingId: string;
+  slug: string;
+  name: string;
+  categorySlug: string;
+  currentPriceUsdc: number;
+  qualityScore: number;
+}
+
+/** Generated composite bundle tool (virtual marketplace offering). */
+export interface BundleDefinition {
+  id: string;
+  slug: string;
+  toolName: string;
+  name: string;
+  description: string;
+  steps: BundleStep[];
+  grossPriceUsdc: number;
+  discountPct: number;
+  bundlePriceUsdc: number;
+  qualityScore: number;
+  semanticCohesion: number;
+  patternSupport: number;
+  score: number;
+}
+
 /** Result of executing a tool through the gateway. */
 export interface ToolExecutionResult {
   success: boolean;
@@ -50,6 +77,10 @@ export interface ToolExecutionResult {
   latencyMs: number;
   requestId: string;
   isSandbox: boolean;
+  billingMode?: "individual" | "bundle_step";
+  quotedPriceUsdc?: number;
+  bundleSessionId?: string;
+  bundleStepIndex?: number;
 }
 
 /** Session-scoped budget state. */

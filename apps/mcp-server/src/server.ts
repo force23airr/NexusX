@@ -20,10 +20,12 @@ import { createCategoriesResourceHandler } from "./resources/categories";
 import { createPricesResourceHandler, createPriceHistoryResourceHandler } from "./resources/prices";
 import { createWalletResourceHandler } from "./resources/wallet";
 import { createReliabilityResourceHandler } from "./resources/reliability";
+import { createBundlesResourceHandler } from "./resources/bundles";
 import { createSetBudgetHandler, createBudgetStatusHandler, createPriceCheckHandler } from "./prompts/budget";
 import { createFindApiHandler } from "./prompts/discovery";
 import { createPriceTrajectoryHandler } from "./prompts/trajectory";
 import { createCompareToolsHandler } from "./prompts/compare";
+import { BundleEngine } from "./services/bundle-engine";
 import type { PrismaClient } from "@prisma/client";
 
 export interface McpServerContext {
@@ -43,9 +45,10 @@ export async function createMcpServer(
   // ─── Services ───
   const gateway = new GatewayClient(config.gatewayUrl, config.apiKey, config.sandbox);
   const discovery = new DiscoveryService(prisma);
+  const bundleEngine = new BundleEngine(prisma);
   const budget = new BudgetTracker(config.sessionBudgetUsdc);
   const priceSubscriber = new PriceSubscriber(config.redisUrl, config.gatewayUrl);
-  const registry = new ToolRegistry(discovery);
+  const registry = new ToolRegistry(discovery, bundleEngine);
   const executor = new ToolExecutor(registry, gateway, budget);
   executor.setDiscoveryService(discovery);
 
@@ -84,6 +87,8 @@ export async function createMcpServer(
         body: z.record(z.unknown()).optional().describe("JSON request body"),
         query: z.record(z.string()).optional().describe("URL query parameters"),
         headers: z.record(z.string()).optional().describe("Additional HTTP headers"),
+        fail_fast: z.boolean().optional().describe("Bundle tools only: stop immediately when a step fails (default true)."),
+        return_intermediate: z.boolean().optional().describe("Bundle tools only: include intermediate step outputs."),
       },
       async (args) => {
         return executor.execute(tool.toolName, args);
@@ -167,6 +172,17 @@ export async function createMcpServer(
     { description: "Live reliability breakdown for an API listing — error rate, latency percentiles (p50/p95/p99), uptime, and quality score. Computed from real call data, excludes 429 rate limits." },
     async (uri, { slug }) => ({
       contents: [{ uri: uri.href, mimeType: "application/json", text: await reliabilityHandler(slug as string) }],
+    }),
+  );
+
+  // nexusx://bundles — generated composite bundle offerings
+  const bundlesHandler = createBundlesResourceHandler(registry, budget);
+  server.resource(
+    "bundles",
+    "nexusx://bundles",
+    { description: "Generated composite tools (bundles) discovered from sequential agent usage patterns, semantic cohesion, and bundle economics." },
+    async () => ({
+      contents: [{ uri: "nexusx://bundles", mimeType: "application/json", text: await bundlesHandler() }],
     }),
   );
 

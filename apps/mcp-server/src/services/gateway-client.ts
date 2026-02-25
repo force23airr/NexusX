@@ -8,6 +8,42 @@
 
 import type { ToolExecutionResult } from "../types";
 
+export interface BundleSessionRegistrationResult {
+  bundleSessionId: string;
+  status: string;
+  bundleSlug: string;
+  bundleName: string | null;
+  toolSlugs: string[];
+  registeredGrossPriceUsdc: number;
+  targetBundlePriceUsdc: number;
+  bundlePlatformFeeRate: number;
+  expiresAt: string | null;
+  createdAt: string;
+}
+
+export interface BundleSessionFinalizeResult {
+  bundleSessionId: string;
+  status: "FINALIZED";
+  billedPriceUsdc: number;
+  executedGrossPriceUsdc: number;
+  discountUsdc: number;
+  platformFeeUsdc: number;
+  providerPoolUsdc: number;
+  settlementCount: number;
+  allocations: Array<{
+    transactionId: string;
+    listingId: string;
+    listingSlug: string;
+    providerId: string;
+    bundleStepIndex: number;
+    quotedPriceUsdc: number;
+    weight: number;
+    allocatedPriceUsdc: number;
+    platformFeeUsdc: number;
+    providerAmountUsdc: number;
+  }>;
+}
+
 export class GatewayClient {
   private baseUrl: string;
   private apiKey: string;
@@ -30,8 +66,19 @@ export class GatewayClient {
     body?: unknown;
     query?: Record<string, string>;
     headers?: Record<string, string>;
+    bundleSessionId?: string;
+    bundleStepIndex?: number;
   }): Promise<ToolExecutionResult> {
-    const { slug, method, path, body, query, headers: extraHeaders } = params;
+    const {
+      slug,
+      method,
+      path,
+      body,
+      query,
+      headers: extraHeaders,
+      bundleSessionId,
+      bundleStepIndex,
+    } = params;
 
     // Build URL: /v1/{slug}/{path}
     const subPath = path.startsWith("/") ? path : `/${path}`;
@@ -54,6 +101,10 @@ export class GatewayClient {
     if (this.sandbox) {
       headers["X-NexusX-Sandbox"] = "true";
     }
+    if (bundleSessionId) {
+      headers["X-NexusX-Bundle-Session-Id"] = bundleSessionId;
+      headers["X-NexusX-Bundle-Step-Index"] = String(bundleStepIndex ?? 0);
+    }
 
     // Build request
     const init: RequestInit = {
@@ -74,6 +125,18 @@ export class GatewayClient {
       const platformFeeUsdc = parseFloat(response.headers.get("x-nexusx-fee-usdc") || "0");
       const latencyMs = parseInt(response.headers.get("x-nexusx-latency-ms") || "0", 10);
       const requestId = response.headers.get("x-nexusx-request-id") || "";
+      const billingMode = response.headers.get("x-nexusx-billing-mode") || "individual";
+      const quotedPriceUsdc = parseFloat(
+        response.headers.get("x-nexusx-bundle-quoted-price-usdc") || "0",
+      );
+      const responseBundleSessionId =
+        response.headers.get("x-nexusx-bundle-session-id") || undefined;
+      const responseBundleStepIndexRaw =
+        response.headers.get("x-nexusx-bundle-step-index");
+      const responseBundleStepIndex =
+        responseBundleStepIndexRaw !== null
+          ? Number.parseInt(responseBundleStepIndexRaw, 10)
+          : undefined;
 
       const responseBody = await response.text();
 
@@ -86,6 +149,13 @@ export class GatewayClient {
         latencyMs,
         requestId,
         isSandbox: this.sandbox,
+        billingMode: billingMode === "bundle_step" ? "bundle_step" : "individual",
+        quotedPriceUsdc: Number.isFinite(quotedPriceUsdc) ? quotedPriceUsdc : 0,
+        bundleSessionId: responseBundleSessionId,
+        bundleStepIndex:
+          typeof responseBundleStepIndex === "number" && Number.isFinite(responseBundleStepIndex)
+            ? responseBundleStepIndex
+            : undefined,
       };
     } catch (err) {
       if (err instanceof DOMException && err.name === "TimeoutError") {
@@ -98,6 +168,8 @@ export class GatewayClient {
           latencyMs: 30_000,
           requestId: "",
           isSandbox: this.sandbox,
+          billingMode: "individual",
+          quotedPriceUsdc: 0,
         };
       }
 
@@ -113,8 +185,96 @@ export class GatewayClient {
         latencyMs: 0,
         requestId: "",
         isSandbox: this.sandbox,
+        billingMode: "individual",
+        quotedPriceUsdc: 0,
       };
     }
+  }
+
+  async registerBundleSession(params: {
+    bundleSlug: string;
+    bundleName?: string;
+    toolSlugs: string[];
+    bundlePriceUsdc: number;
+    bundlePlatformFeeRate?: number;
+    metadata?: Record<string, unknown>;
+  }): Promise<BundleSessionRegistrationResult> {
+    const response = await fetch(`${this.baseUrl}/bundle-sessions/register`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+        "X-SDK-Client": "nexusx-mcp-server",
+      },
+      body: JSON.stringify({
+        bundle_slug: params.bundleSlug,
+        bundle_name: params.bundleName,
+        tool_slugs: params.toolSlugs,
+        bundle_price_usdc: params.bundlePriceUsdc,
+        bundle_platform_fee_rate: params.bundlePlatformFeeRate,
+        metadata: params.metadata ?? {},
+      }),
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    const data = await safeJson(response);
+    if (!response.ok) {
+      throw new Error(data?.message || `Bundle registration failed with HTTP ${response.status}`);
+    }
+    return {
+      bundleSessionId: data.bundleSessionId,
+      status: data.status,
+      bundleSlug: data.bundleSlug,
+      bundleName: data.bundleName ?? null,
+      toolSlugs: Array.isArray(data.toolSlugs) ? data.toolSlugs : [],
+      registeredGrossPriceUsdc: Number(data.registeredGrossPriceUsdc ?? 0),
+      targetBundlePriceUsdc: Number(data.targetBundlePriceUsdc ?? 0),
+      bundlePlatformFeeRate: Number(data.bundlePlatformFeeRate ?? 0),
+      expiresAt: data.expiresAt ?? null,
+      createdAt: data.createdAt ?? new Date().toISOString(),
+    };
+  }
+
+  async finalizeBundleSession(bundleSessionId: string): Promise<BundleSessionFinalizeResult> {
+    const response = await fetch(`${this.baseUrl}/bundle-sessions/${bundleSessionId}/finalize`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        "Content-Type": "application/json",
+        "X-SDK-Client": "nexusx-mcp-server",
+      },
+      body: "{}",
+      signal: AbortSignal.timeout(20_000),
+    });
+
+    const data = await safeJson(response);
+    if (!response.ok) {
+      throw new Error(data?.message || `Bundle finalization failed with HTTP ${response.status}`);
+    }
+    return {
+      bundleSessionId: data.bundleSessionId,
+      status: "FINALIZED",
+      billedPriceUsdc: Number(data.billedPriceUsdc ?? 0),
+      executedGrossPriceUsdc: Number(data.executedGrossPriceUsdc ?? 0),
+      discountUsdc: Number(data.discountUsdc ?? 0),
+      platformFeeUsdc: Number(data.platformFeeUsdc ?? 0),
+      providerPoolUsdc: Number(data.providerPoolUsdc ?? 0),
+      settlementCount: Number(data.settlementCount ?? 0),
+      allocations: Array.isArray(data.allocations)
+        ? data.allocations.map((row: any) => ({
+            transactionId: String(row.transactionId ?? ""),
+            listingId: String(row.listingId ?? ""),
+            listingSlug: String(row.listingSlug ?? ""),
+            providerId: String(row.providerId ?? ""),
+            bundleStepIndex: Number(row.bundleStepIndex ?? 0),
+            quotedPriceUsdc: Number(row.quotedPriceUsdc ?? 0),
+            weight: Number(row.weight ?? 0),
+            allocatedPriceUsdc: Number(row.allocatedPriceUsdc ?? 0),
+            platformFeeUsdc: Number(row.platformFeeUsdc ?? 0),
+            providerAmountUsdc: Number(row.providerAmountUsdc ?? 0),
+          }))
+        : [],
+    };
   }
 
   /**
@@ -157,7 +317,7 @@ export class GatewayClient {
         signal: AbortSignal.timeout(5_000),
       });
       if (!response.ok) return null;
-      const data = await response.json();
+      const data = (await response.json()) as Record<string, any>;
       return {
         currentPriceUsdc: data.currentPriceUsdc,
         floorPriceUsdc: data.floorPriceUsdc,
@@ -168,5 +328,15 @@ export class GatewayClient {
     } catch {
       return null;
     }
+  }
+}
+
+async function safeJson(response: Response): Promise<any> {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { message: text };
   }
 }

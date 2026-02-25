@@ -6,14 +6,18 @@
 // periodic refresh. Each active listing becomes a callable tool.
 // ═══════════════════════════════════════════════════════════════
 
-import type { DiscoveredListing } from "../types";
+import type { BundleDefinition, DiscoveredListing } from "../types";
 import type { DiscoveryService } from "../services/discovery";
-import { generateInputSchema } from "./schemas";
+import type { BundleEngine } from "../services/bundle-engine";
+import { bundleSlugToToolName } from "../services/bundle-engine";
+import { generateInputSchema, generateBundleInputSchema } from "./schemas";
 
 export interface RegisteredTool {
   toolName: string;
   slug: string;
-  listing: DiscoveredListing;
+  kind: "listing" | "bundle";
+  listing?: DiscoveredListing;
+  bundle?: BundleDefinition;
   description: string;
   inputSchema: Record<string, unknown>;
 }
@@ -23,10 +27,12 @@ export class ToolRegistry {
   private slugToToolName: Map<string, string> = new Map();
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
   private discovery: DiscoveryService;
+  private bundleEngine?: BundleEngine;
   private onToolsChanged?: () => void;
 
-  constructor(discovery: DiscoveryService) {
+  constructor(discovery: DiscoveryService, bundleEngine?: BundleEngine) {
     this.discovery = discovery;
+    this.bundleEngine = bundleEngine;
   }
 
   /**
@@ -79,11 +85,32 @@ export class ToolRegistry {
         newToolMap.set(name, {
           toolName: name,
           slug: listing.slug,
+          kind: "listing",
           listing,
           description,
           inputSchema,
         });
         newSlugMap.set(listing.slug, name);
+      }
+
+      if (this.bundleEngine) {
+        try {
+          const bundles = await this.bundleEngine.generateBundles(listings);
+          for (const bundle of bundles) {
+            const toolName = bundle.toolName || bundleSlugToToolName(bundle.slug);
+            newToolMap.set(toolName, {
+              toolName,
+              slug: bundle.slug,
+              kind: "bundle",
+              bundle,
+              description: buildBundleToolDescription(bundle),
+              inputSchema: generateBundleInputSchema(bundle),
+            });
+            newSlugMap.set(bundle.slug, toolName);
+          }
+        } catch (err) {
+          console.error("[MCP Registry] Bundle generation failed:", err);
+        }
       }
 
       // Check if tools changed
@@ -121,6 +148,19 @@ export class ToolRegistry {
   }
 
   /**
+   * Get all registered composite bundles.
+   */
+  getBundles(): BundleDefinition[] {
+    const bundles: BundleDefinition[] = [];
+    for (const tool of this.tools.values()) {
+      if (tool.kind === "bundle" && tool.bundle) {
+        bundles.push(tool.bundle);
+      }
+    }
+    return bundles;
+  }
+
+  /**
    * Get the number of registered tools.
    */
   get size(): number {
@@ -135,9 +175,20 @@ export class ToolRegistry {
     for (const [name, tool] of newTools) {
       const existing = this.tools.get(name);
       if (!existing) return true;
-      // Check if price or description changed meaningfully
-      if (existing.listing.currentPriceUsdc !== tool.listing.currentPriceUsdc) return true;
-      if (existing.listing.name !== tool.listing.name) return true;
+      if (existing.kind !== tool.kind) return true;
+      if (existing.description !== tool.description) return true;
+
+      if (existing.kind === "listing" && tool.kind === "listing") {
+        if (!existing.listing || !tool.listing) return true;
+        if (existing.listing.currentPriceUsdc !== tool.listing.currentPriceUsdc) return true;
+        if (existing.listing.name !== tool.listing.name) return true;
+      }
+
+      if (existing.kind === "bundle" && tool.kind === "bundle") {
+        if (!existing.bundle || !tool.bundle) return true;
+        if (existing.bundle.bundlePriceUsdc !== tool.bundle.bundlePriceUsdc) return true;
+        if (existing.bundle.patternSupport !== tool.bundle.patternSupport) return true;
+      }
     }
 
     return false;
@@ -191,4 +242,17 @@ function buildToolDescription(listing: DiscoveredListing): string {
   }
 
   return parts.join("\n");
+}
+
+function buildBundleToolDescription(bundle: BundleDefinition): string {
+  const steps = bundle.steps.map((s) => s.slug).join(" -> ");
+  return [
+    `Composite bundle generated from observed multi-step agent workflows.`,
+    `Steps: ${steps}`,
+    `Bundle price: $${bundle.bundlePriceUsdc.toFixed(6)} USDC ` +
+      `(gross $${bundle.grossPriceUsdc.toFixed(6)}, discount ${(bundle.discountPct * 100).toFixed(1)}%)`,
+    `Quality: ${(bundle.qualityScore * 100).toFixed(1)}%`,
+    `Pattern support: ${bundle.patternSupport}`,
+    `Semantic cohesion: ${(bundle.semanticCohesion * 100).toFixed(1)}%`,
+  ].join("\n");
 }

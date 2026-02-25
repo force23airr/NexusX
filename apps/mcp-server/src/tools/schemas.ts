@@ -9,7 +9,7 @@
 //   3. Fallback → generic callable schema (path, method, body)
 // ═══════════════════════════════════════════════════════════════
 
-import type { DiscoveredListing } from "../types";
+import type { BundleDefinition, DiscoveredListing } from "../types";
 
 /** The generic schema that makes any listing callable. */
 const GENERIC_SCHEMA = {
@@ -44,6 +44,50 @@ const GENERIC_SCHEMA = {
   required: ["path"],
 };
 
+/** Generic schema for bundle tools (server-side chained execution). */
+const BUNDLE_SCHEMA = {
+  type: "object" as const,
+  properties: {
+    path: {
+      type: "string",
+      description: "Sub-path used for each step endpoint. Use '/' for root.",
+      default: "/",
+    },
+    method: {
+      type: "string",
+      enum: ["GET", "POST", "PUT", "DELETE"],
+      default: "POST",
+      description: "HTTP method applied to each step call.",
+    },
+    body: {
+      type: "object",
+      description: "Initial JSON request body for the first step.",
+      additionalProperties: true,
+    },
+    query: {
+      type: "object",
+      description: "Query parameters forwarded to each step.",
+      additionalProperties: { type: "string" },
+    },
+    headers: {
+      type: "object",
+      description: "Additional headers forwarded to each step.",
+      additionalProperties: { type: "string" },
+    },
+    fail_fast: {
+      type: "boolean",
+      default: true,
+      description: "Stop immediately when a step fails.",
+    },
+    return_intermediate: {
+      type: "boolean",
+      default: false,
+      description: "Include intermediate step responses in output.",
+    },
+  },
+  required: [],
+};
+
 /**
  * Generate a JSON Schema for a listing's tool input.
  */
@@ -62,6 +106,16 @@ export function generateInputSchema(listing: DiscoveredListing): Record<string, 
 
   // Priority 3: Generic fallback
   return GENERIC_SCHEMA;
+}
+
+/**
+ * Generate a bundle input schema with step-specific context.
+ */
+export function generateBundleInputSchema(bundle: BundleDefinition): Record<string, unknown> {
+  return {
+    ...BUNDLE_SCHEMA,
+    description: `Composite execution bundle: ${bundle.steps.map((s) => s.slug).join(" -> ")}`,
+  };
 }
 
 /**

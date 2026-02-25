@@ -73,6 +73,20 @@ enum TransactionStatus {
   DISPUTED
 }
 
+enum TransactionBillingMode {
+  INDIVIDUAL
+  BUNDLE_STEP
+}
+
+enum BundleSessionStatus {
+  REGISTERED
+  IN_PROGRESS
+  FINALIZED
+  FAILED
+  CANCELLED
+  EXPIRED
+}
+
 enum SettlementStatus {
   PENDING
   BATCHED
@@ -136,6 +150,8 @@ model User {
   apiKeys           ApiKey[]
   listings          Listing[]
   transactions      Transaction[]       @relation("BuyerTransactions")
+  bundleSessions    BundleExecutionSession[] @relation("BundleSessionBuyer")
+  bundleProviderSettlements BundleProviderSettlement[] @relation("BundleProviderUser")
   ratings           Rating[]
   watchlistItems    WatchlistItem[]
   subscriptions     Subscription[]
@@ -291,6 +307,7 @@ model Listing {
   subscriptions     Subscription[]
   queryLogs         QueryLog[]
   providerMetrics   ProviderMetricRaw[]
+  bundleProviderSettlements BundleProviderSettlement[]
 
   @@index([providerId])
   @@index([categoryId])
@@ -485,12 +502,19 @@ model Transaction {
   listingId          String            @map("listing_id") @db.Uuid
   buyerId            String            @map("buyer_id") @db.Uuid
   status             TransactionStatus @default(PENDING)
+  billingMode        TransactionBillingMode @default(INDIVIDUAL) @map("billing_mode")
+  bundleSessionId    String?           @map("bundle_session_id") @db.Uuid
+  bundleStepIndex    Int?              @map("bundle_step_index")
+  settledViaBundle   Boolean           @default(false) @map("settled_via_bundle")
 
   // Pricing at time of call
   priceUsdc          Decimal           @map("price_usdc") @db.Decimal(18, 6)
   platformFeeUsdc    Decimal           @map("platform_fee_usdc") @db.Decimal(18, 6)
   providerAmountUsdc Decimal           @map("provider_amount_usdc") @db.Decimal(18, 6)
   feeRateApplied     Decimal           @map("fee_rate_applied") @db.Decimal(6, 4)
+  quotedPriceUsdc    Decimal?          @map("quoted_price_usdc") @db.Decimal(18, 6)
+  quotedPlatformFeeUsdc Decimal?       @map("quoted_platform_fee_usdc") @db.Decimal(18, 6)
+  quotedProviderAmountUsdc Decimal?    @map("quoted_provider_amount_usdc") @db.Decimal(18, 6)
 
   // Gateway metadata
   requestId          String            @unique @map("request_id")
@@ -506,17 +530,84 @@ model Transaction {
   updatedAt          DateTime          @updatedAt @map("updated_at")
 
   // Relations
-  listing    Listing     @relation(fields: [listingId], references: [id])
-  buyer      User        @relation("BuyerTransactions", fields: [buyerId], references: [id])
-  settlement Settlement? @relation(fields: [settlementId], references: [id])
+  listing                 Listing                 @relation(fields: [listingId], references: [id])
+  buyer                   User                    @relation("BuyerTransactions", fields: [buyerId], references: [id])
+  settlement              Settlement?             @relation(fields: [settlementId], references: [id])
+  bundleSession           BundleExecutionSession? @relation(fields: [bundleSessionId], references: [id])
+  bundleProviderSettlement BundleProviderSettlement?
 
   @@index([listingId, createdAt])
   @@index([buyerId, createdAt])
   @@index([settlementId])
+  @@index([bundleSessionId])
+  @@index([billingMode, createdAt])
+  @@index([settledViaBundle])
   @@index([status])
   @@index([requestId])
   @@index([createdAt])
   @@map("transactions")
+}
+
+/// Pre-registered bundle execution lifecycle tracked by the gateway.
+/// Captures agreed pricing and final one-time settlement details.
+model BundleExecutionSession {
+  id                     String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyerId                String             @map("buyer_id") @db.Uuid
+  apiKeyId               String?            @map("api_key_id") @db.Uuid
+  bundleSlug             String             @map("bundle_slug")
+  bundleName             String?            @map("bundle_name")
+  status                 BundleSessionStatus @default(REGISTERED)
+  toolSlugs              String[]           @default([]) @map("tool_slugs")
+  registeredGrossPriceUsdc Decimal          @default(0) @map("registered_gross_price_usdc") @db.Decimal(18, 6)
+  executedGrossPriceUsdc Decimal            @default(0) @map("executed_gross_price_usdc") @db.Decimal(18, 6)
+  targetBundlePriceUsdc  Decimal            @map("target_bundle_price_usdc") @db.Decimal(18, 6)
+  billedPriceUsdc        Decimal            @default(0) @map("billed_price_usdc") @db.Decimal(18, 6)
+  discountUsdc           Decimal            @default(0) @map("discount_usdc") @db.Decimal(18, 6)
+  platformFeeRate        Decimal            @map("platform_fee_rate") @db.Decimal(6, 4)
+  platformFeeUsdc        Decimal            @default(0) @map("platform_fee_usdc") @db.Decimal(18, 6)
+  providerPoolUsdc       Decimal            @default(0) @map("provider_pool_usdc") @db.Decimal(18, 6)
+  metadata               Json?              @default("{}")
+  expiresAt              DateTime?          @map("expires_at")
+  createdAt              DateTime           @default(now()) @map("created_at")
+  updatedAt              DateTime           @updatedAt @map("updated_at")
+  finalizedAt            DateTime?          @map("finalized_at")
+
+  // Relations
+  buyer               User                      @relation("BundleSessionBuyer", fields: [buyerId], references: [id])
+  transactions        Transaction[]
+  providerSettlements BundleProviderSettlement[]
+
+  @@index([buyerId, createdAt])
+  @@index([status, createdAt])
+  @@index([bundleSlug])
+  @@map("bundle_execution_sessions")
+}
+
+/// Revenue split audit rows for bundle settlement.
+/// One row per settled bundle step transaction.
+model BundleProviderSettlement {
+  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bundleSessionId   String   @map("bundle_session_id") @db.Uuid
+  transactionId     String   @unique @map("transaction_id") @db.Uuid
+  providerId        String   @map("provider_id") @db.Uuid
+  listingId         String   @map("listing_id") @db.Uuid
+  listPriceUsdc     Decimal  @map("list_price_usdc") @db.Decimal(18, 6)
+  weight            Decimal  @db.Decimal(10, 8)
+  allocatedPriceUsdc Decimal @map("allocated_price_usdc") @db.Decimal(18, 6)
+  platformFeeUsdc   Decimal  @map("platform_fee_usdc") @db.Decimal(18, 6)
+  providerAmountUsdc Decimal @map("provider_amount_usdc") @db.Decimal(18, 6)
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  // Relations
+  bundleSession BundleExecutionSession @relation(fields: [bundleSessionId], references: [id], onDelete: Cascade)
+  transaction   Transaction            @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  provider      User                   @relation("BundleProviderUser", fields: [providerId], references: [id])
+  listing       Listing                @relation(fields: [listingId], references: [id])
+
+  @@index([bundleSessionId])
+  @@index([providerId, createdAt])
+  @@index([listingId, createdAt])
+  @@map("bundle_provider_settlements")
 }
 
 /// Batch settlement of transactions on Base L2.

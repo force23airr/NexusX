@@ -20,12 +20,16 @@ import { BillingService } from "./services/billingService";
 import { PriceWebSocketServer } from "./services/priceWebSocket";
 import { ReliabilityAggregator } from "./services/reliability-aggregator";
 import { createProxyRoute, extractListingSlug } from "./routes/proxy";
+import { createBundleSessionRoutes } from "./routes/bundle-sessions";
 import { createHealthRoutes } from "./routes/health";
 import { createPriceHistoryRoutes } from "./routes/price-history";
 import type {
   GatewayConfig,
   DemandSignalEvent,
   TransactionRecord,
+  BundleSessionRegistrationInput,
+  BundleSessionRecord,
+  BundleSessionFinalizeResult,
 } from "./types";
 import { DEFAULT_GATEWAY_CONFIG } from "./types";
 import type { ApiKeyLookupFn, ApiKeyTouchFn } from "./middleware/auth";
@@ -50,6 +54,17 @@ export interface GatewayDependencies {
   lookupListingById: ListingByIdFn;
   /** Database: Persist a transaction record. */
   persistTransaction: TransactionPersistFn;
+  /** Database: Register a pre-execution bundle session. */
+  registerBundleSession?: (
+    input: BundleSessionRegistrationInput
+  ) => Promise<BundleSessionRecord>;
+  /** Database: Resolve a bundle session for proxy-step validation. */
+  lookupBundleSession?: (bundleSessionId: string) => Promise<BundleSessionRecord | null>;
+  /** Database: Finalize a bundle session with one-time settlement. */
+  finalizeBundleSession?: (input: {
+    bundleSessionId: string;
+    buyerId: string;
+  }) => Promise<BundleSessionFinalizeResult>;
   /** Pub/Sub: Emit demand signal to auction engine. */
   emitDemandSignal: (signal: DemandSignalEvent) => void;
   /** Redis client for price history sorted sets (optional). */
@@ -128,6 +143,21 @@ export function createGatewayApp(
   // ─── Auth + payment middleware ───
   const authMiddleware = createAuthMiddleware(deps.lookupApiKey, deps.touchApiKey);
 
+  // Bundle session lifecycle endpoints (API key auth).
+  if (deps.registerBundleSession && deps.lookupBundleSession && deps.finalizeBundleSession) {
+    app.use(
+      "/bundle-sessions",
+      authMiddleware,
+      createBundleSessionRoutes({
+        registerBundleSession: deps.registerBundleSession,
+        lookupBundleSession: deps.lookupBundleSession,
+        finalizeBundleSession: deps.finalizeBundleSession,
+        defaultBundlePlatformFeeRate: cfg.bundlePlatformFeeRate,
+        defaultSessionTtlMs: cfg.bundleSessionTtlMs,
+      }),
+    );
+  }
+
   const rateLimitMiddleware = createRateLimitMiddleware(
     rateLimiter,
     deps.emitDemandSignal,
@@ -143,6 +173,7 @@ export function createGatewayApp(
     routeResolver,
     proxyService,
     billingService,
+    lookupBundleSession: deps.lookupBundleSession,
     emitSignal: deps.emitDemandSignal,
     x402Enabled: cfg.x402Enabled,
     reliabilityAggregator,
@@ -221,6 +252,7 @@ export function startGateway(
   const server = app.listen(cfg.port, async () => {
     console.log(`[Gateway] NexusX API Gateway listening on port ${cfg.port}`);
     console.log(`[Gateway] Fee rate: ${(cfg.platformFeeRate * 100).toFixed(1)}%`);
+    console.log(`[Gateway] Bundle fee rate: ${(cfg.bundlePlatformFeeRate * 100).toFixed(1)}%`);
     console.log(`[Gateway] Upstream timeout: ${cfg.upstreamTimeoutMs}ms`);
     console.log(`[Gateway] Route cache TTL: ${cfg.routeCacheTtlMs}ms`);
     console.log(`[Gateway] x402 enabled: ${cfg.x402Enabled}`);

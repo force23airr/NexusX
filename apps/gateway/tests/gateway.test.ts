@@ -8,7 +8,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { createHash, randomUUID } from "crypto";
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import request from "supertest";
 import { createGatewayApp, type GatewayDependencies } from "../src/server";
 import { generateApiKey, type ApiKeyRecord } from "../src/middleware/auth";
@@ -433,6 +433,203 @@ describe("Auth Middleware", () => {
     expect(res.status).toBe(403);
     expect(res.body.error).toBe("KEY_INACTIVE");
     gateway.cleanup();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// BUNDLE SESSION ROUTES (INTEGRATION)
+// ─────────────────────────────────────────────────────────────
+
+describe("Bundle Session Routes", () => {
+  it("registers and finalizes bundle sessions via authenticated endpoints", async () => {
+    const { rawKey, keyHash } = generateApiKey();
+
+    const now = new Date("2026-02-25T12:00:00.000Z");
+    const mockSession = {
+      id: "bs_001",
+      buyerId: "usr_001",
+      apiKeyId: "key_001",
+      bundleSlug: "bundle-translate-analyze",
+      bundleName: "Bundle: translate -> sentiment -> summary",
+      status: "REGISTERED" as const,
+      toolSlugs: ["test-api"],
+      registeredGrossPriceUsdc: 0.005,
+      executedGrossPriceUsdc: 0,
+      targetBundlePriceUsdc: 0.004,
+      billedPriceUsdc: 0,
+      discountUsdc: 0,
+      platformFeeRate: 0.15,
+      platformFeeUsdc: 0,
+      providerPoolUsdc: 0,
+      expiresAt: new Date(now.getTime() + 30 * 60 * 1000),
+      createdAt: now,
+      updatedAt: now,
+      finalizedAt: null,
+    };
+
+    let capturedRegisterBuyerId = "";
+
+    const { deps } = createMockDeps({
+      lookupApiKey: async (prefix) => {
+        if (prefix !== rawKey.slice(0, 8)) return null;
+        return {
+          id: "key_001",
+          userId: "usr_001",
+          keyHash,
+          status: "ACTIVE",
+          rateLimitRpm: 60,
+          allowedIps: [],
+          expiresAt: null,
+          walletAddress: "0xBuyerWallet",
+        };
+      },
+      registerBundleSession: async (input) => {
+        capturedRegisterBuyerId = input.buyerId;
+        return mockSession;
+      },
+      lookupBundleSession: async (bundleSessionId) =>
+        bundleSessionId === "bs_001" ? mockSession : null,
+      finalizeBundleSession: async () => ({
+        bundleSessionId: "bs_001",
+        status: "FINALIZED",
+        billedPriceUsdc: 0.004,
+        executedGrossPriceUsdc: 0.005,
+        discountUsdc: 0.001,
+        platformFeeUsdc: 0.0006,
+        providerPoolUsdc: 0.0034,
+        settlementCount: 1,
+        allocations: [
+          {
+            transactionId: "tx_001",
+            listingId: "lst_001",
+            listingSlug: "test-api",
+            providerId: "prv_001",
+            bundleStepIndex: 0,
+            quotedPriceUsdc: 0.005,
+            weight: 1,
+            allocatedPriceUsdc: 0.004,
+            platformFeeUsdc: 0.0006,
+            providerAmountUsdc: 0.0034,
+          },
+        ],
+      }),
+    });
+
+    const { app, cleanup } = createGatewayApp(deps);
+
+    const registerRes = await request(app)
+      .post("/bundle-sessions/register")
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send({
+        bundle_slug: "bundle-translate-analyze",
+        tool_slugs: ["test-api"],
+        bundle_price_usdc: 0.004,
+      });
+
+    expect(registerRes.status).toBe(201);
+    expect(registerRes.body.bundleSessionId).toBe("bs_001");
+    expect(capturedRegisterBuyerId).toBe("usr_001");
+
+    const finalizeRes = await request(app)
+      .post("/bundle-sessions/bs_001/finalize")
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send({});
+
+    expect(finalizeRes.status).toBe(200);
+    expect(finalizeRes.body.status).toBe("FINALIZED");
+    expect(finalizeRes.body.billedPriceUsdc).toBe(0.004);
+
+    cleanup();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// PROXY BUNDLE BILLING (INTEGRATION)
+// ─────────────────────────────────────────────────────────────
+
+describe("Proxy Bundle Billing", () => {
+  let originalFetch: typeof fetch;
+
+  beforeEach(() => {
+    originalFetch = global.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      }) as any,
+    );
+  });
+
+  afterEach(() => {
+    vi.stubGlobal("fetch", originalFetch);
+  });
+
+  it("marks bundle step calls as bundle-billed and persists quoted pricing", async () => {
+    const { rawKey, keyHash } = generateApiKey();
+    const { deps, transactions } = createMockDeps({
+      lookupApiKey: async (prefix) => {
+        if (prefix !== rawKey.slice(0, 8)) return null;
+        return {
+          id: "key_001",
+          userId: "usr_001",
+          keyHash,
+          status: "ACTIVE",
+          rateLimitRpm: 60,
+          allowedIps: [],
+          expiresAt: null,
+          walletAddress: "0xBuyerWallet",
+        };
+      },
+      lookupBundleSession: async (bundleSessionId) => {
+        if (bundleSessionId !== "bs_001") return null;
+        return {
+          id: "bs_001",
+          buyerId: "usr_001",
+          apiKeyId: "key_001",
+          bundleSlug: "bundle-translate-analyze",
+          bundleName: "Bundle",
+          status: "REGISTERED",
+          toolSlugs: ["test-api"],
+          registeredGrossPriceUsdc: 0.005,
+          executedGrossPriceUsdc: 0,
+          targetBundlePriceUsdc: 0.004,
+          billedPriceUsdc: 0,
+          discountUsdc: 0,
+          platformFeeRate: 0.15,
+          platformFeeUsdc: 0,
+          providerPoolUsdc: 0,
+          expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          finalizedAt: null,
+        };
+      },
+    });
+
+    const { app, cleanup } = createGatewayApp(deps);
+
+    const res = await request(app)
+      .post("/v1/test-api/echo")
+      .set("Authorization", `Bearer ${rawKey}`)
+      .set("X-NexusX-Bundle-Session-Id", "bs_001")
+      .set("X-NexusX-Bundle-Step-Index", "0")
+      .send({ hello: "world" });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["x-nexusx-billing-mode"]).toBe("bundle_step");
+    expect(res.headers["x-nexusx-price-usdc"]).toBe("0.000000");
+    expect(res.headers["x-nexusx-bundle-quoted-price-usdc"]).toBe("0.005000");
+
+    expect(transactions).toHaveLength(1);
+    expect(transactions[0].billingMode).toBe("BUNDLE_STEP");
+    expect(transactions[0].status).toBe("PENDING");
+    expect(transactions[0].bundleSessionId).toBe("bs_001");
+    expect(transactions[0].quotedPriceUsdc).toBe(0.005);
+
+    cleanup();
   });
 });
 

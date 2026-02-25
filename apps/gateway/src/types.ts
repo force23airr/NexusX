@@ -75,13 +75,82 @@ export interface TransactionRecord {
   requestId: string;
   listingId: string;
   buyerId: string;
+  status?: "PENDING" | "CONFIRMED" | "FAILED" | "REFUNDED" | "DISPUTED";
+  billingMode?: "INDIVIDUAL" | "BUNDLE_STEP";
+  bundleSessionId?: string | null;
+  bundleStepIndex?: number | null;
+  settledViaBundle?: boolean;
   priceUsdc: number;
   platformFeeUsdc: number;
   providerAmountUsdc: number;
   feeRateApplied: number;
+  quotedPriceUsdc?: number | null;
+  quotedPlatformFeeUsdc?: number | null;
+  quotedProviderAmountUsdc?: number | null;
   responseTimeMs: number;
   httpStatus: number;
   bytesTransferred: number;
+}
+
+/** Bundle session registration payload from MCP executor. */
+export interface BundleSessionRegistrationInput {
+  buyerId: string;
+  apiKeyId: string;
+  bundleSlug: string;
+  bundleName?: string | null;
+  toolSlugs: string[];
+  bundlePriceUsdc: number;
+  bundlePlatformFeeRate: number;
+  expiresAt?: Date | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+/** Stored bundle session summary used by proxy validation/finalization. */
+export interface BundleSessionRecord {
+  id: string;
+  buyerId: string;
+  apiKeyId: string | null;
+  bundleSlug: string;
+  bundleName: string | null;
+  status: "REGISTERED" | "IN_PROGRESS" | "FINALIZED" | "FAILED" | "CANCELLED" | "EXPIRED";
+  toolSlugs: string[];
+  registeredGrossPriceUsdc: number;
+  executedGrossPriceUsdc: number;
+  targetBundlePriceUsdc: number;
+  billedPriceUsdc: number;
+  discountUsdc: number;
+  platformFeeRate: number;
+  platformFeeUsdc: number;
+  providerPoolUsdc: number;
+  expiresAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+  finalizedAt: Date | null;
+}
+
+export interface BundleSettlementAllocation {
+  transactionId: string;
+  listingId: string;
+  listingSlug: string;
+  providerId: string;
+  bundleStepIndex: number;
+  quotedPriceUsdc: number;
+  weight: number;
+  allocatedPriceUsdc: number;
+  platformFeeUsdc: number;
+  providerAmountUsdc: number;
+}
+
+export interface BundleSessionFinalizeResult {
+  bundleSessionId: string;
+  status: "FINALIZED";
+  billedPriceUsdc: number;
+  executedGrossPriceUsdc: number;
+  discountUsdc: number;
+  platformFeeUsdc: number;
+  providerPoolUsdc: number;
+  settlementCount: number;
+  allocations: BundleSettlementAllocation[];
 }
 
 /** Demand signal to be emitted to the auction engine. */
@@ -125,6 +194,10 @@ export interface GatewayConfig {
   x402Network: string;
   /** Platform wallet address that receives x402 payments (fee split happens off-chain). */
   x402PlatformAddress: string;
+  /** Platform fee rate to apply for settled bundle executions. */
+  bundlePlatformFeeRate: number;
+  /** Time-to-live for bundle execution sessions before expiry. */
+  bundleSessionTtlMs: number;
 }
 
 export const DEFAULT_GATEWAY_CONFIG: GatewayConfig = {
@@ -140,4 +213,6 @@ export const DEFAULT_GATEWAY_CONFIG: GatewayConfig = {
   x402FacilitatorUrl: "https://x402.org/facilitator",
   x402Network: "eip155:84532",     // Base Sepolia (dev default)
   x402PlatformAddress: "",         // Must be set when x402Enabled=true
+  bundlePlatformFeeRate: 0.15,
+  bundleSessionTtlMs: 30 * 60 * 1000,
 };
