@@ -190,8 +190,8 @@ async function callAnthropic(apiKey: string, userMessage: string): Promise<strin
     throw new Error(`Anthropic API error: ${response.status}`);
   }
 
-  const data = await response.json();
-  const text = data.content[0]?.text || "[]";
+  const data: unknown = await response.json();
+  const text = extractAnthropicText(data);
   return parseQueryArray(text);
 }
 
@@ -216,8 +216,8 @@ async function callOpenAI(apiKey: string, userMessage: string): Promise<string[]
     throw new Error(`OpenAI API error: ${response.status}`);
   }
 
-  const data = await response.json();
-  const text = data.choices[0]?.message?.content || "[]";
+  const data: unknown = await response.json();
+  const text = extractOpenAiText(data);
   return parseQueryArray(text);
 }
 
@@ -230,4 +230,34 @@ function parseQueryArray(text: string): string[] {
   return parsed
     .filter((q: unknown): q is string => typeof q === "string" && q.length > 0)
     .slice(0, 10);
+}
+
+interface AnthropicResponse {
+  content?: Array<{ text?: string }>;
+}
+
+interface OpenAiChatResponse {
+  choices?: Array<{ message?: { content?: string } }>;
+}
+
+function extractAnthropicText(raw: unknown): string {
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    Array.isArray((raw as AnthropicResponse).content)
+  ) {
+    return (raw as AnthropicResponse).content?.[0]?.text ?? "[]";
+  }
+  return "[]";
+}
+
+function extractOpenAiText(raw: unknown): string {
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    Array.isArray((raw as OpenAiChatResponse).choices)
+  ) {
+    return (raw as OpenAiChatResponse).choices?.[0]?.message?.content ?? "[]";
+  }
+  return "[]";
 }

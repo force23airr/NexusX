@@ -16,10 +16,11 @@ export function createFindApiHandler(discovery: DiscoveryService) {
     const budgetMax = args.budget_max_usdc ? parseFloat(args.budget_max_usdc) : null;
 
     // Use semantic search with instrumented fallback
-    const matchedListings = await discovery.semanticSearch(query, {
+    const searchResult = await discovery.semanticSearch(query, {
       limit: 10,
       budgetMaxUsdc: budgetMax ?? undefined,
     });
+    const matchedListings = searchResult.listings;
 
     const scored = matchedListings.map((l) => ({ listing: l, score: 0 }));
 
@@ -31,6 +32,7 @@ export function createFindApiHandler(discovery: DiscoveryService) {
             type: "text",
             text: `No APIs found matching "${args.query}"` +
               (budgetMax ? ` within $${budgetMax} USDC budget` : "") +
+              (searchResult.fallbackReason ? ` (fallback: ${searchResult.fallbackReason})` : "") +
               `. Try broader search terms or check available categories with the nexusx://categories resource.`,
           },
         }],

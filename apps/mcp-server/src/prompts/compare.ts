@@ -24,11 +24,12 @@ export function createCompareToolsHandler(
     const priorityMode = (args.priority_mode as "frugal" | "balanced" | "mission_critical") ?? "balanced";
 
     // Use semantic search with instrumented fallback
-    const matchedListings = await discovery.semanticSearch(query, {
+    const searchResult = await discovery.semanticSearch(query, {
       limit: 15,
       budgetMaxUsdc: budgetMax ?? undefined,
       priorityMode,
     });
+    const matchedListings = searchResult.listings;
 
     const matched = matchedListings.map((l) => ({ listing: l, score: 0 }));
 
@@ -40,6 +41,7 @@ export function createCompareToolsHandler(
             type: "text",
             text: `No tools found matching "${args.category_or_query}"` +
               (budgetMax ? ` within $${budgetMax} USDC budget` : "") +
+              (searchResult.fallbackReason ? ` (fallback: ${searchResult.fallbackReason})` : "") +
               `. Try broader search terms or check nexusx://categories for available categories.`,
           },
         }],

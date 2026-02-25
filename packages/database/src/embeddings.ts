@@ -14,6 +14,7 @@
 //   - Category diversity guardrails
 // ═══════════════════════════════════════════════════════════════
 
+import { createHash } from "crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 
 // ─── Types ───────────────────────────────────────────────────
@@ -36,6 +37,7 @@ export interface SemanticSearchResult {
   listingId: string;
   slug: string;
   name: string;
+  listingType: string;
   description: string;
   categorySlug: string;
   tags: string[];
@@ -75,8 +77,10 @@ const DEFAULT_SIMILARITY_THRESHOLD = 0.3;
 const DEFAULT_LIMIT = 10;
 const PGVECTOR_TOP_N = 50;
 const MAX_PER_CATEGORY = 3;
+const DB_VECTOR_DIMENSIONS = 512;
 const CACHE_TTL_SECONDS = 300; // 5 minutes
 const CACHE_PREFIX = "nexusx:qembed:";
+const CACHE_SCHEMA_VERSION = "v1";
 
 // Priority mode weight tables
 const RERANK_WEIGHTS: Record<PriorityMode, {
@@ -145,8 +149,14 @@ export async function generateEmbedding(
     throw new Error(`OpenAI embedding API error ${response.status}: ${body}`);
   }
 
-  const data = await response.json();
-  return data.data[0].embedding as number[];
+  const data: unknown = await response.json();
+  const embedding = extractEmbedding(data);
+  if (embedding.length !== dimensions) {
+    throw new Error(
+      `OpenAI embedding dimension mismatch. Expected ${dimensions}, got ${embedding.length}.`,
+    );
+  }
+  return embedding;
 }
 
 // ─── Embed a Single Listing ──────────────────────────────────
@@ -259,6 +269,7 @@ interface VectorSearchRow {
   listingId: string;
   slug: string;
   name: string;
+  listingType: string;
   description: string;
   categorySlug: string;
   tags: string[];
@@ -287,6 +298,12 @@ async function vectorSearch(
     budgetMaxUsdc?: number;
   },
 ): Promise<VectorSearchRow[]> {
+  if (queryEmbedding.length !== DB_VECTOR_DIMENSIONS) {
+    throw new Error(
+      `Invalid query embedding length ${queryEmbedding.length}. Expected ${DB_VECTOR_DIMENSIONS}.`,
+    );
+  }
+
   const limit = options.limit ?? PGVECTOR_TOP_N;
   const threshold = options.similarityThreshold ?? DEFAULT_SIMILARITY_THRESHOLD;
   const vectorStr = `[${queryEmbedding.join(",")}]`;
@@ -297,6 +314,7 @@ async function vectorSearch(
         l.id                                              AS "listingId",
         l.slug,
         l.name,
+        l.listing_type::text                              AS "listingType",
         l.description,
         c.slug                                            AS "categorySlug",
         l.tags,
@@ -334,6 +352,7 @@ async function vectorSearch(
       l.id                                              AS "listingId",
       l.slug,
       l.name,
+      l.listing_type::text                              AS "listingType",
       l.description,
       c.slug                                            AS "categorySlug",
       l.tags,
@@ -447,6 +466,7 @@ function rerank(
       listingId: row.listingId,
       slug: row.slug,
       name: row.name,
+      listingType: row.listingType,
       description: row.description,
       categorySlug: row.categorySlug,
       tags: row.tags,
@@ -481,9 +501,12 @@ async function getCachedQueryEmbedding(
   redis?: RedisLike | null,
 ): Promise<number[]> {
   const normalised = query.toLowerCase().trim();
+  const model = config.model ?? DEFAULT_MODEL;
+  const dimensions = config.dimensions ?? DEFAULT_DIMENSIONS;
+  const queryHash = createHash("sha256").update(normalised).digest("hex");
+  const cacheKey = `${CACHE_PREFIX}${CACHE_SCHEMA_VERSION}:${model}:${dimensions}:${queryHash}`;
 
   if (redis) {
-    const cacheKey = `${CACHE_PREFIX}${normalised}`;
     try {
       const cached = await redis.get(cacheKey);
       if (cached) return JSON.parse(cached);
@@ -500,6 +523,24 @@ async function getCachedQueryEmbedding(
   }
 
   return generateEmbedding(normalised, config);
+}
+
+interface OpenAIEmbeddingResponse {
+  data: Array<{ embedding: number[] }>;
+}
+
+function extractEmbedding(raw: unknown): number[] {
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    Array.isArray((raw as OpenAIEmbeddingResponse).data) &&
+    (raw as OpenAIEmbeddingResponse).data.length > 0 &&
+    Array.isArray((raw as OpenAIEmbeddingResponse).data[0]?.embedding)
+  ) {
+    return (raw as OpenAIEmbeddingResponse).data[0].embedding;
+  }
+
+  throw new Error("OpenAI embedding API returned unexpected payload shape.");
 }
 
 // ─── Full Search Pipeline ────────────────────────────────────

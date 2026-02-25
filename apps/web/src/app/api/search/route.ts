@@ -17,7 +17,7 @@ import { randomUUID } from "crypto";
 import {
   searchListings,
   type EmbeddingConfig,
-} from "@nexusx/database/src/embeddings";
+} from "@nexusx/database";
 
 
 // ─────────────────────────────────────────────────────────────

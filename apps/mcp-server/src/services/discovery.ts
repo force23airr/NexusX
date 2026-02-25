@@ -14,12 +14,21 @@ import {
   type EmbeddingConfig,
   type SemanticSearchResult,
   type PriorityMode,
-} from "@nexusx/database/src/embeddings";
+  type FallbackReason,
+} from "@nexusx/database";
 import type { DiscoveredListing, CategoryNode, WalletInfo } from "../types";
 
+export interface DiscoverySearchResult {
+  listings: DiscoveredListing[];
+  source: "semantic" | "keyword";
+  fallbackReason?: FallbackReason;
+}
+
 export class DiscoveryService {
+  private static readonly EMBEDDINGS_CHECK_TTL_MS = 30_000;
   private embeddingConfig: EmbeddingConfig | null = null;
   private embeddingsAvailable: boolean | null = null;
+  private embeddingsCheckedAtMs: number | null = null;
 
   constructor(private prisma: PrismaClient) {
     const openaiKey = process.env.OPENAI_API_KEY;
@@ -134,7 +143,7 @@ export class DiscoveryService {
         id: cat.id,
         slug: cat.slug,
         name: cat.name,
-        description: cat.description,
+        description: cat.description ?? "",
         children: [],
         listingCount: cat._count.listings,
       });
@@ -181,25 +190,29 @@ export class DiscoveryService {
     limit?: number;
     budgetMaxUsdc?: number;
     priorityMode?: PriorityMode;
-  }): Promise<DiscoveredListing[]> {
+  }): Promise<DiscoverySearchResult> {
     // Check 1: API key
     if (!this.embeddingConfig) {
-      console.error("[Discovery] Semantic search unavailable, reason: no_api_key");
-      return this.keywordSearch(query, options);
+      return this.keywordFallback(query, options, "no_api_key");
     }
 
     // Check 2: Embeddings exist in DB (cached check)
     try {
-      if (this.embeddingsAvailable === null) {
+      const now = Date.now();
+      const shouldRefresh =
+        this.embeddingsAvailable === null ||
+        this.embeddingsCheckedAtMs === null ||
+        now - this.embeddingsCheckedAtMs > DiscoveryService.EMBEDDINGS_CHECK_TTL_MS;
+
+      if (shouldRefresh) {
         this.embeddingsAvailable = await hasEmbeddings(this.prisma);
+        this.embeddingsCheckedAtMs = now;
       }
       if (!this.embeddingsAvailable) {
-        console.error("[Discovery] Semantic search unavailable, reason: no_embedding");
-        return this.keywordSearch(query, options);
+        return this.keywordFallback(query, options, "no_embedding");
       }
     } catch {
-      console.error("[Discovery] Semantic search failed, reason: no_embedding");
-      return this.keywordSearch(query, options);
+      return this.keywordFallback(query, options, "no_embedding");
     }
 
     // Attempt semantic search
@@ -212,19 +225,20 @@ export class DiscoveryService {
       });
 
       if (results.length === 0) {
-        // Invalidate cache — maybe embeddings were deleted
-        this.embeddingsAvailable = null;
-        return this.keywordSearch(query, options);
+        // No semantic match is a valid outcome; do not force keyword fallback.
+        return { listings: [], source: "semantic" };
       }
 
-      return results.map((r) => this.semanticToDiscovered(r));
+      return {
+        listings: results.map((r) => this.semanticToDiscovered(r)),
+        source: "semantic",
+      };
     } catch (err) {
-      if (err instanceof Error && err.message.includes("OpenAI")) {
-        console.error("[Discovery] Semantic search failed, reason: embed_error", err.message);
-      } else {
-        console.error("[Discovery] Semantic search failed, reason: vector_query_error", err);
-      }
-      return this.keywordSearch(query, options);
+      const reason: FallbackReason =
+        err instanceof Error && err.message.includes("OpenAI")
+          ? "embed_error"
+          : "vector_query_error";
+      return this.keywordFallback(query, options, reason, err);
     }
   }
 
@@ -268,6 +282,25 @@ export class DiscoveryService {
       .map((s) => s.listing);
   }
 
+  private async keywordFallback(
+    query: string,
+    options: { limit?: number; budgetMaxUsdc?: number } | undefined,
+    reason: FallbackReason,
+    err?: unknown,
+  ): Promise<DiscoverySearchResult> {
+    if (err) {
+      console.error(`[Discovery] Semantic search failed, reason: ${reason}`, err);
+    } else {
+      console.error(`[Discovery] Semantic search unavailable, reason: ${reason}`);
+    }
+
+    return {
+      listings: await this.keywordSearch(query, options),
+      source: "keyword",
+      fallbackReason: reason,
+    };
+  }
+
   /**
    * Convert a SemanticSearchResult to a DiscoveredListing.
    */
@@ -277,7 +310,7 @@ export class DiscoveryService {
       slug: r.slug,
       name: r.name,
       description: r.description,
-      listingType: "",
+      listingType: r.listingType,
       categorySlug: r.categorySlug,
       tags: r.tags,
       currentPriceUsdc: r.currentPriceUsdc,

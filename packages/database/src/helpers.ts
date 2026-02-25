@@ -198,7 +198,7 @@ export async function persistDemandSignal(
       buyerId: signal.buyerId,
       type: signal.type as any,
       weight: signal.weight,
-      metadata: signal.metadata || {},
+      metadata: (signal.metadata ?? {}) as Prisma.InputJsonValue,
     },
   });
 }
