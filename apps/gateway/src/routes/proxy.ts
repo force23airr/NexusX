@@ -14,6 +14,7 @@ import type { RequestContext, ListingRoute, DemandSignalEvent } from "../types";
 import type { RouteResolver } from "../services/routeResolver";
 import type { ProxyService } from "../services/proxyService";
 import type { BillingService } from "../services/billingService";
+import type { ReliabilityAggregator } from "../services/reliability-aggregator";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -26,6 +27,8 @@ export interface ProxyRouteConfig {
   emitSignal: (signal: DemandSignalEvent) => void;
   /** When true, x402 handles billing — skip billingService.processCall(). */
   x402Enabled?: boolean;
+  /** Records call results for real-time reliability scoring. */
+  reliabilityAggregator?: ReliabilityAggregator;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -134,6 +137,13 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
         // Don't fail the request — billing errors are non-blocking.
       }
     }
+
+    // ─── 7b. Record call for reliability scoring (fire-and-forget) ───
+    config.reliabilityAggregator?.record(listingSlug, {
+      latencyMs: proxyResult.latencyMs,
+      statusCode: proxyResult.statusCode,
+      timestamp: Date.now(),
+    }).catch(() => {});
 
     // ─── 8. Send response to buyer ───
     // Set upstream response headers.

@@ -18,6 +18,7 @@ import { ProxyService } from "./services/proxyService";
 import { RouteResolver } from "./services/routeResolver";
 import { BillingService } from "./services/billingService";
 import { PriceWebSocketServer } from "./services/priceWebSocket";
+import { ReliabilityAggregator } from "./services/reliability-aggregator";
 import { createProxyRoute, extractListingSlug } from "./routes/proxy";
 import { createHealthRoutes } from "./routes/health";
 import { createPriceHistoryRoutes } from "./routes/price-history";
@@ -106,6 +107,9 @@ export function createGatewayApp(
     deps.emitDemandSignal,
     { platformFeeRate: cfg.platformFeeRate }
   );
+  const reliabilityAggregator = deps.redis
+    ? new ReliabilityAggregator(deps.redis)
+    : undefined;
 
   // ─── Public routes (no auth) ───
   app.use(
@@ -116,9 +120,9 @@ export function createGatewayApp(
     })
   );
 
-  // Price history endpoint (public, no auth required)
+  // Price history + reliability endpoints (public, no auth required)
   if (deps.redis && deps.prisma) {
-    app.use(createPriceHistoryRoutes(deps.redis, deps.prisma));
+    app.use(createPriceHistoryRoutes(deps.redis, deps.prisma, reliabilityAggregator));
   }
 
   // ─── Auth + payment middleware ───
@@ -141,6 +145,7 @@ export function createGatewayApp(
     billingService,
     emitSignal: deps.emitDemandSignal,
     x402Enabled: cfg.x402Enabled,
+    reliabilityAggregator,
   });
 
   // Proxy routes: /v1/:listingSlug/*

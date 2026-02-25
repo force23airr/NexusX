@@ -118,6 +118,31 @@ export class GatewayClient {
   }
 
   /**
+   * Fetch live reliability score for a listing (no auth required).
+   */
+  async getReliability(slug: string): Promise<{
+    errorRate: number;
+    p50LatencyMs: number;
+    p95LatencyMs: number;
+    p99LatencyMs: number;
+    uptimePct: number;
+    callCount: number;
+    qualityScore: number;
+    computedAt: number;
+  } | null> {
+    try {
+      const response = await fetch(`${this.baseUrl}/reliability/${slug}`, {
+        signal: AbortSignal.timeout(5_000),
+      });
+      if (!response.ok) return null;
+      const data = (await response.json()) as Record<string, unknown>;
+      return (data.reliability as any) ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * Fetch public pricing info for a listing (no auth required).
    */
   async getPricing(slug: string): Promise<{

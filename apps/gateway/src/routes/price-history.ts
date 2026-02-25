@@ -13,6 +13,7 @@
 import { Router } from "express";
 import type { Request, Response } from "express";
 import type { PrismaClient } from "@prisma/client";
+import type { ReliabilityAggregator } from "../services/reliability-aggregator";
 
 /** Minimal Redis interface for sorted set queries. */
 interface RedisClient {
@@ -71,8 +72,35 @@ const RESOLUTION_MS: Record<string, number> = {
 // ROUTE FACTORY
 // ─────────────────────────────────────────────────────────────
 
-export function createPriceHistoryRoutes(redis: RedisClient, prisma: PrismaClient): Router {
+export function createPriceHistoryRoutes(
+  redis: RedisClient,
+  prisma: PrismaClient,
+  reliabilityAggregator?: ReliabilityAggregator,
+): Router {
   const router = Router();
+
+  // ─── Reliability endpoint ───
+  router.get("/reliability/:slug", async (req: Request, res: Response) => {
+    const slug = req.params.slug as string;
+
+    if (!reliabilityAggregator) {
+      res.status(503).json({ error: "Reliability scoring not available" });
+      return;
+    }
+
+    try {
+      const score = await reliabilityAggregator.getScore(slug);
+      if (!score) {
+        res.json({ slug, reliability: null, message: "No call data recorded yet" });
+        return;
+      }
+
+      res.json({ slug, reliability: score });
+    } catch (err) {
+      console.error("[Reliability] Error:", err);
+      res.status(500).json({ error: "Failed to compute reliability score" });
+    }
+  });
 
   router.get("/prices/:slug/history", async (req: Request, res: Response) => {
     const slug = req.params.slug as string;

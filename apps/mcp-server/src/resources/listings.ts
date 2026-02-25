@@ -40,8 +40,31 @@ export function createListingDetailResourceHandler(
       return JSON.stringify({ error: "Listing not found", slug });
     }
 
-    // Fetch pricing info from gateway's public endpoint
-    const pricing = await gateway.getPricing(slug);
+    // Fetch pricing info and live reliability from gateway (parallel)
+    const [pricing, reliabilityScore] = await Promise.all([
+      gateway.getPricing(slug),
+      gateway.getReliability(slug),
+    ]);
+
+    // Determine reliability status
+    let reliability: Record<string, unknown> | undefined;
+    if (reliabilityScore) {
+      const status =
+        reliabilityScore.errorRate < 0.02 && reliabilityScore.uptimePct > 0.98 ? "healthy" :
+        reliabilityScore.errorRate < 0.05 && reliabilityScore.uptimePct > 0.95 ? "degraded" :
+        "unreliable";
+
+      reliability = {
+        errorRate: `${(reliabilityScore.errorRate * 100).toFixed(1)}%`,
+        p50Latency: `${reliabilityScore.p50LatencyMs}ms`,
+        p95Latency: `${reliabilityScore.p95LatencyMs}ms`,
+        p99Latency: `${reliabilityScore.p99LatencyMs}ms`,
+        uptime: `${(reliabilityScore.uptimePct * 100).toFixed(1)}%`,
+        callCount: reliabilityScore.callCount,
+        qualityScore: `${reliabilityScore.qualityScore}/100`,
+        status,
+      };
+    }
 
     const detail = {
       slug: listing.slug,
@@ -69,6 +92,7 @@ export function createListingDetailResourceHandler(
         uptime: `${listing.uptimePercent.toFixed(1)}%`,
         avgLatency: `${listing.avgLatencyMs}ms`,
       },
+      ...(reliability ? { reliability } : {}),
       capacity: `${listing.capacityPerMinute} requests/min`,
       tags: listing.tags,
       docs: listing.docsUrl,

@@ -19,9 +19,11 @@ import { createListingsResourceHandler, createListingDetailResourceHandler } fro
 import { createCategoriesResourceHandler } from "./resources/categories";
 import { createPricesResourceHandler, createPriceHistoryResourceHandler } from "./resources/prices";
 import { createWalletResourceHandler } from "./resources/wallet";
+import { createReliabilityResourceHandler } from "./resources/reliability";
 import { createSetBudgetHandler, createBudgetStatusHandler, createPriceCheckHandler } from "./prompts/budget";
 import { createFindApiHandler } from "./prompts/discovery";
 import { createPriceTrajectoryHandler } from "./prompts/trajectory";
+import { createCompareToolsHandler } from "./prompts/compare";
 import type { PrismaClient } from "@prisma/client";
 
 export interface McpServerContext {
@@ -45,6 +47,7 @@ export async function createMcpServer(
   const priceSubscriber = new PriceSubscriber(config.redisUrl, config.gatewayUrl);
   const registry = new ToolRegistry(discovery);
   const executor = new ToolExecutor(registry, gateway, budget);
+  executor.setDiscoveryService(discovery);
 
   // ─── MCP Server ───
   const server = new McpServer({
@@ -156,6 +159,17 @@ export async function createMcpServer(
     }),
   );
 
+  // nexusx://reliability/{slug} — live reliability breakdown
+  const reliabilityHandler = createReliabilityResourceHandler(gateway);
+  server.resource(
+    "reliability",
+    new ResourceTemplate("nexusx://reliability/{slug}", { list: undefined }),
+    { description: "Live reliability breakdown for an API listing — error rate, latency percentiles (p50/p95/p99), uptime, and quality score. Computed from real call data, excludes 429 rate limits." },
+    async (uri, { slug }) => ({
+      contents: [{ uri: uri.href, mimeType: "application/json", text: await reliabilityHandler(slug as string) }],
+    }),
+  );
+
   // ─── Register Prompts ───
 
   const setBudgetHandler = createSetBudgetHandler(budget);
@@ -202,6 +216,17 @@ export async function createMcpServer(
       budget_max_usdc: z.string().optional().describe("Your maximum acceptable price per call in USDC (e.g., '0.01')"),
     },
     async (args) => priceTrajectoryHandler(args),
+  );
+
+  const compareToolsHandler = createCompareToolsHandler(discovery, gateway);
+  server.prompt(
+    "nexusx_compare_tools",
+    "Compare tools by category or search query. Returns a ranked table combining price and live reliability scores to find the best option.",
+    {
+      category_or_query: z.string().describe("Category slug or natural language query (e.g., 'translation API', 'llm', 'image generation')"),
+      budget_max_usdc: z.string().optional().describe("Maximum price per call in USDC (e.g., '0.01')"),
+    },
+    async (args) => compareToolsHandler(args),
   );
 
   // ─── Cleanup ───
