@@ -9,6 +9,28 @@
 // ─── Prisma Client ───
 export { prisma, disconnectDatabase, checkDatabaseHealth } from "./client";
 
+// ─── Embedding Service ───
+export {
+  searchListings,
+  generateEmbedding,
+  embedListing,
+  embedAllListings,
+  hasEmbeddings,
+  buildEmbeddingText,
+  type EmbeddingConfig,
+  type SemanticSearchResult,
+  type SearchListingsOptions,
+  type PriorityMode,
+  type FallbackReason,
+  type EmbedResult,
+} from "./embeddings";
+
+export {
+  generateSyntheticQueries,
+  generateAllSyntheticQueries,
+  CURRENT_SYNTHETIC_VERSION,
+} from "./synthetic-queries";
+
 // ─── Typed Query Helpers ───
 export {
   // Gateway

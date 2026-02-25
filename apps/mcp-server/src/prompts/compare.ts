@@ -17,35 +17,20 @@ export function createCompareToolsHandler(
   return async (args: {
     category_or_query: string;
     budget_max_usdc?: string;
+    priority_mode?: string;
   }): Promise<{ messages: Array<{ role: string; content: { type: string; text: string } }> }> => {
-    const query = args.category_or_query.toLowerCase();
+    const query = args.category_or_query;
     const budgetMax = args.budget_max_usdc ? parseFloat(args.budget_max_usdc) : null;
+    const priorityMode = (args.priority_mode as "frugal" | "balanced" | "mission_critical") ?? "balanced";
 
-    const listings = await discovery.loadListings();
+    // Use semantic search with instrumented fallback
+    const matchedListings = await discovery.semanticSearch(query, {
+      limit: 15,
+      budgetMaxUsdc: budgetMax ?? undefined,
+      priorityMode,
+    });
 
-    // Score listings against the query
-    const matched = listings
-      .map((l) => {
-        let score = 0;
-        const searchText = `${l.name} ${l.description} ${l.tags.join(" ")} ${l.categorySlug}`.toLowerCase();
-
-        const queryWords = query.split(/\s+/);
-        for (const word of queryWords) {
-          if (searchText.includes(word)) score += 10;
-          if (l.name.toLowerCase().includes(word)) score += 20;
-          if (l.categorySlug.toLowerCase().includes(word)) score += 25;
-          if (l.tags.some((t) => t.toLowerCase().includes(word))) score += 15;
-        }
-
-        if (budgetMax !== null && l.currentPriceUsdc > budgetMax) {
-          score = -1;
-        }
-
-        return { listing: l, score };
-      })
-      .filter((s) => s.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 15);
+    const matched = matchedListings.map((l) => ({ listing: l, score: 0 }));
 
     if (matched.length === 0) {
       return {

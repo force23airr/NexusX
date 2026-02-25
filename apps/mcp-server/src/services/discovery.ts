@@ -8,10 +8,25 @@
 // ═══════════════════════════════════════════════════════════════
 
 import type { PrismaClient } from "@prisma/client";
+import {
+  searchListings,
+  hasEmbeddings,
+  type EmbeddingConfig,
+  type SemanticSearchResult,
+  type PriorityMode,
+} from "@nexusx/database/src/embeddings";
 import type { DiscoveredListing, CategoryNode, WalletInfo } from "../types";
 
 export class DiscoveryService {
-  constructor(private prisma: PrismaClient) {}
+  private embeddingConfig: EmbeddingConfig | null = null;
+  private embeddingsAvailable: boolean | null = null;
+
+  constructor(private prisma: PrismaClient) {
+    const openaiKey = process.env.OPENAI_API_KEY;
+    if (openaiKey) {
+      this.embeddingConfig = { openaiApiKey: openaiKey };
+    }
+  }
 
   /**
    * Load all active listings with MCP-relevant metadata.
@@ -152,6 +167,131 @@ export class DiscoveryService {
       address: key.user.wallet.address,
       balanceUsdc: Number(key.user.wallet.balanceUsdc),
       escrowUsdc: Number(key.user.wallet.escrowUsdc),
+    };
+  }
+
+  // ─── Semantic Search with Instrumented Fallback ─────────
+
+  /**
+   * Search listings using pgvector semantic similarity.
+   * Falls back to keyword matching if embeddings are unavailable.
+   * Every fallback is instrumented with a reason code.
+   */
+  async semanticSearch(query: string, options?: {
+    limit?: number;
+    budgetMaxUsdc?: number;
+    priorityMode?: PriorityMode;
+  }): Promise<DiscoveredListing[]> {
+    // Check 1: API key
+    if (!this.embeddingConfig) {
+      console.error("[Discovery] Semantic search unavailable, reason: no_api_key");
+      return this.keywordSearch(query, options);
+    }
+
+    // Check 2: Embeddings exist in DB (cached check)
+    try {
+      if (this.embeddingsAvailable === null) {
+        this.embeddingsAvailable = await hasEmbeddings(this.prisma);
+      }
+      if (!this.embeddingsAvailable) {
+        console.error("[Discovery] Semantic search unavailable, reason: no_embedding");
+        return this.keywordSearch(query, options);
+      }
+    } catch {
+      console.error("[Discovery] Semantic search failed, reason: no_embedding");
+      return this.keywordSearch(query, options);
+    }
+
+    // Attempt semantic search
+    try {
+      const results = await searchListings(this.prisma, query, this.embeddingConfig, {
+        query,
+        limit: options?.limit ?? 10,
+        budgetMaxUsdc: options?.budgetMaxUsdc,
+        priorityMode: options?.priorityMode ?? "balanced",
+      });
+
+      if (results.length === 0) {
+        // Invalidate cache — maybe embeddings were deleted
+        this.embeddingsAvailable = null;
+        return this.keywordSearch(query, options);
+      }
+
+      return results.map((r) => this.semanticToDiscovered(r));
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("OpenAI")) {
+        console.error("[Discovery] Semantic search failed, reason: embed_error", err.message);
+      } else {
+        console.error("[Discovery] Semantic search failed, reason: vector_query_error", err);
+      }
+      return this.keywordSearch(query, options);
+    }
+  }
+
+  /**
+   * Keyword-based listing search (original matching logic).
+   * Used as fallback when semantic search is unavailable.
+   */
+  private async keywordSearch(query: string, options?: {
+    limit?: number;
+    budgetMaxUsdc?: number;
+  }): Promise<DiscoveredListing[]> {
+    const q = query.toLowerCase();
+    const budgetMax = options?.budgetMaxUsdc ?? null;
+    const limit = options?.limit ?? 10;
+
+    const listings = await this.loadListings();
+
+    return listings
+      .map((l) => {
+        let score = 0;
+        const searchText = `${l.name} ${l.description} ${l.tags.join(" ")} ${l.categorySlug}`.toLowerCase();
+
+        const queryWords = q.split(/\s+/);
+        for (const word of queryWords) {
+          if (searchText.includes(word)) score += 10;
+          if (l.name.toLowerCase().includes(word)) score += 20;
+          if (l.tags.some((t) => t.toLowerCase().includes(word))) score += 15;
+        }
+
+        score += l.qualityScore * 5;
+
+        if (budgetMax !== null && l.currentPriceUsdc > budgetMax) {
+          score = -1;
+        }
+
+        return { listing: l, score };
+      })
+      .filter((s) => s.score > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map((s) => s.listing);
+  }
+
+  /**
+   * Convert a SemanticSearchResult to a DiscoveredListing.
+   */
+  private semanticToDiscovered(r: SemanticSearchResult): DiscoveredListing {
+    return {
+      id: r.listingId,
+      slug: r.slug,
+      name: r.name,
+      description: r.description,
+      listingType: "",
+      categorySlug: r.categorySlug,
+      tags: r.tags,
+      currentPriceUsdc: r.currentPriceUsdc,
+      floorPriceUsdc: r.floorPriceUsdc,
+      ceilingPriceUsdc: r.ceilingPriceUsdc,
+      capacityPerMinute: r.capacityPerMinute,
+      qualityScore: r.qualityScore,
+      avgLatencyMs: r.avgLatencyMs,
+      uptimePercent: r.uptimePercent,
+      sampleRequest: null,
+      sampleResponse: null,
+      schemaSpec: null,
+      docsUrl: null,
+      providerName: r.providerName,
     };
   }
 }

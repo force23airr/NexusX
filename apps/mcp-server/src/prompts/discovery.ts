@@ -12,38 +12,16 @@ export function createFindApiHandler(discovery: DiscoveryService) {
     query: string;
     budget_max_usdc?: string;
   }): Promise<{ messages: Array<{ role: string; content: { type: string; text: string } }> }> => {
-    const query = args.query.toLowerCase();
+    const query = args.query;
     const budgetMax = args.budget_max_usdc ? parseFloat(args.budget_max_usdc) : null;
 
-    const listings = await discovery.loadListings();
+    // Use semantic search with instrumented fallback
+    const matchedListings = await discovery.semanticSearch(query, {
+      limit: 10,
+      budgetMaxUsdc: budgetMax ?? undefined,
+    });
 
-    // Score each listing against the query
-    const scored = listings
-      .map((l) => {
-        let score = 0;
-        const searchText = `${l.name} ${l.description} ${l.tags.join(" ")} ${l.categorySlug}`.toLowerCase();
-
-        // Simple keyword matching
-        const queryWords = query.split(/\s+/);
-        for (const word of queryWords) {
-          if (searchText.includes(word)) score += 10;
-          if (l.name.toLowerCase().includes(word)) score += 20;
-          if (l.tags.some((t) => t.toLowerCase().includes(word))) score += 15;
-        }
-
-        // Boost for quality
-        score += l.qualityScore * 5;
-
-        // Budget filter
-        if (budgetMax !== null && l.currentPriceUsdc > budgetMax) {
-          score = -1;
-        }
-
-        return { listing: l, score };
-      })
-      .filter((s) => s.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 10);
+    const scored = matchedListings.map((l) => ({ listing: l, score: 0 }));
 
     if (scored.length === 0) {
       return {

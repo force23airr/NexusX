@@ -16,6 +16,9 @@
     "format": "prisma format",
     "validate": "prisma validate",
     "db:push": "prisma db push",
+    "db:embed": "ts-node scripts/embed-listings.ts",
+    "db:embed:force": "ts-node scripts/embed-listings.ts --force",
+    "db:embed:synthetic": "ts-node scripts/embed-listings.ts --synthetic-only",
     "postinstall": "prisma generate"
   },
   "prisma": {

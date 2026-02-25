@@ -14,6 +14,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { randomUUID } from "crypto";
+import {
+  searchListings,
+  type EmbeddingConfig,
+} from "@nexusx/database/src/embeddings";
 
 
 // ─────────────────────────────────────────────────────────────
@@ -481,11 +485,16 @@ function clamp01(v: number): number {
   return Math.max(0, Math.min(1, v));
 }
 
-function rankListings(listings: IndexedListing[], intent: ClassifiedIntent): RankedMatch[] {
+function rankListings(
+  listings: IndexedListing[],
+  intent: ClassifiedIntent,
+  semanticScores?: Map<string, number>,
+): RankedMatch[] {
   if (listings.length === 0) return [];
 
   const { index: invertedIdx, categoryIndex: catIdx, tagIndex: tIdx, totalDocs } = buildInvertedIndex(listings);
-  const textScores = textSearch(intent.normalizedQuery, invertedIdx, totalDocs);
+  // Use semantic scores for text relevance when available, fall back to TF-IDF
+  const textScores = semanticScores ?? textSearch(intent.normalizedQuery, invertedIdx, totalDocs);
   const catScores = categorySearch(intent.entities.categories, catIdx);
   const tScores = tagSearch(intent.entities.tags, tIdx);
 
@@ -643,8 +652,27 @@ export async function POST(req: NextRequest) {
   // 2. Load active listings
   const listings = await loadListings();
 
+  // 2b. Semantic scores (replaces TF-IDF when OPENAI_API_KEY is set)
+  let semanticScores: Map<string, number> | undefined;
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (openaiKey) {
+    try {
+      const embeddingConfig: EmbeddingConfig = { openaiApiKey: openaiKey };
+      const semanticResults = await searchListings(prisma, intent.normalizedQuery, embeddingConfig, {
+        query: intent.normalizedQuery,
+        limit: 50,
+        similarityThreshold: 0.2,
+      });
+      if (semanticResults.length > 0) {
+        semanticScores = new Map(semanticResults.map((r) => [r.listingId, r.similarity]));
+      }
+    } catch (err) {
+      console.warn("[Search] Semantic search failed, falling back to TF-IDF:", err);
+    }
+  }
+
   // 3. Rank
-  const allMatches = rankListings(listings, intent);
+  const allMatches = rankListings(listings, intent, semanticScores);
   const filteredMatches = allMatches.filter((m) => m.score >= 0.15);
   const topMatches = filteredMatches.slice(0, 10);
 

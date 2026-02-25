@@ -17,7 +17,7 @@ generator client {
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  extensions = [pgcrypto, pg_trgm]
+  extensions = [pgcrypto, pg_trgm, pgvector(map: "vector", schema: "public")]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -257,6 +257,13 @@ model Listing {
   sampleRequest     Json?         @map("sample_request")
   sampleResponse    Json?         @map("sample_response")
   schemaSpec        Json?         @map("schema_spec")
+
+  // Semantic search (pgvector)
+  embedding                Unsupported("vector(512)")?
+  embeddingModel           String?       @map("embedding_model")
+  embeddedAt               DateTime?     @map("embedded_at")
+  syntheticQueries         String[]      @default([]) @map("synthetic_queries")
+  syntheticQueriesVersion  Int           @default(0) @map("synthetic_queries_version")
 
   // Aggregate counters (denormalized for query performance)
   totalCalls        BigInt        @default(0) @map("total_calls")

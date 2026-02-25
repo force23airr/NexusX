@@ -225,6 +225,7 @@ export async function createMcpServer(
     {
       category_or_query: z.string().describe("Category slug or natural language query (e.g., 'translation API', 'llm', 'image generation')"),
       budget_max_usdc: z.string().optional().describe("Maximum price per call in USDC (e.g., '0.01')"),
+      priority_mode: z.enum(["frugal", "balanced", "mission_critical"]).optional().describe("Ranking priority: 'frugal' favours cheapest, 'balanced' is default, 'mission_critical' favours highest quality"),
     },
     async (args) => compareToolsHandler(args),
   );
