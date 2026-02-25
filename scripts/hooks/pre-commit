@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════
+# NexusX — Pre-commit Security Review
+# scripts/hooks/pre-commit
+#
+# Runs a Claude Code security agent against staged changes before
+# every commit. Blocks the commit if critical or high findings
+# are detected.
+#
+# Install:
+#   npm run setup:hooks
+# Or manually:
+#   cp scripts/hooks/pre-commit .git/hooks/pre-commit
+#   chmod +x .git/hooks/pre-commit
+# ═══════════════════════════════════════════════════════════════
+
+set -euo pipefail
+
+# Skip if no staged changes
+if git diff --staged --quiet; then
+  exit 0
+fi
+
+# Skip if claude CLI is not available
+if ! command -v claude &>/dev/null; then
+  echo "⚠️  [security-review] claude CLI not found — skipping automated review."
+  echo "   Run /security-review manually in Claude Code before pushing."
+  exit 0
+fi
+
+# Skip if SKIP_SECURITY_REVIEW is set (for emergency bypasses)
+if [[ "${SKIP_SECURITY_REVIEW:-}" == "1" ]]; then
+  echo "⚠️  [security-review] Skipped via SKIP_SECURITY_REVIEW=1"
+  exit 0
+fi
+
+echo ""
+echo "🔐 Running pre-commit security review..."
+echo ""
+
+# Build the prompt inline (matches .claude/commands/security-review.md intent)
+PROMPT=$(cat <<'PROMPT'
+You are a senior security engineer. A developer is about to commit code to NexusX, an AI marketplace handling USDC payments, API key auth, on-chain settlement, and LLM routing.
+
+Run `git diff --staged` to get the staged changes, then audit them for:
+1. SQL injection via $queryRawUnsafe (only Prisma.sql tagged templates are safe)
+2. Command injection in exec/spawn/execSync calls
+3. Hardcoded secrets, API keys, private keys, or credentials
+4. Missing auth checks on API routes
+5. USDC amount validation (negative values, overflow, precision loss)
+6. Unvalidated wallet addresses
+7. Raw error/stack traces returned to API clients
+8. XSS via dangerouslySetInnerHTML or unsanitised URL interpolation
+9. Weak crypto (Math.random for tokens, MD5/SHA1 for security purposes)
+10. Expensive unguarded operations (DB queries, LLM calls) with no rate limiting
+
+Assign each finding: CRITICAL, HIGH, MEDIUM, or LOW.
+
+End your response with exactly one of these lines (nothing else on that line):
+VERDICT: APPROVED
+VERDICT: BLOCKED
+VERDICT: ADVISORY
+PROMPT
+)
+
+# Run the security review and capture output
+REVIEW_OUTPUT=$(claude --print "$PROMPT" 2>&1) || true
+
+echo "$REVIEW_OUTPUT"
+echo ""
+
+# Extract verdict
+if echo "$REVIEW_OUTPUT" | grep -q "VERDICT: BLOCKED"; then
+  echo "⛔  Security review BLOCKED this commit."
+  echo "    Resolve all CRITICAL and HIGH findings, then retry."
+  echo ""
+  echo "    To bypass in an emergency: SKIP_SECURITY_REVIEW=1 git commit"
+  echo ""
+  exit 1
+elif echo "$REVIEW_OUTPUT" | grep -q "VERDICT: APPROVED"; then
+  echo "✅  Security review passed."
+  echo ""
+  exit 0
+else
+  # ADVISORY or unknown — warn but allow
+  echo "⚠️   Security review complete. Review findings before merging."
+  echo ""
+  exit 0
+fi

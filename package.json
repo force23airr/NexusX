@@ -25,7 +25,8 @@
     "docker:down": "docker compose -f infrastructure/docker/docker-compose.yml down",
     "docker:logs": "docker compose -f infrastructure/docker/docker-compose.yml logs -f",
     "smoke:staging": "bash infrastructure/scripts/smoke-test.sh staging",
-    "smoke:production": "bash infrastructure/scripts/smoke-test.sh production"
+    "smoke:production": "bash infrastructure/scripts/smoke-test.sh production",
+    "setup:hooks": "cp scripts/hooks/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit && echo '✅ Git hooks installed.'"
   },
   "engines": {
     "node": ">=20.0.0",
