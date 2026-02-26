@@ -1,3 +1,8 @@
+---
+name: nexusx-deploy
+description: Deploy and monetize APIs on the NexusX x402 marketplace. Teaches Claude how to help developers list MCP servers, configure USDC pricing, add x402 payment middleware, and deploy with one command via npx nexusx deploy.
+---
+
 # NexusX — Deploy & Monetize MCP Servers
 
 ## Overview
