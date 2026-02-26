@@ -16,13 +16,15 @@ export const mcpCommand = new Command("mcp")
   .option("--budget <usdc>", "Per-session USDC budget for agent calls", "5.00")
   .option("--token <token>", "NexusX API token (or set NEXUSX_API_TOKEN)")
   .action((opts) => {
-    if (opts.token) process.env.NEXUSX_API_TOKEN = opts.token;
+    // Accept token via --token or NEXUSX_API_TOKEN; MCP server reads NEXUSX_API_KEY
+    const apiKey = opts.token ?? process.env.NEXUSX_API_TOKEN ?? process.env.NEXUSX_API_KEY;
 
-    const env = {
+    const env: Record<string, string | undefined> = {
       ...process.env,
       NEXUSX_TRANSPORT: opts.transport,
       PORT: opts.port,
-      NEXUSX_BUDGET_USDC: opts.budget,
+      NEXUSX_SESSION_BUDGET_USDC: opts.budget,
+      ...(apiKey ? { NEXUSX_API_KEY: apiKey } : {}),
     };
 
     // In the published package, resolve the bundled mcp-server.

@@ -1,11 +1,69 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import Link from "next/link";
+import { buyer } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-// ─── Agent Framework Data ───
+// ─── Agent Types ───
 
-const AGENTS = [
+type AgentId =
+  | "claude-code"
+  | "claude-desktop"
+  | "cline"
+  | "openai"
+  | "langchain"
+  | "http";
+
+interface AgentOption {
+  id: AgentId;
+  label: string;
+  protocol: "mcp" | "http";
+  pasteInto: string;
+}
+
+const AGENT_OPTIONS: AgentOption[] = [
+  {
+    id: "claude-code",
+    label: "Claude Code",
+    protocol: "mcp",
+    pasteInto: "~/.claude/settings.json",
+  },
+  {
+    id: "claude-desktop",
+    label: "Claude Desktop",
+    protocol: "mcp",
+    pasteInto: "claude_desktop_config.json",
+  },
+  {
+    id: "cline",
+    label: "Cline / Roo",
+    protocol: "mcp",
+    pasteInto: "VS Code MCP settings",
+  },
+  {
+    id: "openai",
+    label: "OpenAI Agents",
+    protocol: "http",
+    pasteInto: "your agent's tool definitions",
+  },
+  {
+    id: "langchain",
+    label: "LangChain",
+    protocol: "http",
+    pasteInto: "your Python agent",
+  },
+  {
+    id: "http",
+    label: "HTTP / cURL",
+    protocol: "http",
+    pasteInto: "any HTTP client",
+  },
+];
+
+// ─── Supported Agents Grid Data ───
+
+const SUPPORTED_AGENTS = [
   {
     name: "Claude Code",
     protocol: "MCP",
@@ -14,30 +72,30 @@ const AGENTS = [
     color: "from-orange-500/20 to-orange-600/5",
   },
   {
-    name: "OpenAI Codex",
+    name: "Claude Desktop",
+    protocol: "MCP",
+    description: "Claude's desktop app with MCP server integration",
+    icon: "C",
+    color: "from-orange-500/20 to-orange-600/5",
+  },
+  {
+    name: "Cline / Roo",
+    protocol: "MCP",
+    description: "VS Code agent with native MCP tool support",
+    icon: "R",
+    color: "from-violet-500/20 to-violet-600/5",
+  },
+  {
+    name: "OpenAI Agents",
     protocol: "HTTP",
-    description: "OpenAI's code agent using function calling via HTTP tools",
+    description: "OpenAI's agent SDK using function calling",
     icon: "O",
     color: "from-emerald-500/20 to-emerald-600/5",
   },
   {
-    name: "Google Gemini",
+    name: "LangChain / CrewAI",
     protocol: "HTTP",
-    description: "Google's multimodal agent with external tool support",
-    icon: "G",
-    color: "from-blue-500/20 to-blue-600/5",
-  },
-  {
-    name: "Moonshot Kimi",
-    protocol: "HTTP",
-    description: "Moonshot AI's agent with web browsing and API access",
-    icon: "K",
-    color: "from-purple-500/20 to-purple-600/5",
-  },
-  {
-    name: "LangChain Agent",
-    protocol: "HTTP",
-    description: "Framework-agnostic agents using LangChain tool abstraction",
+    description: "Python agent frameworks with custom tool wrappers",
     icon: "L",
     color: "from-yellow-500/20 to-yellow-600/5",
   },
@@ -50,78 +108,400 @@ const AGENTS = [
   },
 ];
 
+// ─── Config Generator ───
+
+function getConfig(
+  agent: AgentId,
+  apiKey: string,
+  budget: string
+): string {
+  const mcpConfig = (extra?: Record<string, string>) =>
+    JSON.stringify(
+      {
+        mcpServers: {
+          nexusx: {
+            command: "npx",
+            args: ["-y", "nexusx", "mcp"],
+            env: {
+              NEXUSX_API_KEY: apiKey,
+              NEXUSX_GATEWAY_URL: "https://gateway.nexusx.dev",
+              NEXUSX_SESSION_BUDGET_USDC: budget,
+              ...extra,
+            },
+          },
+        },
+      },
+      null,
+      2
+    );
+
+  switch (agent) {
+    case "claude-code":
+      return `// ~/.claude/settings.json\n${mcpConfig()}`;
+
+    case "claude-desktop":
+      return `// claude_desktop_config.json\n${mcpConfig()}`;
+
+    case "cline":
+      return `// VS Code MCP settings (Cline / Roo extension)\n${mcpConfig({ NEXUSX_TRANSPORT: "stdio" })}`;
+
+    case "openai":
+      return `# OpenAI Agents SDK — NexusX Tool Definition
+# pip install openai requests
+
+import requests
+
+NEXUSX_GATEWAY = "https://gateway.nexusx.dev"
+NEXUSX_KEY = "${apiKey}"
+
+nexusx_tool = {
+    "type": "function",
+    "function": {
+        "name": "nexusx",
+        "description": (
+            "Call any API on NexusX marketplace via natural language. "
+            "Supports translation, sentiment, embeddings, and 50+ more."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "task": {
+                    "type": "string",
+                    "description": "Natural language description of what you need"
+                },
+                "input": {
+                    "type": "object",
+                    "description": "Input data for the API call"
+                }
+            },
+            "required": ["task"]
+        }
+    }
+}
+
+def call_nexusx(task: str, input: dict = None) -> str:
+    resp = requests.post(
+        f"{NEXUSX_GATEWAY}/v1/nexusx/orchestrate",
+        headers={
+            "Authorization": f"Bearer {NEXUSX_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={"task": task, "input": input or {}},
+    )
+    return resp.text`;
+
+    case "langchain":
+      return `# LangChain / CrewAI — NexusX Tool
+# pip install langchain requests
+
+from langchain.tools import Tool
+import requests
+
+NEXUSX_GATEWAY = "https://gateway.nexusx.dev"
+NEXUSX_KEY = "${apiKey}"
+
+def nexusx_call(query: str) -> str:
+    """Call the NexusX orchestrator with a natural language task."""
+    resp = requests.post(
+        f"{NEXUSX_GATEWAY}/v1/nexusx/orchestrate",
+        headers={
+            "Authorization": f"Bearer {NEXUSX_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={"task": query},
+    )
+    return resp.text
+
+nexusx_tool = Tool(
+    name="NexusX",
+    func=nexusx_call,
+    description=(
+        "Access 50+ APIs through NexusX marketplace. "
+        "Translation, sentiment, embeddings, image generation and more. "
+        "Just describe what you need in natural language."
+    ),
+)`;
+
+    case "http":
+    default:
+      return `# NexusX Gateway — Direct HTTP Integration
+
+GATEWAY="https://gateway.nexusx.dev"
+API_KEY="${apiKey}"
+
+# Call the orchestrator (auto-selects API by intent):
+curl -X POST "$GATEWAY/v1/nexusx/orchestrate" \\
+  -H "Authorization: Bearer $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"task": "translate Hello World to French"}'
+
+# Or call a specific listing directly:
+curl -X POST "$GATEWAY/v1/deepl-translation-api/translate" \\
+  -H "Authorization: Bearer $API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"text": "Hello World", "target_lang": "FR"}'`;
+  }
+}
+
+// ─── Main Component ───
+
 export default function ConnectPage() {
-  const [activeSection, setActiveSection] = useState<"mcp" | "http">("mcp");
+  const [keys, setKeys] = useState<
+    { id: string; name: string; keyPrefix: string; status: string }[]
+  >([]);
+  const [wallet, setWallet] = useState<{
+    balanceUsdc: number;
+    address: string;
+  } | null>(null);
+  const [rawKey, setRawKey] = useState<string | null>(null);
+  const [selectedAgent, setSelectedAgent] = useState<AgentId>("claude-code");
+  const [budget, setBudget] = useState("5.00");
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    Promise.all([buyer.getApiKeys(), buyer.getWallet()])
+      .then(([k, w]) => {
+        setKeys(k);
+        setWallet(w);
+      })
+      .catch(() => {});
+  }, []);
+
+  const activeKey = keys.find((k) => k.status === "ACTIVE");
+  const displayKey = rawKey
+    ? rawKey
+    : activeKey
+      ? `${activeKey.keyPrefix}...`
+      : "nxs_your_api_key";
+  const isPlaceholder = !rawKey && !activeKey;
+
+  async function handleGenerateKey() {
+    setIsGenerating(true);
+    try {
+      const result = await buyer.createApiKey("Agent Key");
+      setRawKey(result.rawKey);
+      const refreshed = await buyer.getApiKeys();
+      setKeys(refreshed);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsGenerating(false);
+    }
+  }
+
+  function handleCopy() {
+    const config = getConfig(selectedAgent, displayKey, budget);
+    navigator.clipboard.writeText(config);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2500);
+  }
+
+  const agentOption = AGENT_OPTIONS.find((a) => a.id === selectedAgent)!;
+  const config = getConfig(selectedAgent, displayKey, budget);
 
   return (
     <div className="max-w-5xl mx-auto space-y-12 animate-fade-in pb-16">
       {/* ─── Hero ─── */}
-      <div className="text-center space-y-4 pt-4">
-        <h1 className="text-4xl font-bold tracking-tight">
-          Connect Your <span className="text-brand-400">AI Agent</span> to NexusX
-        </h1>
-        <p className="text-lg text-zinc-400 max-w-2xl mx-auto">
-          Give any AI agent instant access to a marketplace of APIs.
-          Pay per call in USDC. No subscriptions, no rate limit negotiations.
-        </p>
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-4">
+        <div className="space-y-2">
+          <h1 className="text-4xl font-bold tracking-tight">
+            Connect Your <span className="text-brand-400">AI Agent</span>
+          </h1>
+          <p className="text-lg text-zinc-400 max-w-xl">
+            One config snippet. Instant access to every API in the marketplace.
+            Pay per call in USDC on Base.
+          </p>
+        </div>
+
+        {wallet !== null && (
+          <div className="flex items-center gap-3 shrink-0">
+            <div
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-sm font-mono font-medium border",
+                wallet.balanceUsdc > 0
+                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                  : "bg-amber-500/10 text-amber-400 border-amber-500/20"
+              )}
+            >
+              {wallet.balanceUsdc > 0
+                ? `$${wallet.balanceUsdc.toFixed(2)} USDC`
+                : "Wallet empty"}
+            </div>
+            <Link
+              href="/buyer/fund"
+              className="px-3 py-1.5 text-xs rounded-lg bg-surface-3 border border-surface-4 text-zinc-300 hover:text-zinc-100 transition-colors"
+            >
+              Fund Wallet
+            </Link>
+          </div>
+        )}
+      </div>
+
+      {/* ─── Live Config Generator ─── */}
+      <div className="card p-6 space-y-6">
+        <div className="flex items-center justify-between">
+          <h2 className="text-lg font-semibold text-zinc-100">
+            Your Agent Config
+          </h2>
+          {wallet !== null && wallet.balanceUsdc === 0 && (
+            <div className="text-xs text-amber-400 flex items-center gap-1.5">
+              <span>⚠</span>
+              <span>
+                Wallet empty —{" "}
+                <Link href="/buyer/fund" className="underline hover:text-amber-300">
+                  add USDC
+                </Link>{" "}
+                before making calls
+              </span>
+            </div>
+          )}
+        </div>
+
+        {/* Agent Picker */}
+        <div className="space-y-2">
+          <p className="text-xs font-medium text-zinc-500 uppercase tracking-wider">
+            Select your agent
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {AGENT_OPTIONS.map((opt) => (
+              <button
+                key={opt.id}
+                onClick={() => setSelectedAgent(opt.id)}
+                className={cn(
+                  "px-3 py-1.5 rounded-lg text-sm font-medium transition-all border",
+                  selectedAgent === opt.id
+                    ? "bg-brand-600/20 text-brand-300 border-brand-600/30"
+                    : "bg-surface-3 text-zinc-400 border-transparent hover:text-zinc-200 hover:border-surface-5"
+                )}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Budget Input (MCP only) */}
+        {agentOption.protocol === "mcp" && (
+          <div className="flex items-center gap-3">
+            <label className="text-xs font-medium text-zinc-500 uppercase tracking-wider whitespace-nowrap">
+              USDC budget / session
+            </label>
+            <div className="flex items-center gap-1.5 bg-surface-2 border border-surface-4 rounded-lg px-3 py-1.5">
+              <span className="text-zinc-500 text-sm">$</span>
+              <input
+                type="number"
+                min="0"
+                step="0.5"
+                value={budget}
+                onChange={(e) => setBudget(e.target.value)}
+                className="w-16 bg-transparent text-sm text-zinc-200 outline-none"
+              />
+              <span className="text-zinc-500 text-xs">USDC</span>
+            </div>
+          </div>
+        )}
+
+        {/* Config Block */}
+        <div className="relative group">
+          <pre className="bg-surface-1 border border-surface-4 rounded-lg p-4 overflow-x-auto">
+            <code className="text-xs font-mono text-zinc-300 whitespace-pre">
+              {config}
+            </code>
+          </pre>
+          <button
+            onClick={handleCopy}
+            className={cn(
+              "absolute top-2 right-2 px-2.5 py-1 text-xs rounded-md border transition-all",
+              copied
+                ? "bg-emerald-600/20 text-emerald-300 border-emerald-600/30"
+                : "bg-surface-3 text-zinc-400 border-surface-4 opacity-0 group-hover:opacity-100 hover:text-zinc-200"
+            )}
+          >
+            {copied ? "Copied ✓" : "Copy"}
+          </button>
+        </div>
+
+        {/* Footer row */}
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            {isPlaceholder ? (
+              <button
+                onClick={handleGenerateKey}
+                disabled={isGenerating}
+                className="text-sm text-brand-400 hover:text-brand-300 transition-colors disabled:opacity-50"
+              >
+                {isGenerating
+                  ? "Generating..."
+                  : "No key yet — generate one →"}
+              </button>
+            ) : rawKey ? (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-amber-400">
+                  ⚠ Copy your key — it won&apos;t be shown again
+                </span>
+                <Link
+                  href="/buyer/keys"
+                  className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors underline"
+                >
+                  Manage keys
+                </Link>
+              </div>
+            ) : (
+              <Link
+                href="/buyer/keys"
+                className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
+              >
+                Manage keys →
+              </Link>
+            )}
+          </div>
+
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-zinc-500">
+              Paste into:{" "}
+              <code className="text-zinc-400">{agentOption.pasteInto}</code>
+            </span>
+            <button
+              onClick={handleCopy}
+              className={cn(
+                "px-4 py-2 rounded-lg text-sm font-medium transition-all border",
+                copied
+                  ? "bg-emerald-600/20 text-emerald-300 border-emerald-600/30"
+                  : "bg-brand-600/20 text-brand-300 border-brand-600/30 hover:bg-brand-600/30"
+              )}
+            >
+              {copied ? "Copied ✓" : "Copy Config"}
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* ─── How It Works ─── */}
-      <div className="card p-8">
-        <h2 className="text-xl font-bold text-zinc-100 mb-6 text-center">
+      <div className="space-y-6">
+        <h2 className="text-xl font-bold text-zinc-100 text-center">
           How It Works
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <StepCard
             step={1}
-            title="Discover APIs"
-            description="Browse the marketplace or let the AI orchestrator automatically find the right API for your task."
+            title="Paste & Connect"
+            description="Add the config snippet to your agent. NexusX starts as a tool your agent can call automatically."
             icon="&#9672;"
           />
           <StepCard
             step={2}
-            title="Pay with USDC"
-            description="Automatic per-call payments on Base L2. Your agent signs a payment, and the gateway verifies and proxies the request."
+            title="Agent Calls APIs"
+            description="Describe what you need in natural language. The orchestrator finds the right API and handles payment."
             icon="&#9670;"
           />
           <StepCard
             step={3}
-            title="Get Results"
-            description="Pay only on success. If the upstream API fails, your agent keeps the USDC. No wasted spend."
+            title="Pay on Success"
+            description="USDC is debited from your wallet only when a call succeeds. Failed calls cost nothing."
             icon="&#10003;"
           />
         </div>
-      </div>
-
-      {/* ─── Protocol Toggle ─── */}
-      <div className="space-y-6">
-        <div className="flex justify-center gap-2">
-          <button
-            onClick={() => setActiveSection("mcp")}
-            className={cn(
-              "px-6 py-2.5 rounded-lg text-sm font-medium transition-all",
-              activeSection === "mcp"
-                ? "bg-brand-600/20 text-brand-300 border border-brand-600/30"
-                : "bg-surface-3 text-zinc-400 border border-transparent hover:text-zinc-200"
-            )}
-          >
-            MCP Agents
-          </button>
-          <button
-            onClick={() => setActiveSection("http")}
-            className={cn(
-              "px-6 py-2.5 rounded-lg text-sm font-medium transition-all",
-              activeSection === "http"
-                ? "bg-brand-600/20 text-brand-300 border border-brand-600/30"
-                : "bg-surface-3 text-zinc-400 border border-transparent hover:text-zinc-200"
-            )}
-          >
-            HTTP Agents
-          </button>
-        </div>
-
-        {activeSection === "mcp" && <McpSection />}
-        {activeSection === "http" && <HttpSection />}
       </div>
 
       {/* ─── Supported Agents Grid ─── */}
@@ -130,7 +510,7 @@ export default function ConnectPage() {
           Works With Any AI Agent
         </h2>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-          {AGENTS.map((agent) => (
+          {SUPPORTED_AGENTS.map((agent) => (
             <div
               key={agent.name}
               className="card p-5 relative overflow-hidden group hover:border-surface-5 transition-colors"
@@ -159,213 +539,6 @@ export default function ConnectPage() {
               </div>
             </div>
           ))}
-        </div>
-      </div>
-
-      {/* ─── Quick Start ─── */}
-      <div className="card p-8 border-brand-600/20">
-        <h2 className="text-xl font-bold text-zinc-100 mb-6">Quick Start</h2>
-        <div className="space-y-4">
-          <QuickStep
-            step={1}
-            title="Get an API Key"
-            description="Sign up and generate an API key from the Buyer > API Keys section."
-          />
-          <QuickStep
-            step={2}
-            title="Configure Your Agent"
-            description="Add the NexusX MCP server config (for MCP agents) or set the gateway URL as a tool endpoint (for HTTP agents)."
-          />
-          <QuickStep
-            step={3}
-            title="Fund Your Wallet"
-            description="Deposit USDC on Base to your agent wallet. The gateway accepts x402 payments automatically."
-          />
-          <QuickStep
-            step={4}
-            title="Make Your First Call"
-            description='Ask your agent to use NexusX: "translate this text to French" — the orchestrator handles API selection and payment.'
-          />
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── MCP Section ───
-
-function McpSection() {
-  return (
-    <div className="space-y-6">
-      <div className="card p-6">
-        <h3 className="text-lg font-semibold text-zinc-100 mb-2">
-          For MCP-Compatible Agents
-        </h3>
-        <p className="text-sm text-zinc-400 mb-4">
-          Agents like Claude Code, Cline, and other MCP clients connect to NexusX
-          through the{" "}
-          <span className="font-mono text-brand-300">@nexusx/mcp-server</span>.
-          This gives them access to all marketplace APIs as MCP tools.
-        </p>
-
-        <div className="space-y-4">
-          <div>
-            <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-              1. Add MCP Server Config
-            </h4>
-            <CodeBlock>{`// claude_desktop_config.json or .claude/settings.json
-{
-  "mcpServers": {
-    "nexusx": {
-      "command": "npx",
-      "args": ["-y", "@nexusx/mcp-server"],
-      "env": {
-        "NEXUSX_API_KEY": "nxs_your_api_key",
-        "NEXUSX_GATEWAY_URL": "https://gateway.nexusx.io"
-      }
-    }
-  }
-}`}</CodeBlock>
-          </div>
-
-          <div>
-            <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-              2. Use the Orchestrator Tool
-            </h4>
-            <p className="text-sm text-zinc-400 mb-2">
-              The <span className="font-mono text-brand-300">nexusx</span> tool
-              understands natural language. Just describe what you need:
-            </p>
-            <CodeBlock>{`// Your agent automatically calls:
-{
-  "tool": "nexusx",
-  "arguments": {
-    "task": "translate this text to French",
-    "input": { "text": "Hello, how are you?" }
-  }
-}
-
-// The orchestrator:
-// 1. Classifies intent → "translate"
-// 2. Selects best API → deepl-translation-api
-// 3. Handles payment → signs USDC transfer
-// 4. Returns result → translated text`}</CodeBlock>
-          </div>
-
-          <div>
-            <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-              3. Available MCP Resources
-            </h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
-              <ResourceRow uri="nexusx://listings" description="Browse all APIs" />
-              <ResourceRow uri="nexusx://categories" description="Category tree" />
-              <ResourceRow uri="nexusx://prices" description="Live price ticks" />
-              <ResourceRow uri="nexusx://wallet" description="Wallet balance" />
-              <ResourceRow uri="nexusx://bundles" description="Composite tools" />
-              <ResourceRow uri="nexusx://reliability/{slug}" description="API reliability" />
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── HTTP Section ───
-
-function HttpSection() {
-  return (
-    <div className="space-y-6">
-      <div className="card p-6">
-        <h3 className="text-lg font-semibold text-zinc-100 mb-2">
-          For HTTP-Based Agents
-        </h3>
-        <p className="text-sm text-zinc-400 mb-4">
-          Any agent that can make HTTP requests can use NexusX. Call the gateway
-          directly with an API key or use the x402 payment protocol for
-          wallet-based payments.
-        </p>
-
-        <div className="space-y-4">
-          <div>
-            <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-              1. Gateway Endpoint
-            </h4>
-            <CodeBlock>{`Base URL: https://gateway.nexusx.io
-
-# Call any API by its slug:
-POST /v1/{listing-slug}/{path}
-
-# Examples:
-POST /v1/openai-gpt4-turbo/chat/completions
-POST /v1/deepl-translation-api/translate
-POST /v1/sentiment-analysis-pro/sentiment
-POST /v1/text-embeddings-v3/embed`}</CodeBlock>
-          </div>
-
-          <div>
-            <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-              2. Authentication Options
-            </h4>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="bg-surface-2 rounded-lg p-4">
-                <h5 className="text-sm font-medium text-zinc-200 mb-2">
-                  API Key (Simple)
-                </h5>
-                <p className="text-xs text-zinc-400 mb-2">
-                  Pre-funded account. Gateway debits per call.
-                </p>
-                <code className="text-xs font-mono text-brand-300 block">
-                  Authorization: Bearer nxs_your_key
-                </code>
-              </div>
-              <div className="bg-surface-2 rounded-lg p-4">
-                <h5 className="text-sm font-medium text-zinc-200 mb-2">
-                  x402 Payment (On-Chain)
-                </h5>
-                <p className="text-xs text-zinc-400 mb-2">
-                  Per-call USDC payments on Base L2. No account needed.
-                </p>
-                <code className="text-xs font-mono text-brand-300 block">
-                  X-Payment: &lt;signed-eip3009&gt;
-                </code>
-              </div>
-            </div>
-          </div>
-
-          <div>
-            <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-              3. Example: cURL
-            </h4>
-            <CodeBlock>{`# Sentiment analysis
-curl -X POST https://gateway.nexusx.io/v1/sentiment-analysis-pro/sentiment \\
-  -H "Authorization: Bearer nxs_your_key" \\
-  -H "Content-Type: application/json" \\
-  -d '{"text": "This product is amazing!"}'
-
-# Response includes NexusX headers:
-# X-NexusX-Price-USDC: 0.001000
-# X-NexusX-Latency-Ms: 45
-# X-NexusX-Request-Id: req_abc123`}</CodeBlock>
-          </div>
-
-          <div>
-            <h4 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
-              4. x402 Payment Flow
-            </h4>
-            <CodeBlock>{`# Step 1: Make request (no payment)
-POST /v1/openai-gpt4-turbo/chat/completions
-→ 402 Payment Required
-→ { "price": "0.010000", "network": "base", ... }
-
-# Step 2: Sign EIP-3009 transferWithAuthorization
-→ Agent wallet signs USDC transfer authorization
-
-# Step 3: Retry with payment header
-POST /v1/openai-gpt4-turbo/chat/completions
-X-Payment: <base64-encoded-signed-payment>
-→ 200 OK (payment settled after success)`}</CodeBlock>
-          </div>
         </div>
       </div>
     </div>
@@ -397,65 +570,6 @@ function StepCard({
         <h3 className="text-base font-semibold text-zinc-100 mt-1">{title}</h3>
         <p className="text-sm text-zinc-400 mt-1">{description}</p>
       </div>
-    </div>
-  );
-}
-
-function QuickStep({
-  step,
-  title,
-  description,
-}: {
-  step: number;
-  title: string;
-  description: string;
-}) {
-  return (
-    <div className="flex items-start gap-4">
-      <div className="w-8 h-8 rounded-full bg-brand-600/20 border border-brand-600/30 flex items-center justify-center text-sm font-bold text-brand-400 shrink-0">
-        {step}
-      </div>
-      <div>
-        <h4 className="text-sm font-medium text-zinc-100">{title}</h4>
-        <p className="text-sm text-zinc-400 mt-0.5">{description}</p>
-      </div>
-    </div>
-  );
-}
-
-function ResourceRow({ uri, description }: { uri: string; description: string }) {
-  return (
-    <div className="flex items-center gap-2 bg-surface-2 rounded-lg px-3 py-2">
-      <code className="text-xs font-mono text-brand-300 flex-1 truncate">
-        {uri}
-      </code>
-      <span className="text-xs text-zinc-500 shrink-0">{description}</span>
-    </div>
-  );
-}
-
-function CodeBlock({ children }: { children: string }) {
-  const [copied, setCopied] = useState(false);
-
-  const handleCopy = () => {
-    navigator.clipboard.writeText(children);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  };
-
-  return (
-    <div className="relative group">
-      <pre className="bg-surface-1 border border-surface-4 rounded-lg p-4 overflow-x-auto">
-        <code className="text-xs font-mono text-zinc-300 whitespace-pre">
-          {children}
-        </code>
-      </pre>
-      <button
-        onClick={handleCopy}
-        className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity px-2 py-1 text-2xs bg-surface-3 text-zinc-400 hover:text-zinc-200 rounded border border-surface-4"
-      >
-        {copied ? "Copied!" : "Copy"}
-      </button>
     </div>
   );
 }

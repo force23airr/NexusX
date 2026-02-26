@@ -79,8 +79,8 @@ Add to your Claude MCP config (`claude_desktop_config.json`):
       "command": "npx",
       "args": ["nexusx", "mcp"],
       "env": {
-        "NEXUSX_API_TOKEN": "nxp_...",
-        "NEXUSX_BUDGET_USDC": "5.00"
+        "NEXUSX_API_KEY": "nxs_...",
+        "NEXUSX_SESSION_BUDGET_USDC": "5.00"
       }
     }
   }

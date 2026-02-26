@@ -278,7 +278,7 @@ Agents connect to the NexusX MCP server:
     "nexusx": {
       "command": "npx",
       "args": ["nexusx", "mcp"],
-      "env": { "NEXUSX_BUDGET_USDC": "10.00" }
+      "env": { "NEXUSX_API_KEY": "nxs_...", "NEXUSX_SESSION_BUDGET_USDC": "10.00" }
     }
   }
 }

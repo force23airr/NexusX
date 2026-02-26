@@ -150,10 +150,10 @@ function McpTab({ listing }: { listing: ListingDetail }) {
   "mcpServers": {
     "nexusx": {
       "command": "npx",
-      "args": ["-y", "@nexusx/mcp-server"],
+      "args": ["-y", "nexusx", "mcp"],
       "env": {
         "NEXUSX_API_KEY": "your-api-key",
-        "NEXUSX_GATEWAY_URL": "https://gateway.nexusx.io"
+        "NEXUSX_GATEWAY_URL": "https://gateway.nexusx.dev"
       }
     }
   }
@@ -184,7 +184,7 @@ function CurlTab({ listing }: { listing: ListingDetail }) {
           API Key Authentication
         </h5>
         <CodeBlock language="bash">{`curl -X POST \\
-  https://gateway.nexusx.io/v1/${listing.slug} \\
+  https://gateway.nexusx.dev/v1/${listing.slug} \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '${sampleBody}'`}</CodeBlock>
@@ -206,7 +206,7 @@ X-NexusX-Latency-Ms: 45`}</CodeBlock>
           Sandbox Mode (free, for testing)
         </h5>
         <CodeBlock language="bash">{`curl -X POST \\
-  https://gateway.nexusx.io/v1/${listing.slug} \\
+  https://gateway.nexusx.dev/v1/${listing.slug} \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -H "X-NexusX-Sandbox: true" \\
   -H "Content-Type: application/json" \\
@@ -239,7 +239,7 @@ function AgentSdkTab({ listing }: { listing: ListingDetail }) {
   "mcpServers": {
     "nexusx": {
       "command": "npx",
-      "args": ["-y", "@nexusx/mcp-server"],
+      "args": ["-y", "nexusx", "mcp"],
       "env": {
         "NEXUSX_API_KEY": "your-api-key"
       }
@@ -259,7 +259,7 @@ async def call_${listing.slug.replace(/-/g, "_")}(input: dict) -> dict:
     """Call ${listing.name} via NexusX gateway."""
     async with httpx.AsyncClient() as client:
         resp = await client.post(
-            "https://gateway.nexusx.io/v1/${listing.slug}",
+            "https://gateway.nexusx.dev/v1/${listing.slug}",
             headers={"Authorization": "Bearer YOUR_API_KEY"},
             json=input,
         )
@@ -287,7 +287,7 @@ const ${listing.slug.replace(/-/g, "_")}Tool = new DynamicStructuredTool({
   }),
   func: async (input) => {
     const res = await fetch(
-      "https://gateway.nexusx.io/v1/${listing.slug}",
+      "https://gateway.nexusx.dev/v1/${listing.slug}",
       {
         method: "POST",
         headers: {

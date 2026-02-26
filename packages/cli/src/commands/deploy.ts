@@ -256,7 +256,7 @@ export const deployCommand = new Command("deploy")
       "nexusx": {
         "command": "npx",
         "args": ["nexusx", "mcp"],
-        "env": { "NEXUSX_BUDGET_USDC": "5.00" }
+        "env": { "NEXUSX_SESSION_BUDGET_USDC": "5.00" }
       }
     }
   }

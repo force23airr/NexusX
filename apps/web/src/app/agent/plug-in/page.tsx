@@ -8,10 +8,10 @@
 
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import Link from "next/link";
 import { buyer } from "@/lib/api";
-import { cn } from "@/lib/utils";
+import { cn, relativeTime } from "@/lib/utils";
 
 // ─── Agent Definitions ───
 
@@ -82,18 +82,47 @@ export default function PlugInAgentPage() {
   const [selectedAgent, setSelectedAgent] = useState<AgentDef | null>(null);
   const [apiKey, setApiKey] = useState<string | null>(null);
   const [existingKeys, setExistingKeys] = useState<
-    { id: string; name: string; keyPrefix: string; status: string }[]
+    {
+      id: string;
+      name: string;
+      keyPrefix: string;
+      status: string;
+      rateLimitRpm: number;
+      lastUsedAt: string | null;
+      createdAt: string;
+    }[]
   >([]);
+  const [keysLoading, setKeysLoading] = useState(true);
+  const [copiedKeyId, setCopiedKeyId] = useState<string | null>(null);
   const [keyName, setKeyName] = useState("");
   const [isGenerating, setIsGenerating] = useState(false);
   const [copied, setCopied] = useState(false);
   const [testStatus, setTestStatus] = useState<
     "idle" | "testing" | "success" | "error"
   >("idle");
+  const [wallet, setWallet] = useState<{ balanceUsdc: number } | null>(null);
+
+  const activeKeys = useMemo(
+    () => existingKeys.filter((k) => k.status === "ACTIVE"),
+    [existingKeys],
+  );
+
+  const loadApiKeys = useCallback(async () => {
+    setKeysLoading(true);
+    try {
+      const keys = await buyer.getApiKeys();
+      setExistingKeys(keys);
+    } catch (err) {
+      console.error("Failed to load API keys:", err);
+    } finally {
+      setKeysLoading(false);
+    }
+    buyer.getWallet().then(setWallet).catch(() => {});
+  }, []);
 
   useEffect(() => {
-    buyer.getApiKeys().then(setExistingKeys).catch(console.error);
-  }, []);
+    loadApiKeys();
+  }, [loadApiKeys]);
 
   function handleSelectAgent(agent: AgentDef) {
     setSelectedAgent(agent);
@@ -106,6 +135,7 @@ export default function PlugInAgentPage() {
       const name = keyName || `${selectedAgent?.name || "Agent"} Key`;
       const result = await buyer.createApiKey(name);
       setApiKey(result.rawKey);
+      await loadApiKeys();
       setStep(3);
     } catch (err) {
       console.error(err);
@@ -117,6 +147,12 @@ export default function PlugInAgentPage() {
   function handleUseExistingKey(prefix: string) {
     setApiKey(prefix + "...");
     setStep(3);
+  }
+
+  function handleCopyKey(value: string, keyId: string) {
+    navigator.clipboard.writeText(value);
+    setCopiedKeyId(keyId);
+    setTimeout(() => setCopiedKeyId(null), 2000);
   }
 
   function handleCopyConfig() {
@@ -149,6 +185,74 @@ export default function PlugInAgentPage() {
           Your agent gets instant access to every API in the marketplace —
           payments, routing, and failover are handled automatically.
         </p>
+      </div>
+
+      {/* API Keys Section (Stripe-style) */}
+      <div className="card p-5 space-y-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h2 className="text-base font-semibold text-zinc-100">API keys</h2>
+            <p className="text-sm text-zinc-400 mt-1">
+              Your keys load automatically when this page opens.
+              Use one in your agent config or manage all keys.
+            </p>
+          </div>
+          <Link
+            href="/buyer/keys"
+            className="shrink-0 px-3 py-1.5 text-xs bg-surface-3 text-zinc-300 hover:text-zinc-100 rounded-lg border border-surface-4 transition-colors"
+          >
+            Manage API keys
+          </Link>
+        </div>
+
+        {keysLoading ? (
+          <div className="space-y-2 animate-pulse">
+            <div className="h-12 rounded-lg bg-surface-3/70" />
+            <div className="h-12 rounded-lg bg-surface-3/70" />
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {apiKey && !apiKey.endsWith("...") && (
+              <ApiKeyStripeRow
+                title="Secret key (new)"
+                value={apiKey}
+                meta="Shown once — copy and store securely."
+                onCopy={() => handleCopyKey(apiKey, "new_raw_key")}
+                copied={copiedKeyId === "new_raw_key"}
+                highlight
+              />
+            )}
+
+            {activeKeys.length > 0 ? (
+              activeKeys.slice(0, 3).map((key) => (
+                <ApiKeyStripeRow
+                  key={key.id}
+                  title={key.name}
+                  value={maskApiKey(key.keyPrefix)}
+                  meta={`${key.rateLimitRpm}/min${key.lastUsedAt ? ` • Last used ${relativeTime(key.lastUsedAt)}` : " • Never used"}`}
+                  onCopy={() => handleCopyKey(key.keyPrefix, key.id)}
+                  copied={copiedKeyId === key.id}
+                  actionLabel={selectedAgent ? "Use in setup" : undefined}
+                  onAction={
+                    selectedAgent
+                      ? () => handleUseExistingKey(key.keyPrefix)
+                      : undefined
+                  }
+                />
+              ))
+            ) : (
+              <div className="rounded-lg border border-dashed border-surface-4 px-4 py-5 text-sm text-zinc-400">
+                No active keys yet. Continue to step 2 to generate one.
+              </div>
+            )}
+
+            {activeKeys.length > 3 && (
+              <p className="text-xs text-zinc-500 pt-1">
+                Showing 3 of {activeKeys.length} active keys.
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Progress Bar */}
@@ -256,31 +360,29 @@ export default function PlugInAgentPage() {
           </div>
 
           {/* Existing Keys */}
-          {existingKeys.length > 0 && (
+          {activeKeys.length > 0 && (
             <div className="card p-5 space-y-3">
               <h3 className="text-sm font-semibold text-zinc-200">
                 Use an existing key
               </h3>
               <div className="space-y-2">
-                {existingKeys
-                  .filter((k) => k.status === "ACTIVE")
-                  .map((key) => (
-                    <button
-                      key={key.id}
-                      onClick={() => handleUseExistingKey(key.keyPrefix)}
-                      className="w-full flex items-center gap-3 px-4 py-3 bg-surface-2 rounded-lg hover:bg-surface-3 transition-colors text-left"
-                    >
-                      <span className="text-sm text-zinc-200 font-medium">
-                        {key.name}
-                      </span>
-                      <span className="text-xs font-mono text-zinc-500">
-                        {key.keyPrefix}...
-                      </span>
-                      <span className="ml-auto text-xs text-brand-400">
-                        Use this →
-                      </span>
-                    </button>
-                  ))}
+                {activeKeys.map((key) => (
+                  <button
+                    key={key.id}
+                    onClick={() => handleUseExistingKey(key.keyPrefix)}
+                    className="w-full flex items-center gap-3 px-4 py-3 bg-surface-2 rounded-lg hover:bg-surface-3 transition-colors text-left"
+                  >
+                    <span className="text-sm text-zinc-200 font-medium">
+                      {key.name}
+                    </span>
+                    <span className="text-xs font-mono text-zinc-500">
+                      {key.keyPrefix}...
+                    </span>
+                    <span className="ml-auto text-xs text-brand-400">
+                      Use this →
+                    </span>
+                  </button>
+                ))}
               </div>
             </div>
           )}
@@ -288,7 +390,7 @@ export default function PlugInAgentPage() {
           {/* Generate New Key */}
           <div className="card p-5 space-y-4">
             <h3 className="text-sm font-semibold text-zinc-200">
-              {existingKeys.length > 0
+              {activeKeys.length > 0
                 ? "Or generate a new key"
                 : "Generate an API key"}
             </h3>
@@ -442,6 +544,21 @@ export default function PlugInAgentPage() {
             </p>
           </div>
 
+          {/* Wallet empty warning */}
+          {wallet !== null && wallet.balanceUsdc === 0 && (
+            <div className="card p-4 border-amber-500/20 bg-amber-500/5 text-sm text-amber-300 flex items-start gap-3">
+              <span className="shrink-0">⚠</span>
+              <span>
+                Your wallet is empty — your agent will get a 402 error on every
+                API call.{" "}
+                <Link href="/buyer/fund" className="underline hover:text-amber-200">
+                  Add USDC
+                </Link>{" "}
+                before testing.
+              </span>
+            </div>
+          )}
+
           {/* Test Card */}
           <div className="card p-6 space-y-5">
             <div className="flex items-center gap-4">
@@ -565,6 +682,63 @@ export default function PlugInAgentPage() {
   );
 }
 
+function maskApiKey(prefix: string): string {
+  return `${prefix}••••••••••••••••••••••••`;
+}
+
+function ApiKeyStripeRow({
+  title,
+  value,
+  meta,
+  copied,
+  onCopy,
+  actionLabel,
+  onAction,
+  highlight = false,
+}: {
+  title: string;
+  value: string;
+  meta: string;
+  copied: boolean;
+  onCopy: () => void;
+  actionLabel?: string;
+  onAction?: () => void;
+  highlight?: boolean;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-lg border px-3 py-3 bg-surface-1",
+        highlight ? "border-amber-500/35 bg-amber-500/5" : "border-surface-4",
+      )}
+    >
+      <div className="flex items-center gap-3">
+        <div className="min-w-[120px] text-xs font-semibold uppercase tracking-wide text-zinc-500">
+          {title}
+        </div>
+        <div className="flex-1 min-w-0 rounded-md bg-surface-2 border border-surface-4 px-3 py-2">
+          <p className="font-mono text-sm text-zinc-200 truncate">{value}</p>
+        </div>
+        <button
+          onClick={onCopy}
+          className="px-2.5 py-1.5 text-xs rounded-md border border-surface-4 bg-surface-2 text-zinc-300 hover:text-zinc-100 transition-colors"
+        >
+          {copied ? "Copied" : "Copy"}
+        </button>
+        {actionLabel && onAction && (
+          <button
+            onClick={onAction}
+            className="px-2.5 py-1.5 text-xs rounded-md border border-brand-600/30 bg-brand-600/10 text-brand-300 hover:bg-brand-600/20 transition-colors"
+          >
+            {actionLabel}
+          </button>
+        )}
+      </div>
+      <p className="text-xs text-zinc-500 mt-2">{meta}</p>
+    </div>
+  );
+}
+
 // ─── Config Generation ───
 
 function getConfigTitle(agent: AgentDef): string {
@@ -592,10 +766,11 @@ function getConfigSnippet(agent: AgentDef, apiKey: string): string {
   "mcpServers": {
     "nexusx": {
       "command": "npx",
-      "args": ["-y", "@nexusx/mcp-server"],
+      "args": ["-y", "nexusx", "mcp"],
       "env": {
         "NEXUSX_API_KEY": "${apiKey}",
-        "NEXUSX_GATEWAY_URL": "https://gateway.nexusx.io"
+        "NEXUSX_GATEWAY_URL": "https://gateway.nexusx.dev",
+        "NEXUSX_SESSION_BUDGET_USDC": "5.00"
       }
     }
   }
@@ -607,10 +782,11 @@ function getConfigSnippet(agent: AgentDef, apiKey: string): string {
   "mcpServers": {
     "nexusx": {
       "command": "npx",
-      "args": ["-y", "@nexusx/mcp-server"],
+      "args": ["-y", "nexusx", "mcp"],
       "env": {
         "NEXUSX_API_KEY": "${apiKey}",
-        "NEXUSX_GATEWAY_URL": "https://gateway.nexusx.io",
+        "NEXUSX_GATEWAY_URL": "https://gateway.nexusx.dev",
+        "NEXUSX_SESSION_BUDGET_USDC": "5.00",
         "NEXUSX_TRANSPORT": "stdio"
       }
     }
@@ -668,7 +844,7 @@ nexusx_tool = {
 # Handle tool calls in your agent loop
 import requests
 
-NEXUSX_GATEWAY = "https://gateway.nexusx.io"
+NEXUSX_GATEWAY = "https://gateway.nexusx.dev"
 NEXUSX_KEY = "${apiKey}"
 
 def call_nexusx(slug: str, path: str = "/", body: dict = None):
@@ -709,7 +885,7 @@ const tool = {
 };
 
 // Handle function calls:
-const NEXUSX_GATEWAY = "https://gateway.nexusx.io";
+const NEXUSX_GATEWAY = "https://gateway.nexusx.dev";
 const NEXUSX_KEY = "${apiKey}";
 
 async function callNexusX(slug, path = "/", body = {}) {
@@ -731,7 +907,7 @@ async function callNexusX(slug, path = "/", body = {}) {
 from langchain.tools import Tool
 import requests
 
-NEXUSX_GATEWAY = "https://gateway.nexusx.io"
+NEXUSX_GATEWAY = "https://gateway.nexusx.dev"
 NEXUSX_KEY = "${apiKey}"
 
 def nexusx_call(query: str) -> str:
@@ -773,7 +949,7 @@ nexusx_tool = Tool(
 # Works with any language or framework
 
 # Base URL
-GATEWAY_URL="https://gateway.nexusx.io"
+GATEWAY_URL="https://gateway.nexusx.dev"
 API_KEY="${apiKey}"
 
 # Call any API by its marketplace slug:
