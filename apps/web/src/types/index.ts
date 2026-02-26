@@ -200,6 +200,41 @@ export interface MarketCategory {
   listings: MarketListing[];
 }
 
+// ─── Spec Detection ───
+
+export interface DetectEndpoint {
+  path: string;
+  method: string;
+  summary: string;
+  requestSchema: Record<string, unknown> | null;
+}
+
+export interface InputSchemaField {
+  name: string;
+  type: string;
+  required: boolean;
+  description: string;
+}
+
+export interface DetectResponse {
+  detected: boolean;
+  name: string;
+  description: string;
+  baseUrl: string;
+  healthCheckUrl: string;
+  docsUrl: string;
+  authType: string;
+  listingType: string;
+  sampleRequest: Record<string, unknown> | null;
+  sampleResponse: Record<string, unknown> | null;
+  endpoints: DetectEndpoint[];
+  inputSchemaFields: InputSchemaField[];
+  suggestedCategorySlug: string | null;
+  tags: string[];
+  healthCheckStatus: { ok: boolean; latencyMs: number } | null;
+  warnings: string[];
+}
+
 // ─── Pagination ───
 
 export interface PaginatedResponse<T> {

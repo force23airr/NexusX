@@ -18,6 +18,7 @@ import type {
   ProviderAnalytics,
   MarketActivity,
   ActivityEntry,
+  DetectResponse,
   PaginatedResponse,
   PriceTick,
   PlaygroundRequest,
@@ -228,6 +229,22 @@ export const provider = {
   /** Get provider profile + stats. */
   async getProfile(): Promise<ProviderProfile> {
     return apiFetch("/api/provider/profile");
+  },
+
+  /** Auto-detect OpenAPI spec from a URL. */
+  async detectSpec(url: string): Promise<DetectResponse> {
+    return apiFetch("/api/provider/detect", {
+      method: "POST",
+      body: JSON.stringify({ url }),
+    });
+  },
+
+  /** Update provider payout address. */
+  async updatePayoutAddress(address: string): Promise<void> {
+    await apiFetch("/api/provider/profile", {
+      method: "PATCH",
+      body: JSON.stringify({ payoutAddress: address }),
+    });
   },
 
   /** Get provider's listings. */

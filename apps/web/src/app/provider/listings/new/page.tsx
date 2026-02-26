@@ -1,20 +1,13 @@
-// ═══════════════════════════════════════════════════════════════
-// NexusX — Create New Listing Page
-// apps/web/src/app/provider/listings/new/page.tsx
-//
-// Multi-section form for providers to post APIs to the marketplace.
-// Creates listing as DRAFT status on submit.
-// ═══════════════════════════════════════════════════════════════
-
 "use client";
 
-import { useState, useEffect, useCallback, type FormEvent } from "react";
+import { useReducer, useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { provider, marketplace } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { ListingType } from "@/types";
+import McpPreviewPanel from "@/components/provider/McpPreviewPanel";
+import type { ListingType, DetectEndpoint, DetectResponse, InputSchemaField } from "@/types";
 
-// ─── Types ───
+// ─── Constants ───
 
 interface Category {
   id: string;
@@ -22,69 +15,6 @@ interface Category {
   name: string;
   depth: number;
 }
-
-interface FormData {
-  name: string;
-  slug: string;
-  listingType: ListingType;
-  categoryId: string;
-  sectors: string[];
-  description: string;
-  videoUrl: string;
-  baseUrl: string;
-  healthCheckUrl: string;
-  docsUrl: string;
-  sandboxUrl: string;
-  authType: string;
-  floorPrice: string;
-  ceilingPrice: string;
-  capacityPerMinute: string;
-  tags: string[];
-  isUnique: boolean;
-  sampleRequest: string;
-  sampleResponse: string;
-}
-
-const INITIAL_FORM: FormData = {
-  name: "",
-  slug: "",
-  listingType: "REST_API",
-  categoryId: "",
-  sectors: [],
-  description: "",
-  videoUrl: "",
-  baseUrl: "",
-  healthCheckUrl: "",
-  docsUrl: "",
-  sandboxUrl: "",
-  authType: "api_key",
-  floorPrice: "",
-  ceilingPrice: "",
-  capacityPerMinute: "60",
-  tags: [],
-  isUnique: false,
-  sampleRequest: "",
-  sampleResponse: "",
-};
-
-const SECTORS = [
-  { value: "consumer-products", label: "Consumer Products" },
-  { value: "hardware", label: "Hardware" },
-  { value: "military-defense", label: "Military & Defense" },
-  { value: "logistics", label: "Logistics" },
-  { value: "shopping-commerce", label: "Shopping & Commerce" },
-  { value: "healthcare", label: "Healthcare" },
-  { value: "fintech", label: "Fintech & Banking" },
-  { value: "education", label: "Education" },
-  { value: "real-estate", label: "Real Estate" },
-  { value: "automotive", label: "Automotive" },
-  { value: "energy", label: "Energy & Utilities" },
-  { value: "media-entertainment", label: "Media & Entertainment" },
-  { value: "agriculture", label: "Agriculture" },
-  { value: "telecommunications", label: "Telecommunications" },
-  { value: "travel-hospitality", label: "Travel & Hospitality" },
-  { value: "general-purpose", label: "General Purpose / Cross-Industry" },
-];
 
 const LISTING_TYPES: { value: ListingType; label: string }[] = [
   { value: "REST_API", label: "REST API" },
@@ -102,652 +32,940 @@ const AUTH_TYPES = [
   { value: "none", label: "None" },
 ];
 
-// ─── Video Embed Helpers ───
+const CATEGORY_PRICING: Record<string, { floor: number; ceiling: number }> = {
+  "language-models": { floor: 0.003, ceiling: 0.05 },
+  "translation": { floor: 0.001, ceiling: 0.01 },
+  "sentiment-analysis": { floor: 0.0005, ceiling: 0.005 },
+  "embeddings": { floor: 0.0001, ceiling: 0.002 },
+  "object-detection": { floor: 0.002, ceiling: 0.02 },
+  "datasets": { floor: 0.01, ceiling: 0.10 },
+};
+const DEFAULT_PRICING = { floor: 0.001, ceiling: 0.01 };
 
-function extractVideoEmbedUrl(url: string): string | null {
-  if (!url) return null;
+// ─── Detection Stages ───
 
-  // YouTube: youtube.com/watch?v=ID or youtu.be/ID
-  const ytMatch =
-    url.match(/(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/) ??
-    url.match(/youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/);
-  if (ytMatch) return `https://www.youtube.com/embed/${ytMatch[1]}`;
+type DetectStage =
+  | "idle"
+  | "fetching"     // Fetching spec...
+  | "analyzing"    // Analyzing endpoints...
+  | "generating"   // Generating preview...
+  | "done"         // Done
+  | "failed";
 
-  // Vimeo: vimeo.com/ID
-  const vimeoMatch = url.match(/vimeo\.com\/(\d+)/);
-  if (vimeoMatch) return `https://player.vimeo.com/video/${vimeoMatch[1]}`;
+const STAGE_LABELS: Record<DetectStage, string> = {
+  idle: "",
+  fetching: "Fetching spec...",
+  analyzing: "Analyzing endpoints...",
+  generating: "Generating preview...",
+  done: "Done",
+  failed: "Detection failed",
+};
 
-  return null;
+// ─── Wizard State ───
+
+interface WizardFormData {
+  // Step 1
+  specUrl: string;
+  detected: boolean;
+  name: string;
+  description: string;
+  listingType: ListingType;
+  categoryId: string;
+  baseUrl: string;
+  healthCheckUrl: string;
+  docsUrl: string;
+  authType: string;
+  sampleRequest: string;
+  sampleResponse: string;
+  endpoints: DetectEndpoint[];
+  inputSchemaFields: InputSchemaField[];
+  // Step 2
+  floorPrice: string;
+  ceilingPrice: string;
+  capacityPerMinute: string;
+  // Step 3
+  payoutAddress: string;
 }
 
-// ─── Slug Generation ───
+type WizardAction =
+  | { type: "SET_FIELD"; field: keyof WizardFormData; value: WizardFormData[keyof WizardFormData] }
+  | { type: "SET_DETECTION_RESULT"; result: DetectResponse; categories: Category[] }
+  | { type: "RESET" };
 
-function slugify(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9\s-]/g, "")
-    .replace(/\s+/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-|-$/g, "");
+const INITIAL_STATE: WizardFormData = {
+  specUrl: "",
+  detected: false,
+  name: "",
+  description: "",
+  listingType: "REST_API",
+  categoryId: "",
+  baseUrl: "",
+  healthCheckUrl: "",
+  docsUrl: "",
+  authType: "api_key",
+  sampleRequest: "",
+  sampleResponse: "",
+  endpoints: [],
+  inputSchemaFields: [],
+  floorPrice: "",
+  ceilingPrice: "",
+  capacityPerMinute: "60",
+  payoutAddress: "",
+};
+
+function wizardReducer(state: WizardFormData, action: WizardAction): WizardFormData {
+  switch (action.type) {
+    case "SET_FIELD":
+      return { ...state, [action.field]: action.value };
+    case "SET_DETECTION_RESULT": {
+      const r = action.result;
+      let categoryId = state.categoryId;
+      if (r.suggestedCategorySlug) {
+        const match = action.categories.find((c) => c.slug === r.suggestedCategorySlug);
+        if (match) categoryId = match.id;
+      }
+      const catSlug = r.suggestedCategorySlug || "";
+      const pricing = CATEGORY_PRICING[catSlug] || DEFAULT_PRICING;
+
+      return {
+        ...state,
+        detected: r.detected,
+        name: r.name || state.name,
+        description: r.description || state.description,
+        listingType: (r.listingType as ListingType) || state.listingType,
+        categoryId,
+        baseUrl: r.baseUrl || state.baseUrl,
+        healthCheckUrl: r.healthCheckUrl || state.healthCheckUrl,
+        docsUrl: r.docsUrl || state.docsUrl,
+        authType: r.authType || state.authType,
+        sampleRequest: r.sampleRequest ? JSON.stringify(r.sampleRequest, null, 2) : state.sampleRequest,
+        sampleResponse: r.sampleResponse ? JSON.stringify(r.sampleResponse, null, 2) : state.sampleResponse,
+        endpoints: r.endpoints || [],
+        inputSchemaFields: r.inputSchemaFields || [],
+        floorPrice: state.floorPrice || pricing.floor.toString(),
+        ceilingPrice: state.ceilingPrice || pricing.ceiling.toString(),
+      };
+    }
+    case "RESET":
+      return INITIAL_STATE;
+    default:
+      return state;
+  }
 }
 
-// ─── Component ───
+// ─── Step Indicator ───
+
+function StepIndicator({ current }: { current: number }) {
+  const steps = [
+    { num: 1, label: "API Details" },
+    { num: 2, label: "Pricing" },
+    { num: 3, label: "Wallet" },
+  ];
+
+  return (
+    <div className="flex items-center gap-2 mb-8">
+      {steps.map((step, i) => (
+        <div key={step.num} className="flex items-center gap-2">
+          <div
+            className={cn(
+              "flex items-center justify-center w-8 h-8 rounded-full text-sm font-semibold transition-all",
+              current === step.num
+                ? "bg-brand-600 text-white"
+                : current > step.num
+                  ? "bg-emerald-600/20 text-emerald-400 border border-emerald-600/30"
+                  : "bg-surface-3 text-zinc-500 border border-surface-4"
+            )}
+          >
+            {current > step.num ? "\u2713" : step.num}
+          </div>
+          <span
+            className={cn(
+              "text-sm font-medium",
+              current === step.num ? "text-zinc-200" : "text-zinc-500"
+            )}
+          >
+            {step.label}
+          </span>
+          {i < steps.length - 1 && (
+            <div
+              className={cn(
+                "w-12 h-px mx-1",
+                current > step.num ? "bg-emerald-600/40" : "bg-surface-4"
+              )}
+            />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ─── Detection Progress ───
+
+function DetectionProgress({ stage, endpointCount, healthStatus }: {
+  stage: DetectStage;
+  endpointCount: number;
+  healthStatus: { ok: boolean; latencyMs: number } | null;
+}) {
+  if (stage === "idle") return null;
+
+  const stages: DetectStage[] = ["fetching", "analyzing", "generating"];
+  const currentIdx = stages.indexOf(stage);
+  const isDoneOrFailed = stage === "done" || stage === "failed";
+
+  return (
+    <div className="bg-surface-2 border border-surface-4 rounded-lg p-4 space-y-2.5">
+      {stages.map((s, i) => {
+        const isActive = s === stage;
+        const isDone = isDoneOrFailed || currentIdx > i;
+        const isPending = !isDone && !isActive;
+
+        let label = STAGE_LABELS[s];
+        if (s === "analyzing" && isDone && endpointCount > 0) {
+          label = `${endpointCount} endpoint${endpointCount !== 1 ? "s" : ""} found`;
+        }
+        if (s === "generating" && isDone) {
+          label = "Preview ready";
+        }
+
+        return (
+          <div key={s} className="flex items-center gap-2.5 text-sm">
+            {isActive && !isDoneOrFailed && (
+              <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-zinc-600 border-t-brand-400 rounded-full flex-shrink-0" />
+            )}
+            {isDone && (
+              <span className="w-3.5 h-3.5 flex items-center justify-center text-emerald-400 text-xs flex-shrink-0">
+                &#10003;
+              </span>
+            )}
+            {isPending && (
+              <span className="w-3.5 h-3.5 rounded-full border border-zinc-700 flex-shrink-0" />
+            )}
+            <span className={cn(
+              isDone ? "text-emerald-400" : isActive ? "text-zinc-200" : "text-zinc-600",
+              "transition-colors duration-300"
+            )}>
+              {label}
+            </span>
+          </div>
+        );
+      })}
+
+      {/* Health check result — shown as a bonus line when done */}
+      {isDoneOrFailed && healthStatus && (
+        <div className="flex items-center gap-2.5 text-sm border-t border-surface-4 pt-2 mt-1">
+          <span className={cn(
+            "w-3.5 h-3.5 flex items-center justify-center text-xs flex-shrink-0",
+            healthStatus.ok ? "text-emerald-400" : "text-amber-400"
+          )}>
+            {healthStatus.ok ? "\u2713" : "!"}
+          </span>
+          <span className={healthStatus.ok ? "text-emerald-400" : "text-amber-400"}>
+            {healthStatus.ok
+              ? `Health check passed (${healthStatus.latencyMs}ms)`
+              : `Health check failed (${healthStatus.latencyMs}ms)`
+            }
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Main Page ───
 
 export default function CreateListingPage() {
   const router = useRouter();
-  const [form, setForm] = useState<FormData>(INITIAL_FORM);
+  const [form, dispatch] = useReducer(wizardReducer, INITIAL_STATE);
+  const [currentStep, setCurrentStep] = useState(1);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [tagInput, setTagInput] = useState("");
-  const [slugEdited, setSlugEdited] = useState(false);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showFields, setShowFields] = useState(false); // collapsed until detect or manual toggle
+
+  // Detection state
+  const [detectStage, setDetectStage] = useState<DetectStage>("idle");
+  const [detectWarnings, setDetectWarnings] = useState<string[]>([]);
+  const [endpointCount, setEndpointCount] = useState(0);
+  const [healthStatus, setHealthStatus] = useState<{ ok: boolean; latencyMs: number } | null>(null);
+  const stageTimerRef = useRef<ReturnType<typeof setTimeout>[]>([]);
 
   // Load categories
   useEffect(() => {
     marketplace.getCategories().then(setCategories).catch(console.error);
   }, []);
 
-  // Auto-generate slug from name
-  useEffect(() => {
-    if (!slugEdited) {
-      setForm((prev) => ({ ...prev, slug: slugify(prev.name) }));
-    }
-  }, [form.name, slugEdited]);
-
-  const updateField = useCallback(
-    <K extends keyof FormData>(key: K, value: FormData[K]) => {
-      setForm((prev) => ({ ...prev, [key]: value }));
+  const setField = useCallback(
+    <K extends keyof WizardFormData>(field: K, value: WizardFormData[K]) => {
+      dispatch({ type: "SET_FIELD", field, value });
       setErrors((prev) => {
         const next = { ...prev };
-        delete next[key];
+        delete next[field];
         return next;
       });
     },
     []
   );
 
-  // Tag management
-  const addTag = useCallback(
-    (tag: string) => {
-      const trimmed = tag.trim().toLowerCase();
-      if (trimmed && !form.tags.includes(trimmed)) {
-        updateField("tags", [...form.tags, trimmed]);
+  // ─── Auto-detect with staged progress ───
+  const handleDetect = useCallback(async () => {
+    if (!form.specUrl.trim()) return;
+
+    // Reset
+    setDetectWarnings([]);
+    setEndpointCount(0);
+    setHealthStatus(null);
+    for (const t of stageTimerRef.current) clearTimeout(t);
+    stageTimerRef.current = [];
+
+    // Animate through 3 stages while the single API call runs.
+    // Minimum 1.5s total so the animation feels intentional.
+    const startedAt = Date.now();
+    setDetectStage("fetching");
+    stageTimerRef.current.push(
+      setTimeout(() => setDetectStage("analyzing"), 600),
+      setTimeout(() => setDetectStage("generating"), 1200),
+    );
+
+    try {
+      const result = await provider.detectSpec(form.specUrl.trim());
+
+      // Ensure minimum animation time so stages complete visually
+      const elapsed = Date.now() - startedAt;
+      const minDelay = Math.max(0, 1500 - elapsed);
+
+      await new Promise<void>((resolve) => {
+        const t = setTimeout(resolve, minDelay);
+        stageTimerRef.current.push(t);
+      });
+
+      // Clear all stage timers
+      for (const t of stageTimerRef.current) clearTimeout(t);
+      stageTimerRef.current = [];
+
+      // Populate all fields simultaneously and reveal them
+      dispatch({ type: "SET_DETECTION_RESULT", result, categories });
+      setEndpointCount(result.endpoints.length);
+      setHealthStatus(result.healthCheckStatus);
+      setShowFields(true);
+
+      if (result.detected || result.name) {
+        setDetectStage("done");
+      } else {
+        setDetectStage("failed");
       }
-      setTagInput("");
-    },
-    [form.tags, updateField]
-  );
 
-  const removeTag = useCallback(
-    (tag: string) => {
-      updateField(
-        "tags",
-        form.tags.filter((t) => t !== tag)
-      );
-    },
-    [form.tags, updateField]
-  );
-
-  const handleTagKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLInputElement>) => {
-      if (e.key === "Enter" || e.key === ",") {
-        e.preventDefault();
-        addTag(tagInput);
-      } else if (e.key === "Backspace" && !tagInput && form.tags.length > 0) {
-        removeTag(form.tags[form.tags.length - 1]);
+      if (result.warnings.length > 0) {
+        setDetectWarnings(result.warnings);
       }
-    },
-    [tagInput, form.tags, addTag, removeTag]
-  );
+    } catch (err: unknown) {
+      for (const t of stageTimerRef.current) clearTimeout(t);
+      stageTimerRef.current = [];
+      const msg = err instanceof Error ? err.message : "Detection failed";
+      setDetectWarnings([msg]);
+      setDetectStage("failed");
+    }
+  }, [form.specUrl, categories]);
 
-  // Validation
-  const validate = useCallback((): boolean => {
-    const errs: Record<string, string> = {};
-    if (!form.name.trim()) errs.name = "Name is required";
-    if (!form.slug.trim()) errs.slug = "Slug is required";
-    if (!form.description.trim()) errs.description = "Description is required";
-    if (!form.categoryId) errs.categoryId = "Category is required";
-    if (form.sectors.length === 0) errs.sectors = "Select at least one sector";
-    if (!form.baseUrl.trim()) errs.baseUrl = "Base URL is required";
-    if (!form.floorPrice || parseFloat(form.floorPrice) <= 0)
-      errs.floorPrice = "Floor price must be greater than 0";
-    if (
-      form.ceilingPrice &&
-      parseFloat(form.ceilingPrice) <= parseFloat(form.floorPrice)
-    )
-      errs.ceilingPrice = "Ceiling must be greater than floor";
-    setErrors(errs);
-    return Object.keys(errs).length === 0;
-  }, [form]);
+  // Cleanup timers
+  useEffect(() => {
+    return () => {
+      for (const t of stageTimerRef.current) clearTimeout(t);
+    };
+  }, []);
 
-  // Submit
-  const handleSubmit = useCallback(
-    async (e: FormEvent) => {
-      e.preventDefault();
-      if (!validate()) return;
-
-      setIsSubmitting(true);
-      setSubmitError(null);
-
-      try {
-        let sampleRequest = null;
-        let sampleResponse = null;
-        if (form.sampleRequest.trim()) {
-          try {
-            sampleRequest = JSON.parse(form.sampleRequest);
-          } catch {
-            setErrors((prev) => ({
-              ...prev,
-              sampleRequest: "Invalid JSON",
-            }));
-            setIsSubmitting(false);
-            return;
-          }
-        }
-        if (form.sampleResponse.trim()) {
-          try {
-            sampleResponse = JSON.parse(form.sampleResponse);
-          } catch {
-            setErrors((prev) => ({
-              ...prev,
-              sampleResponse: "Invalid JSON",
-            }));
-            setIsSubmitting(false);
-            return;
-          }
-        }
-
-        await provider.createListing({
-          name: form.name,
-          slug: form.slug,
-          listingType: form.listingType,
-          categoryId: form.categoryId,
-          sectors: form.sectors,
-          description: form.description,
-          videoUrl: form.videoUrl || undefined,
-          baseUrl: form.baseUrl,
-          healthCheckUrl: form.healthCheckUrl || undefined,
-          docsUrl: form.docsUrl || undefined,
-          sandboxUrl: form.sandboxUrl || undefined,
-          authType: form.authType,
-          floorPriceUsdc: parseFloat(form.floorPrice),
-          ceilingPriceUsdc: form.ceilingPrice
-            ? parseFloat(form.ceilingPrice)
-            : undefined,
-          capacityPerMinute: parseInt(form.capacityPerMinute, 10) || 60,
-          tags: form.tags,
-          isUnique: form.isUnique,
-          sampleRequest,
-          sampleResponse,
-        });
-
-        router.push("/provider/listings?created=1");
-      } catch (err: any) {
-        setSubmitError(err.message || "Failed to create listing");
-      } finally {
-        setIsSubmitting(false);
+  // ─── Validation ───
+  const validateStep = useCallback(
+    (step: number): boolean => {
+      const errs: Record<string, string> = {};
+      if (step === 1) {
+        if (!form.name.trim()) errs.name = "Name is required";
+        if (!form.description.trim()) errs.description = "Description is required";
+        if (!form.categoryId) errs.categoryId = "Category is required";
+        if (!form.baseUrl.trim()) errs.baseUrl = "Base URL is required";
+      } else if (step === 2) {
+        if (!form.floorPrice || parseFloat(form.floorPrice) <= 0)
+          errs.floorPrice = "Floor price must be greater than 0";
+        if (form.ceilingPrice && parseFloat(form.ceilingPrice) <= parseFloat(form.floorPrice))
+          errs.ceilingPrice = "Ceiling must be greater than floor";
+      } else if (step === 3) {
+        if (!form.payoutAddress.trim())
+          errs.payoutAddress = "Payout address is required";
+        else if (!/^0x[a-fA-F0-9]{40}$/.test(form.payoutAddress))
+          errs.payoutAddress = "Invalid Ethereum address";
       }
+      setErrors(errs);
+      return Object.keys(errs).length === 0;
     },
-    [form, validate, router]
+    [form]
   );
 
-  const videoEmbedUrl = extractVideoEmbedUrl(form.videoUrl);
+  const handleNext = useCallback(() => {
+    // If fields are hidden, show them first so validation errors are visible
+    if (currentStep === 1 && !showFields) {
+      setShowFields(true);
+      // Let the fields render, then validate on next tick
+      setTimeout(() => {
+        // Re-run validation will show errors on the now-visible fields
+      }, 0);
+      return;
+    }
+    if (validateStep(currentStep)) {
+      setCurrentStep((s) => Math.min(s + 1, 3));
+    }
+  }, [currentStep, validateStep, showFields]);
+
+  const handleBack = useCallback(() => {
+    setCurrentStep((s) => Math.max(s - 1, 1));
+    setErrors({});
+  }, []);
+
+  // ─── Submit ───
+  const handleSubmit = useCallback(async () => {
+    if (!validateStep(3)) return;
+
+    setIsSubmitting(true);
+    setSubmitError(null);
+
+    try {
+      let sampleRequest = null;
+      let sampleResponse = null;
+      if (form.sampleRequest.trim()) {
+        try { sampleRequest = JSON.parse(form.sampleRequest); }
+        catch { /* skip invalid */ }
+      }
+      if (form.sampleResponse.trim()) {
+        try { sampleResponse = JSON.parse(form.sampleResponse); }
+        catch { /* skip invalid */ }
+      }
+
+      await provider.createListing({
+        name: form.name,
+        slug: "",
+        listingType: form.listingType,
+        categoryId: form.categoryId,
+        sectors: [],
+        description: form.description,
+        baseUrl: form.baseUrl,
+        healthCheckUrl: form.healthCheckUrl || undefined,
+        docsUrl: form.docsUrl || undefined,
+        authType: form.authType,
+        floorPriceUsdc: parseFloat(form.floorPrice),
+        ceilingPriceUsdc: form.ceilingPrice ? parseFloat(form.ceilingPrice) : undefined,
+        capacityPerMinute: parseInt(form.capacityPerMinute, 10) || 60,
+        tags: [],
+        isUnique: false,
+        sampleRequest,
+        sampleResponse,
+      });
+
+      if (form.payoutAddress) {
+        try { await provider.updatePayoutAddress(form.payoutAddress); }
+        catch { /* non-blocking */ }
+      }
+
+      router.push("/provider/listings?created=1");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Failed to create listing";
+      setSubmitError(msg);
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, [form, validateStep, router]);
+
+  const selectedCategory = categories.find((c) => c.id === form.categoryId);
+  const categorySlug = selectedCategory?.slug || "";
+  const categoryPricing = CATEGORY_PRICING[categorySlug] || DEFAULT_PRICING;
+  const isDetecting = detectStage !== "idle" && detectStage !== "done" && detectStage !== "failed";
 
   return (
-    <div className="max-w-4xl mx-auto space-y-8 animate-fade-in pb-16">
+    <div className="max-w-7xl mx-auto animate-fade-in pb-16">
       {/* Header */}
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-4 mb-6">
         <button
           onClick={() => router.push("/provider/listings")}
           className="btn-ghost text-zinc-400 hover:text-zinc-200"
         >
-          &larr; Back to Listings
+          &larr; Back
         </button>
         <div>
-          <h1 className="text-3xl font-bold tracking-tight">
-            Create New Listing
-          </h1>
+          <h1 className="text-3xl font-bold tracking-tight">Deploy Your API</h1>
           <p className="mt-1 text-zinc-400">
-            Post your API to the marketplace as a draft.
+            One URL in, live MCP tool out, USDC flowing.
           </p>
         </div>
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-8">
-        {/* ─── Basics ─── */}
-        <section className="card p-6 space-y-5">
-          <SectionHeader title="Basics" />
+      <div className="flex gap-8">
+        {/* ── LEFT: Steps ── */}
+        <div className="flex-1 min-w-0">
+          <StepIndicator current={currentStep} />
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="md:col-span-1">
-              <FieldLabel label="Listing Name" error={errors.name} />
-              <input
-                className={cn("input-base w-full", errors.name && "border-red-500/50")}
-                placeholder="My Weather API"
-                value={form.name}
-                onChange={(e) => updateField("name", e.target.value)}
-              />
-            </div>
-            <div>
-              <FieldLabel label="Type" />
-              <select
-                className="input-base w-full"
-                value={form.listingType}
-                onChange={(e) =>
-                  updateField("listingType", e.target.value as ListingType)
-                }
-              >
-                {LISTING_TYPES.map((t) => (
-                  <option key={t.value} value={t.value}>
-                    {t.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <FieldLabel label="Category" error={errors.categoryId} />
-              <select
-                className={cn("input-base w-full", errors.categoryId && "border-red-500/50")}
-                value={form.categoryId}
-                onChange={(e) => updateField("categoryId", e.target.value)}
-              >
-                <option value="">Select category...</option>
-                {categories.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {"\u00A0".repeat(c.depth * 2)}
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-
-          <div>
-            <FieldLabel label="Sector / Industry" error={errors.sectors} />
-            <div className={cn(
-              "flex flex-wrap gap-2",
-              errors.sectors && "ring-1 ring-red-500/50 rounded-lg p-2"
-            )}>
-              {SECTORS.map((s) => {
-                const selected = form.sectors.includes(s.value);
-                const atLimit = form.sectors.length >= 3 && !selected;
-                return (
-                  <button
-                    key={s.value}
-                    type="button"
-                    disabled={atLimit}
-                    onClick={() => {
-                      if (selected) {
-                        updateField("sectors", form.sectors.filter((v) => v !== s.value));
-                      } else {
-                        updateField("sectors", [...form.sectors, s.value]);
-                      }
+          {/* ═══ Step 1: API Details ═══ */}
+          {currentStep === 1 && (
+            <div className="space-y-6">
+              {/* URL + Auto-Detect — always visible */}
+              <section className="card p-6 space-y-4">
+                <h2 className="text-lg font-semibold text-zinc-100 border-b border-surface-4 pb-3">
+                  API Spec URL
+                </h2>
+                <p className="text-sm text-zinc-500">
+                  Paste your OpenAPI spec URL and we&rsquo;ll auto-detect everything.
+                </p>
+                <div className="flex gap-3">
+                  <input
+                    className="input-base flex-1"
+                    placeholder="https://api.example.com/openapi.json"
+                    value={form.specUrl}
+                    onChange={(e) => setField("specUrl", e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") { e.preventDefault(); handleDetect(); }
                     }}
+                    disabled={isDetecting}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleDetect}
+                    disabled={isDetecting || !form.specUrl.trim()}
                     className={cn(
-                      "px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-150 border",
-                      selected
-                        ? "bg-brand-600/20 text-brand-300 border-brand-600/30"
-                        : atLimit
-                          ? "bg-surface-3/50 text-zinc-600 border-transparent cursor-not-allowed"
-                          : "bg-surface-3 text-zinc-400 border-transparent hover:text-zinc-200 hover:bg-surface-4"
+                      "btn-primary whitespace-nowrap min-w-[130px]",
+                      (isDetecting || !form.specUrl.trim()) && "opacity-60 cursor-not-allowed"
                     )}
                   >
-                    {selected && <span className="mr-1">&#10003;</span>}
-                    {s.label}
+                    {isDetecting ? STAGE_LABELS[detectStage] : "Auto-Detect"}
                   </button>
-                );
-              })}
-            </div>
-            <p className="text-2xs text-zinc-500 mt-1.5">
-              Select up to 3 industries that will use this API. Helps buyers find you.
-            </p>
-          </div>
+                </div>
 
-          <div>
-            <FieldLabel label="Slug" error={errors.slug} />
-            <input
-              className={cn("input-base w-full font-mono text-xs", errors.slug && "border-red-500/50")}
-              placeholder="my-weather-api"
-              value={form.slug}
-              onChange={(e) => {
-                setSlugEdited(true);
-                updateField("slug", slugify(e.target.value));
-              }}
-            />
-            {!slugEdited && form.slug && (
-              <p className="text-2xs text-zinc-500 mt-1">
-                Auto-generated from name
-              </p>
-            )}
-          </div>
-        </section>
+                {/* Multi-stage progress */}
+                <DetectionProgress
+                  stage={detectStage}
+                  endpointCount={endpointCount}
+                  healthStatus={healthStatus}
+                />
 
-        {/* ─── Description ─── */}
-        <section className="card p-6 space-y-5">
-          <SectionHeader title="Describe Your API" />
-          <div>
-            <FieldLabel
-              label="Description"
-              error={errors.description}
-            />
-            <textarea
-              className={cn("input-base w-full min-h-[200px] resize-y", errors.description && "border-red-500/50")}
-              placeholder="Tell potential customers what your API does, who it's for, and what they can build with it..."
-              value={form.description}
-              onChange={(e) => updateField("description", e.target.value)}
-            />
-          </div>
-        </section>
+                {/* Warnings */}
+                {detectWarnings.length > 0 && !isDetecting && (
+                  <div className="text-sm text-amber-400 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2 space-y-1">
+                    {detectWarnings.map((w, i) => (
+                      <p key={i}>{w}</p>
+                    ))}
+                  </div>
+                )}
 
-        {/* ─── Video ─── */}
-        <section className="card p-6 space-y-5">
-          <SectionHeader title="Explainer Video" />
-          <div>
-            <FieldLabel label="YouTube or Vimeo URL" />
-            <input
-              className="input-base w-full"
-              placeholder="https://youtube.com/watch?v=..."
-              value={form.videoUrl}
-              onChange={(e) => updateField("videoUrl", e.target.value)}
-            />
-          </div>
-          {videoEmbedUrl && (
-            <div className="rounded-lg overflow-hidden border border-surface-4 aspect-video">
-              <iframe
-                src={videoEmbedUrl}
-                className="w-full h-full"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-                title="Video preview"
-              />
-            </div>
-          )}
-          {form.videoUrl && !videoEmbedUrl && (
-            <p className="text-2xs text-amber-400">
-              Could not parse video URL. Supported: youtube.com/watch?v=...,
-              youtu.be/..., vimeo.com/...
-            </p>
-          )}
-        </section>
-
-        {/* ─── Technical ─── */}
-        <section className="card p-6 space-y-5">
-          <SectionHeader title="Technical Details" />
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <FieldLabel label="Base URL" error={errors.baseUrl} />
-              <input
-                className={cn("input-base w-full", errors.baseUrl && "border-red-500/50")}
-                placeholder="https://api.example.com/v1"
-                value={form.baseUrl}
-                onChange={(e) => updateField("baseUrl", e.target.value)}
-              />
-            </div>
-            <div>
-              <FieldLabel label="Health Check URL" />
-              <input
-                className="input-base w-full"
-                placeholder="https://api.example.com/health"
-                value={form.healthCheckUrl}
-                onChange={(e) => updateField("healthCheckUrl", e.target.value)}
-              />
-            </div>
-            <div>
-              <FieldLabel label="Docs URL" />
-              <input
-                className="input-base w-full"
-                placeholder="https://docs.example.com"
-                value={form.docsUrl}
-                onChange={(e) => updateField("docsUrl", e.target.value)}
-              />
-            </div>
-            <div>
-              <FieldLabel label="Sandbox URL" />
-              <input
-                className="input-base w-full"
-                placeholder="https://sandbox.example.com"
-                value={form.sandboxUrl}
-                onChange={(e) => updateField("sandboxUrl", e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="max-w-xs">
-            <FieldLabel label="Auth Type" />
-            <select
-              className="input-base w-full"
-              value={form.authType}
-              onChange={(e) => updateField("authType", e.target.value)}
-            >
-              {AUTH_TYPES.map((t) => (
-                <option key={t.value} value={t.value}>
-                  {t.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </section>
-
-        {/* ─── Pricing ─── */}
-        <section className="card p-6 space-y-5">
-          <SectionHeader title="Pricing (USDC per call)" />
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <FieldLabel
-                label="Floor Price"
-                error={errors.floorPrice}
-                info="The minimum price per API call. The auction engine will never price your API below this amount."
-              />
-              <input
-                type="number"
-                step="0.000001"
-                min="0"
-                className={cn("input-base w-full font-mono", errors.floorPrice && "border-red-500/50")}
-                placeholder="0.001"
-                value={form.floorPrice}
-                onChange={(e) => updateField("floorPrice", e.target.value)}
-              />
-            </div>
-            <div>
-              <FieldLabel
-                label="Ceiling Price"
-                error={errors.ceilingPrice}
-                info="The maximum price per API call. During high demand, the auction engine can raise the price up to this cap."
-              />
-              <input
-                type="number"
-                step="0.000001"
-                min="0"
-                className={cn("input-base w-full font-mono", errors.ceilingPrice && "border-red-500/50")}
-                placeholder="0.01"
-                value={form.ceilingPrice}
-                onChange={(e) => updateField("ceilingPrice", e.target.value)}
-              />
-            </div>
-            <div>
-              <FieldLabel label="Capacity / min" />
-              <input
-                type="number"
-                min="1"
-                className="input-base w-full font-mono"
-                placeholder="60"
-                value={form.capacityPerMinute}
-                onChange={(e) =>
-                  updateField("capacityPerMinute", e.target.value)
-                }
-              />
-            </div>
-          </div>
-        </section>
-
-        {/* ─── Discovery ─── */}
-        <section className="card p-6 space-y-5">
-          <SectionHeader title="Discovery" />
-
-          <div>
-            <FieldLabel label="Tags" />
-            <div className="input-base w-full flex flex-wrap items-center gap-2 min-h-[42px]">
-              {form.tags.map((tag) => (
-                <span
-                  key={tag}
-                  className="inline-flex items-center gap-1 bg-brand-600/20 text-brand-300 px-2 py-0.5 rounded-md text-xs font-medium"
-                >
-                  {tag}
+                {/* Manual entry escape hatch — only before detection or fields shown */}
+                {!showFields && detectStage === "idle" && (
                   <button
                     type="button"
-                    onClick={() => removeTag(tag)}
-                    className="text-brand-400 hover:text-white ml-0.5"
+                    onClick={() => setShowFields(true)}
+                    className="text-sm text-zinc-500 hover:text-zinc-300 transition-colors"
                   >
-                    &times;
+                    or fill in manually &darr;
                   </button>
-                </span>
-              ))}
-              <input
-                className="bg-transparent outline-none text-sm text-zinc-100 placeholder-zinc-500 flex-1 min-w-[120px]"
-                placeholder={
-                  form.tags.length === 0
-                    ? "Type a tag and press Enter..."
-                    : "Add another..."
-                }
-                value={tagInput}
-                onChange={(e) => setTagInput(e.target.value)}
-                onKeyDown={handleTagKeyDown}
-                onBlur={() => {
-                  if (tagInput.trim()) addTag(tagInput);
-                }}
-              />
-            </div>
-          </div>
-
-          <label className="flex items-center gap-3 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={form.isUnique}
-              onChange={(e) => updateField("isUnique", e.target.checked)}
-              className="accent-brand-500 w-4 h-4"
-            />
-            <div>
-              <span className="text-sm text-zinc-200">Unique listing</span>
-              <p className="text-2xs text-zinc-500">
-                Mark if this API has no direct alternatives on the marketplace
-              </p>
-            </div>
-          </label>
-        </section>
-
-        {/* ─── Samples ─── */}
-        <section className="card p-6 space-y-5">
-          <SectionHeader title="Sample Request / Response" />
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <FieldLabel
-                label="Sample Request (JSON)"
-                error={errors.sampleRequest}
-              />
-              <textarea
-                className={cn(
-                  "input-base w-full min-h-[160px] font-mono text-xs resize-y",
-                  errors.sampleRequest && "border-red-500/50"
                 )}
-                placeholder='{ "query": "San Francisco weather" }'
-                value={form.sampleRequest}
-                onChange={(e) => updateField("sampleRequest", e.target.value)}
-              />
+              </section>
+
+              {/* Editable fields — collapsed until detect completes or manual toggle */}
+              {showFields && (
+                <>
+                  <section className="card p-6 space-y-5 animate-fade-in">
+                    <h2 className="text-lg font-semibold text-zinc-100 border-b border-surface-4 pb-3">
+                      API Details
+                      {form.detected && (
+                        <span className="ml-2 text-2xs text-emerald-400 font-normal">
+                          auto-filled from spec
+                        </span>
+                      )}
+                    </h2>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <FieldLabel label="Name" error={errors.name} />
+                        <input
+                          className={cn("input-base w-full", errors.name && "border-red-500/50")}
+                          placeholder="My Weather API"
+                          value={form.name}
+                          onChange={(e) => setField("name", e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <FieldLabel label="Category" error={errors.categoryId} />
+                        <select
+                          className={cn("input-base w-full", errors.categoryId && "border-red-500/50")}
+                          value={form.categoryId}
+                          onChange={(e) => setField("categoryId", e.target.value)}
+                        >
+                          <option value="">Select category...</option>
+                          {categories.map((c) => (
+                            <option key={c.id} value={c.id}>
+                              {"\u00A0".repeat(c.depth * 2)}{c.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div>
+                      <FieldLabel label="Description" error={errors.description} />
+                      <textarea
+                        className={cn("input-base w-full min-h-[120px] resize-y", errors.description && "border-red-500/50")}
+                        placeholder="What does your API do? This becomes the MCP tool description agents will read."
+                        value={form.description}
+                        onChange={(e) => setField("description", e.target.value)}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <FieldLabel label="Listing Type" />
+                        <select
+                          className="input-base w-full"
+                          value={form.listingType}
+                          onChange={(e) => setField("listingType", e.target.value as ListingType)}
+                        >
+                          {LISTING_TYPES.map((t) => (
+                            <option key={t.value} value={t.value}>{t.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <FieldLabel label="Auth Type" />
+                        <select
+                          className="input-base w-full"
+                          value={form.authType}
+                          onChange={(e) => setField("authType", e.target.value)}
+                        >
+                          {AUTH_TYPES.map((t) => (
+                            <option key={t.value} value={t.value}>{t.label}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <FieldLabel label="Base URL" error={errors.baseUrl} />
+                        <input
+                          className={cn("input-base w-full", errors.baseUrl && "border-red-500/50")}
+                          placeholder="https://api.example.com/v1"
+                          value={form.baseUrl}
+                          onChange={(e) => setField("baseUrl", e.target.value)}
+                        />
+                      </div>
+                      <div>
+                        <FieldLabel label="Health Check URL" />
+                        <input
+                          className="input-base w-full"
+                          placeholder="https://api.example.com/health"
+                          value={form.healthCheckUrl}
+                          onChange={(e) => setField("healthCheckUrl", e.target.value)}
+                        />
+                      </div>
+                    </div>
+
+                    <div>
+                      <FieldLabel label="Docs URL" />
+                      <input
+                        className="input-base w-full"
+                        placeholder="https://docs.example.com"
+                        value={form.docsUrl}
+                        onChange={(e) => setField("docsUrl", e.target.value)}
+                      />
+                    </div>
+                  </section>
+
+                  {/* Advanced: Sample Request/Response */}
+                  <section className="card overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setShowAdvanced(!showAdvanced)}
+                      className="w-full flex items-center justify-between p-4 text-sm text-zinc-400 hover:text-zinc-200 transition-colors"
+                    >
+                      <span className="font-medium">
+                        Advanced
+                        {(form.sampleRequest || form.sampleResponse) && (
+                          <span className="ml-2 text-2xs text-emerald-400">
+                            {form.detected ? "(auto-filled)" : "(has data)"}
+                          </span>
+                        )}
+                      </span>
+                      <span className={cn("transition-transform", showAdvanced && "rotate-180")}>
+                        &#9662;
+                      </span>
+                    </button>
+                    {showAdvanced && (
+                      <div className="px-4 pb-4 space-y-4 border-t border-surface-4 pt-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          <div>
+                            <FieldLabel label="Sample Request (JSON)" />
+                            <textarea
+                              className="input-base w-full min-h-[100px] font-mono text-xs resize-y"
+                              placeholder='{ "query": "hello" }'
+                              value={form.sampleRequest}
+                              onChange={(e) => setField("sampleRequest", e.target.value)}
+                            />
+                          </div>
+                          <div>
+                            <FieldLabel label="Sample Response (JSON)" />
+                            <textarea
+                              className="input-base w-full min-h-[100px] font-mono text-xs resize-y"
+                              placeholder='{ "result": "world" }'
+                              value={form.sampleResponse}
+                              onChange={(e) => setField("sampleResponse", e.target.value)}
+                            />
+                          </div>
+                        </div>
+                        <p className="text-2xs text-zinc-600">
+                          These are inferred from the spec automatically when available.
+                          Edit only if auto-detection got them wrong.
+                        </p>
+                      </div>
+                    )}
+                  </section>
+                </>
+              )}
             </div>
+          )}
+
+          {/* ═══ Step 2: Pricing ═══ */}
+          {currentStep === 2 && (
+            <div className="space-y-6">
+              <div className="card border-brand-600/20 bg-brand-600/5 p-4">
+                <p className="text-sm text-zinc-300">
+                  Similar APIs in{" "}
+                  <span className="text-brand-300 font-medium">
+                    {selectedCategory?.name || "this category"}
+                  </span>{" "}
+                  are priced{" "}
+                  <span className="font-mono text-emerald-400">
+                    ${categoryPricing.floor.toFixed(4)}
+                  </span>
+                  {" "}&ndash;{" "}
+                  <span className="font-mono text-emerald-400">
+                    ${categoryPricing.ceiling.toFixed(4)}
+                  </span>
+                  {" "}USDC/call
+                </p>
+              </div>
+
+              <section className="card p-6 space-y-5">
+                <h2 className="text-lg font-semibold text-zinc-100 border-b border-surface-4 pb-3">
+                  Pricing (USDC per call)
+                </h2>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div>
+                    <FieldLabel label="Floor Price" error={errors.floorPrice} />
+                    <input
+                      type="number"
+                      step="0.000001"
+                      min="0"
+                      className={cn("input-base w-full font-mono", errors.floorPrice && "border-red-500/50")}
+                      placeholder="0.001"
+                      value={form.floorPrice}
+                      onChange={(e) => setField("floorPrice", e.target.value)}
+                    />
+                    <p className="text-2xs text-zinc-500 mt-1">Minimum price per API call</p>
+                  </div>
+                  <div>
+                    <FieldLabel label="Ceiling Price" error={errors.ceilingPrice} />
+                    <input
+                      type="number"
+                      step="0.000001"
+                      min="0"
+                      className={cn("input-base w-full font-mono", errors.ceilingPrice && "border-red-500/50")}
+                      placeholder="0.01"
+                      value={form.ceilingPrice}
+                      onChange={(e) => setField("ceilingPrice", e.target.value)}
+                    />
+                    <p className="text-2xs text-zinc-500 mt-1">Maximum during high demand</p>
+                  </div>
+                  <div>
+                    <FieldLabel label="Capacity / min" />
+                    <input
+                      type="number"
+                      min="1"
+                      className="input-base w-full font-mono"
+                      placeholder="60"
+                      value={form.capacityPerMinute}
+                      onChange={(e) => setField("capacityPerMinute", e.target.value)}
+                    />
+                    <p className="text-2xs text-zinc-500 mt-1">Requests per minute limit</p>
+                  </div>
+                </div>
+              </section>
+            </div>
+          )}
+
+          {/* ═══ Step 3: Wallet ═══ */}
+          {currentStep === 3 && (
+            <div className="space-y-6">
+              <section className="card p-6 space-y-5">
+                <h2 className="text-lg font-semibold text-zinc-100 border-b border-surface-4 pb-3">
+                  Payout Wallet
+                </h2>
+
+                <div>
+                  <FieldLabel label="Payout Address (Base L2)" error={errors.payoutAddress} />
+                  <input
+                    className={cn("input-base w-full font-mono text-sm", errors.payoutAddress && "border-red-500/50")}
+                    placeholder="0x..."
+                    value={form.payoutAddress}
+                    onChange={(e) => setField("payoutAddress", e.target.value)}
+                  />
+                  <p className="text-2xs text-zinc-500 mt-1">
+                    USDC earnings will be sent to this address on Base L2
+                  </p>
+                </div>
+              </section>
+
+              {/* Payout preview — makes the money real */}
+              <PayoutPreview
+                floorPrice={form.floorPrice}
+                ceilingPrice={form.ceilingPrice}
+                payoutAddress={form.payoutAddress}
+              />
+
+              <div className="card border-surface-4 bg-surface-2 p-4 space-y-2">
+                <h3 className="text-sm font-semibold text-zinc-300">Need a wallet?</h3>
+                <p className="text-xs text-zinc-500">
+                  You can create a Coinbase Developer Platform (CDP) wallet for programmatic payouts.
+                  CDP wallet creation is handled server-side via the MCP server. Contact support or use
+                  your existing Base L2 wallet address.
+                </p>
+              </div>
+
+              {submitError && (
+                <div className="card border-red-500/30 bg-red-500/5 p-4 text-sm text-red-400">
+                  {submitError}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ─── Navigation ─── */}
+          <div className="flex items-center justify-between mt-8">
             <div>
-              <FieldLabel
-                label="Sample Response (JSON)"
-                error={errors.sampleResponse}
-              />
-              <textarea
-                className={cn(
-                  "input-base w-full min-h-[160px] font-mono text-xs resize-y",
-                  errors.sampleResponse && "border-red-500/50"
-                )}
-                placeholder='{ "temperature": 72, "unit": "F" }'
-                value={form.sampleResponse}
-                onChange={(e) => updateField("sampleResponse", e.target.value)}
-              />
+              {currentStep > 1 && (
+                <button type="button" onClick={handleBack} className="btn-secondary">
+                  &larr; Back
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => router.push("/provider/listings")}
+                className="btn-ghost text-zinc-500 hover:text-zinc-300"
+              >
+                Cancel
+              </button>
+              {currentStep < 3 ? (
+                <button
+                  type="button"
+                  onClick={handleNext}
+                  className="btn-primary min-w-[120px]"
+                >
+                  Next &rarr;
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={handleSubmit}
+                  disabled={isSubmitting}
+                  className={cn(
+                    "btn-primary min-w-[160px]",
+                    isSubmitting && "opacity-60 cursor-not-allowed"
+                  )}
+                >
+                  {isSubmitting ? "Deploying..." : "Deploy as Draft"}
+                </button>
+              )}
             </div>
           </div>
-        </section>
-
-        {/* ─── Submit ─── */}
-        {submitError && (
-          <div className="card border-red-500/30 bg-red-500/5 p-4 text-sm text-red-400">
-            {submitError}
-          </div>
-        )}
-
-        <div className="flex items-center justify-end gap-3">
-          <button
-            type="button"
-            onClick={() => router.push("/provider/listings")}
-            className="btn-secondary"
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className={cn(
-              "btn-primary min-w-[140px]",
-              isSubmitting && "opacity-60 cursor-not-allowed"
-            )}
-          >
-            {isSubmitting ? "Saving..." : "Save as Draft"}
-          </button>
         </div>
-      </form>
+
+        {/* ── RIGHT: MCP Preview ── */}
+        <div className="hidden lg:block w-[420px] flex-shrink-0">
+          <div className="sticky top-8">
+            <div className="card p-5">
+              <McpPreviewPanel
+                name={form.name}
+                description={form.description}
+                sampleRequest={form.sampleRequest}
+                endpoints={form.endpoints}
+                inputSchemaFields={form.inputSchemaFields}
+                floorPrice={form.floorPrice}
+                ceilingPrice={form.ceilingPrice}
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Payout Preview ───
+
+const NEXUS_FEE_PERCENT = 15;
+
+function PayoutPreview({ floorPrice, ceilingPrice, payoutAddress }: {
+  floorPrice: string;
+  ceilingPrice: string;
+  payoutAddress: string;
+}) {
+  const floor = parseFloat(floorPrice) || 0;
+  const ceiling = parseFloat(ceilingPrice) || 0;
+  const avgPrice = ceiling > 0 ? (floor + ceiling) / 2 : floor;
+  if (avgPrice <= 0) return null;
+
+  const calls = 100;
+  const gross = calls * avgPrice;
+  const fee = gross * (NEXUS_FEE_PERCENT / 100);
+  const net = gross - fee;
+
+  const addrDisplay = payoutAddress && /^0x[a-fA-F0-9]{40}$/.test(payoutAddress)
+    ? `${payoutAddress.slice(0, 6)}...${payoutAddress.slice(-4)}`
+    : "your wallet";
+
+  return (
+    <div className="card border-emerald-500/20 bg-emerald-500/5 p-5 space-y-3">
+      <h3 className="text-sm font-semibold text-zinc-200">
+        Your first payout preview
+      </h3>
+      <div className="space-y-1.5 text-sm font-mono">
+        <div className="flex items-center justify-between text-zinc-300">
+          <span>{calls} calls &times; ${avgPrice.toFixed(4)} avg</span>
+          <span className="text-zinc-200">${gross.toFixed(4)}</span>
+        </div>
+        <div className="flex items-center justify-between text-zinc-500">
+          <span>Nexus fee ({NEXUS_FEE_PERCENT}%)</span>
+          <span>-${fee.toFixed(4)}</span>
+        </div>
+        <div className="border-t border-emerald-500/20 pt-1.5 flex items-center justify-between">
+          <span className="text-emerald-400 font-semibold">You receive</span>
+          <span className="text-emerald-400 font-semibold">
+            ${net.toFixed(4)} USDC
+          </span>
+        </div>
+      </div>
+      <p className="text-2xs text-zinc-500">
+        Settled to <span className="font-mono text-zinc-400">{addrDisplay}</span> on Base L2
+      </p>
     </div>
   );
 }
 
 // ─── Shared Sub-components ───
 
-function SectionHeader({ title }: { title: string }) {
-  return (
-    <h2 className="text-lg font-semibold text-zinc-100 border-b border-surface-4 pb-3">
-      {title}
-    </h2>
-  );
-}
-
-function FieldLabel({
-  label,
-  error,
-  info,
-}: {
-  label: string;
-  error?: string;
-  info?: string;
-}) {
-  const [showInfo, setShowInfo] = useState(false);
+function FieldLabel({ label, error }: { label: string; error?: string }) {
   return (
     <div className="flex items-center justify-between mb-1.5">
-      <div className="flex items-center gap-1.5">
-        <label className="text-2xs text-zinc-500 uppercase tracking-wider font-semibold">
-          {label}
-        </label>
-        {info && (
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowInfo((v) => !v)}
-              className="inline-flex items-center justify-center w-4 h-4 rounded-full border border-zinc-600 text-zinc-500 hover:text-zinc-300 hover:border-zinc-400 text-[10px] font-bold leading-none transition-colors"
-              aria-label={`Info about ${label}`}
-            >
-              !
-            </button>
-            {showInfo && (
-              <div className="absolute left-1/2 -translate-x-1/2 bottom-full mb-2 w-56 px-3 py-2 rounded-lg bg-surface-3 border border-surface-4 text-xs text-zinc-300 shadow-lg z-10">
-                {info}
-                <div className="absolute left-1/2 -translate-x-1/2 top-full w-2 h-2 bg-surface-3 border-b border-r border-surface-4 rotate-45 -mt-1" />
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      <label className="text-2xs text-zinc-500 uppercase tracking-wider font-semibold">
+        {label}
+      </label>
       {error && <span className="text-2xs text-red-400">{error}</span>}
     </div>
   );
