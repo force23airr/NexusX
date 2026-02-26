@@ -89,13 +89,15 @@ export function Sidebar() {
                 <Link
                   href={section.cta.href}
                   className={cn(
-                    "flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150",
+                    "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150",
                     "bg-brand-600/20 text-brand-300 border border-brand-600/30 hover:bg-brand-600/30 hover:border-brand-500/40",
-                    collapsed && "px-0"
+                    collapsed && "justify-center px-0"
                   )}
                   title={collapsed ? section.cta.label : undefined}
                 >
-                  <span className="text-base shrink-0">&#x25B3;</span>
+                  <span className="shrink-0 w-5 text-center flex items-center justify-center">
+                    <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>
+                  </span>
                   {!collapsed && <span>{section.cta.label}</span>}
                 </Link>
               </div>
