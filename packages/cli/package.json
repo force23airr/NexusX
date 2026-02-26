@@ -1,0 +1,38 @@
+{
+  "name": "nexusx",
+  "version": "0.1.0",
+  "description": "NexusX CLI — deploy and monetize APIs on the x402 agentic marketplace",
+  "keywords": ["mcp", "x402", "usdc", "base", "api-marketplace", "agentic", "claude"],
+  "homepage": "https://nexusx.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/force23airr/NexusX"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "nexusx": "./dist/index.js"
+  },
+  "main": "./dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "ora": "^8.1.1",
+    "yaml": "^2.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.5.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
