@@ -13,12 +13,13 @@ import type {
   RouteResult,
   Transaction,
   Wallet,
+  WalletSettings,
   ProviderProfile,
   ProviderAnalytics,
-  DashboardStats,
+  MarketActivity,
+  ActivityEntry,
   PaginatedResponse,
   PriceTick,
-  WatchlistItem,
   PlaygroundRequest,
   PlaygroundResponse,
   PriceHistoryResponse,
@@ -140,7 +141,7 @@ export const marketplace = {
   },
 
   /** Get marketplace-wide stats. */
-  async getStats(): Promise<DashboardStats> {
+  async getStats(): Promise<MarketActivity> {
     return apiFetch("/api/stats");
   },
 
@@ -160,6 +161,22 @@ export const buyer = {
   /** Get buyer's wallet. */
   async getWallet(): Promise<Wallet> {
     return apiFetch("/api/buyer/wallet");
+  },
+
+  /** Update wallet auto-deposit settings. */
+  async updateWalletSettings(settings: WalletSettings): Promise<WalletSettings> {
+    return apiFetch("/api/buyer/wallet", {
+      method: "PUT",
+      body: JSON.stringify(settings),
+    });
+  },
+
+  /** Deposit USDC into the wallet (demo). */
+  async deposit(amount: number): Promise<{ balanceUsdc: number; deposited: number }> {
+    return apiFetch("/api/buyer/wallet", {
+      method: "POST",
+      body: JSON.stringify({ amount }),
+    });
   },
 
   /** Get buyer's transaction history. */
@@ -193,30 +210,6 @@ export const buyer = {
   /** Revoke an API key. */
   async revokeApiKey(keyId: string): Promise<void> {
     await apiFetch(`/api/buyer/keys/${keyId}`, { method: "DELETE" });
-  },
-
-  /** Get buyer's watchlist. */
-  async getWatchlist(): Promise<WatchlistItem[]> {
-    return apiFetch("/api/buyer/watchlist");
-  },
-
-  /** Add a listing to the watchlist. */
-  async addToWatchlist(data: {
-    listingId: string;
-    alertOnPriceDrop?: boolean;
-    alertThreshold?: number;
-  }): Promise<{ id: string; status: string }> {
-    return apiFetch("/api/buyer/watchlist", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-  },
-
-  /** Remove a listing from the watchlist. */
-  async removeFromWatchlist(listingId: string): Promise<void> {
-    await apiFetch(`/api/buyer/watchlist?listingId=${listingId}`, {
-      method: "DELETE",
-    });
   },
 
   /** Get buyer's subscriptions. */
@@ -255,6 +248,17 @@ export const provider = {
   ): Promise<ProviderAnalytics> {
     const qs = period ? `?period=${period}` : "";
     return apiFetch(`/api/provider/listings/${listingId}/analytics${qs}`);
+  },
+
+  /** Get recent activity log across all provider listings. */
+  async getActivity(params?: {
+    listingId?: string;
+    limit?: number;
+  }): Promise<{ items: ActivityEntry[] }> {
+    const qs = new URLSearchParams();
+    if (params?.listingId) qs.set("listingId", params.listingId);
+    if (params?.limit) qs.set("limit", String(params.limit));
+    return apiFetch(`/api/provider/activity?${qs}`);
   },
 
   /** Get provider payout history. */
@@ -310,6 +314,51 @@ export const provider = {
     return apiFetch("/api/provider/listings", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+  },
+
+  /** Get a single listing by ID (full detail). */
+  async getListing(listingId: string): Promise<ListingDetail> {
+    return apiFetch(`/api/provider/listings/${listingId}`);
+  },
+
+  /** Update listing fields (only DRAFT or PAUSED). */
+  async updateListing(
+    listingId: string,
+    data: Record<string, unknown>
+  ): Promise<{ id: string; slug: string; name: string; status: string }> {
+    return apiFetch(`/api/provider/listings/${listingId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  },
+
+  /** Transition listing status: activate, pause, deprecate. */
+  async setStatus(
+    listingId: string,
+    action: "activate" | "pause" | "deprecate"
+  ): Promise<{ status: string }> {
+    return apiFetch(`/api/provider/listings/${listingId}/status`, {
+      method: "POST",
+      body: JSON.stringify({ action }),
+    });
+  },
+
+  /** Probe the listing's health check endpoint. */
+  async healthCheck(
+    listingId: string
+  ): Promise<{ ok: boolean; statusCode: number; latencyMs: number; error?: string }> {
+    return apiFetch(`/api/provider/listings/${listingId}/health`, {
+      method: "POST",
+    });
+  },
+
+  /** Send a sandbox test call through the gateway. */
+  async testCall(
+    listingId: string
+  ): Promise<{ ok: boolean; statusCode: number; latencyMs: number; responsePreview: string; error?: string }> {
+    return apiFetch(`/api/provider/listings/${listingId}/test`, {
+      method: "POST",
     });
   },
 };

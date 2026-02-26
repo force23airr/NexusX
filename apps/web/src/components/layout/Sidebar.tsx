@@ -16,25 +16,34 @@ interface NavItem {
   icon: string;
 }
 
-const NAV_SECTIONS: { title: string; items: NavItem[] }[] = [
+interface NavSection {
+  title: string;
+  items: NavItem[];
+  cta?: { label: string; href: string };
+}
+
+const NAV_SECTIONS: NavSection[] = [
   {
     title: "Marketplace",
     items: [
-      { label: "Explore", href: "/marketplace", icon: "◈" },
+      { label: "Market", href: "/marketplace", icon: "◈" },
       { label: "Search", href: "/marketplace/search", icon: "⌕" },
+      { label: "Connect", href: "/connect", icon: "⬡" },
     ],
   },
   {
-    title: "Buyer",
+    title: "Agent",
     items: [
-      { label: "Watchlist", href: "/buyer/watchlist", icon: "☆" },
+      { label: "Plug In Your Agent", href: "/agent/plug-in", icon: "⏚" },
+      { label: "Build Your Agent", href: "/agent/build", icon: "⚙" },
       { label: "API Keys", href: "/buyer/keys", icon: "⚿" },
-      { label: "Subscriptions", href: "/buyer/subscriptions", icon: "↻" },
+      { label: "Usage", href: "/buyer/subscriptions", icon: "↻" },
       { label: "Wallet", href: "/buyer/wallet", icon: "◆" },
     ],
   },
   {
     title: "Provider",
+    cta: { label: "Deploy Your API", href: "/provider/listings/new" },
     items: [
       { label: "My Listings", href: "/provider/listings", icon: "▤" },
       { label: "Analytics", href: "/provider/analytics", icon: "◰" },
@@ -74,6 +83,22 @@ export function Sidebar() {
               <h3 className="px-4 mb-2 text-2xs font-semibold uppercase tracking-widest text-zinc-500">
                 {section.title}
               </h3>
+            )}
+            {section.cta && (
+              <div className="px-2 mb-2">
+                <Link
+                  href={section.cta.href}
+                  className={cn(
+                    "flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150",
+                    "bg-brand-600/20 text-brand-300 border border-brand-600/30 hover:bg-brand-600/30 hover:border-brand-500/40",
+                    collapsed && "px-0"
+                  )}
+                  title={collapsed ? section.cta.label : undefined}
+                >
+                  <span className="text-base shrink-0">&#x25B3;</span>
+                  {!collapsed && <span>{section.cta.label}</span>}
+                </Link>
+              </div>
             )}
             <ul className="space-y-0.5 px-2">
               {section.items.map((item) => {

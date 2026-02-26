@@ -12,9 +12,8 @@
 
 "use client";
 
-import { useState, useCallback, type FormEvent, type CSSProperties, type MouseEvent } from "react";
+import { useState, useCallback, type FormEvent, type CSSProperties } from "react";
 import Link from "next/link";
-import { buyer } from "@/lib/api";
 import { cn, formatPricePerCall, formatNumber, formatLatency, formatPercent, listingTypeLabel, listingTypeIcon, listingStatusColor } from "@/lib/utils";
 import type { Listing, PriceTick } from "@/types";
 
@@ -136,68 +135,20 @@ export function ListingCard({
   matchScore,
   matchReasons,
   style,
-  isWatched,
-  onWatchlistToggle,
 }: {
   listing: Listing;
   matchScore?: number;
   matchReasons?: string[];
   style?: CSSProperties;
-  isWatched?: boolean;
-  onWatchlistToggle?: (listingId: string, watched: boolean) => void;
 }) {
-  const [watched, setWatched] = useState(isWatched ?? false);
-  const [toggling, setToggling] = useState(false);
-
-  // Sync with parent prop changes
-  const currentWatched = isWatched !== undefined ? isWatched : watched;
-
-  const handleWatchlistClick = useCallback(async (e: MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    if (toggling) return;
-
-    const newState = !currentWatched;
-    setWatched(newState);
-    setToggling(true);
-
-    try {
-      if (newState) {
-        await buyer.addToWatchlist({ listingId: listing.id });
-      } else {
-        await buyer.removeFromWatchlist(listing.id);
-      }
-      onWatchlistToggle?.(listing.id, newState);
-    } catch {
-      setWatched(!newState);
-    } finally {
-      setToggling(false);
-    }
-  }, [currentWatched, toggling, listing.id, onWatchlistToggle]);
-
   return (
     <Link href={`/marketplace/${listing.slug}`}>
       <div
         className="card p-5 hover:border-brand-600/40 hover:bg-surface-3/50 transition-all duration-200 animate-slide-in cursor-pointer group relative"
         style={style}
       >
-        {/* Watchlist Star */}
-        <button
-          onClick={handleWatchlistClick}
-          disabled={toggling}
-          className={cn(
-            "absolute top-3 right-3 w-8 h-8 rounded-lg flex items-center justify-center transition-all duration-150 z-10",
-            currentWatched
-              ? "text-amber-400 bg-amber-500/10 hover:bg-amber-500/20"
-              : "text-zinc-600 hover:text-zinc-400 hover:bg-surface-4 opacity-0 group-hover:opacity-100"
-          )}
-          title={currentWatched ? "Remove from watchlist" : "Add to watchlist"}
-        >
-          <span className="text-sm leading-none">{currentWatched ? "★" : "☆"}</span>
-        </button>
-
         {/* Header */}
-        <div className="flex items-start justify-between mb-3 pr-8">
+        <div className="flex items-start justify-between mb-3">
           <div className="flex items-center gap-2">
             <span className="text-lg">{listingTypeIcon(listing.listingType)}</span>
             <div>

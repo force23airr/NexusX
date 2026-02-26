@@ -9,6 +9,7 @@ import type { Metadata } from "next";
 import { DM_Sans, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { TopBar } from "@/components/layout/TopBar";
 
 const dmSans = DM_Sans({
   subsets: ["latin"],
@@ -39,9 +40,12 @@ export default function RootLayout({
       <body className="bg-surface-0 text-zinc-100 font-display antialiased">
         <div className="flex h-screen overflow-hidden">
           <Sidebar />
-          <main className="flex-1 overflow-y-auto">
-            <div className="mx-auto max-w-7xl px-6 py-8">{children}</div>
-          </main>
+          <div className="flex-1 flex flex-col overflow-hidden">
+            <TopBar />
+            <main className="flex-1 overflow-y-auto">
+              <div className="mx-auto max-w-7xl px-6 py-8">{children}</div>
+            </main>
+          </div>
         </div>
       </body>
     </html>

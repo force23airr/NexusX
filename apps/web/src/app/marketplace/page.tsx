@@ -1,313 +1,329 @@
 // ═══════════════════════════════════════════════════════════════
-// NexusX — Marketplace Explore Page
+// NexusX — Market Dashboard
 // apps/web/src/app/marketplace/page.tsx
 //
-// Main marketplace view:
-//   - AI-powered natural language search bar
-//   - Live price ticker strip
-//   - Category filters
-//   - Listing grid with quality/price/demand cards
+// Live market view:
+//   - Platform KPI cards (calls, revenue, agents, quality)
+//   - Price ticker strip
+//   - Top 5 APIs by volume (horizontal row)
+//   - Top categories with listing grids
+//   - 30-second auto-refresh
 // ═══════════════════════════════════════════════════════════════
 
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { marketplace, buyer } from "@/lib/api";
-import { cn } from "@/lib/utils";
-import { SearchBar } from "@/components/marketplace/SearchBar";
-import { PriceTicker } from "@/components/marketplace/PriceTicker";
-import { ListingCard } from "@/components/marketplace/ListingCard";
-import { CategoryFilter } from "@/components/marketplace/CategoryFilter";
+import Link from "next/link";
+import { marketplace } from "@/lib/api";
+import {
+  cn,
+  formatUsdc,
+  formatNumber,
+  formatPricePerCall,
+  formatLatency,
+  formatPercent,
+  listingTypeIcon,
+} from "@/lib/utils";
+import { PriceTicker } from "@/components/marketplace";
 import { usePriceTicker } from "@/hooks/usePriceTicker";
-import type { Listing, RouteResult, PaginatedResponse } from "@/types";
-
-const CATEGORIES = [
-  { slug: "all", name: "All" },
-  { slug: "language-models", name: "Language Models" },
-  { slug: "translation", name: "Translation" },
-  { slug: "sentiment-analysis", name: "Sentiment" },
-  { slug: "embeddings", name: "Embeddings" },
-  { slug: "object-detection", name: "Vision" },
-  { slug: "datasets", name: "Datasets" },
-];
-
-const SORT_OPTIONS = [
-  { value: "popular", label: "Most Popular" },
-  { value: "price_low", label: "Price: Low → High" },
-  { value: "price_high", label: "Price: High → Low" },
-  { value: "quality", label: "Highest Quality" },
-  { value: "newest", label: "Newest" },
-];
-
-const SECTORS = [
-  { value: "consumer-products", label: "Consumer Products" },
-  { value: "hardware", label: "Hardware" },
-  { value: "military-defense", label: "Military & Defense" },
-  { value: "logistics", label: "Logistics" },
-  { value: "shopping-commerce", label: "Shopping & Commerce" },
-  { value: "healthcare", label: "Healthcare" },
-  { value: "fintech", label: "Fintech & Banking" },
-  { value: "education", label: "Education" },
-  { value: "real-estate", label: "Real Estate" },
-  { value: "automotive", label: "Automotive" },
-  { value: "energy", label: "Energy & Utilities" },
-  { value: "media-entertainment", label: "Media & Entertainment" },
-  { value: "agriculture", label: "Agriculture" },
-  { value: "telecommunications", label: "Telecommunications" },
-  { value: "travel-hospitality", label: "Travel & Hospitality" },
-  { value: "general-purpose", label: "General Purpose / Cross-Industry" },
-];
+import type { MarketActivity, MarketListing } from "@/types";
 
 export default function MarketplacePage() {
-  const [listings, setListings] = useState<Listing[]>([]);
-  const priceTicks = usePriceTicker();
-  const [searchResults, setSearchResults] = useState<RouteResult | null>(null);
-  const [activeCategory, setActiveCategory] = useState("all");
-  const [sortBy, setSortBy] = useState("popular");
-  const [sectors, setSectors] = useState<string[]>([]);
-  const [sectorOpen, setSectorOpen] = useState(false);
+  const [data, setData] = useState<MarketActivity | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSearching, setIsSearching] = useState(false);
-  const [watchedIds, setWatchedIds] = useState<Set<string>>(new Set());
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const priceTicks = usePriceTicker();
 
-  // ─── Load Watchlist IDs ───
-  useEffect(() => {
-    buyer
-      .getWatchlist()
-      .then((items) => setWatchedIds(new Set(items.map((w) => w.listingId))))
-      .catch(() => {});
-  }, []);
-
-  const handleWatchlistToggle = useCallback((listingId: string, watched: boolean) => {
-    setWatchedIds((prev) => {
-      const next = new Set(prev);
-      if (watched) next.add(listingId);
-      else next.delete(listingId);
-      return next;
-    });
-  }, []);
-
-  // ─── Load Listings ───
-  const loadListings = useCallback(async () => {
-    setIsLoading(true);
+  const loadData = useCallback(async () => {
     try {
-      const res: PaginatedResponse<Listing> = await marketplace.browse({
-        category: activeCategory === "all" ? undefined : activeCategory,
-        sectors: sectors.length > 0 ? sectors : undefined,
-        sort: sortBy,
-        pageSize: 20,
-      });
-      setListings(res.items);
+      const stats = await marketplace.getStats();
+      setData(stats);
+      setLastUpdated(new Date());
     } catch (err) {
-      console.error("Failed to load listings:", err);
+      console.error("Failed to load market data:", err);
     } finally {
       setIsLoading(false);
     }
-  }, [activeCategory, sectors, sortBy]);
+  }, []);
 
   useEffect(() => {
-    loadListings();
-  }, [loadListings]);
+    loadData();
+    const interval = setInterval(loadData, 30_000);
+    return () => clearInterval(interval);
+  }, [loadData]);
 
-  // ─── AI Search ───
-  const handleSearch = async (query: string) => {
-    if (!query.trim()) {
-      setSearchResults(null);
-      return;
-    }
-    setIsSearching(true);
-    try {
-      const result = await marketplace.search(query);
-      setSearchResults(result);
-    } catch (err) {
-      console.error("Search failed:", err);
-    } finally {
-      setIsSearching(false);
-    }
-  };
+  // ─── Loading skeleton ───
+  if (isLoading) {
+    return (
+      <div className="space-y-8 animate-fade-in">
+        <div className="h-8 w-48 bg-surface-3/50 rounded animate-pulse" />
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="card h-24 animate-pulse bg-surface-3/50" />
+          ))}
+        </div>
+        <div className="h-12 bg-surface-3/50 rounded animate-pulse" />
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          {Array.from({ length: 5 }).map((_, i) => (
+            <div key={i} className="card h-56 animate-pulse bg-surface-3/50" />
+          ))}
+        </div>
+      </div>
+    );
+  }
 
-  const clearSearch = () => setSearchResults(null);
-
-  // ─── Determine Display Data ───
-  const displayListings = searchResults
-    ? searchResults.matches.map((m) => m.listing)
-    : listings;
+  if (!data) return null;
 
   return (
     <div className="space-y-8 animate-fade-in">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold tracking-tight">
-          Explore the Marketplace
-        </h1>
-        <p className="mt-2 text-zinc-400">
-          Discover AI APIs and datasets with dynamic, auction-based pricing.
-        </p>
+      {/* ─── Header ─── */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold tracking-tight">Market</h1>
+        <div className="flex items-center gap-2 text-xs text-zinc-500">
+          <span className="relative flex h-2 w-2">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+          </span>
+          <span>
+            Live
+            {lastUpdated && (
+              <> &mdash; updated {lastUpdated.toLocaleTimeString()}</>
+            )}
+          </span>
+        </div>
       </div>
 
-      {/* Price Ticker */}
+      {/* ─── Platform KPIs ─── */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <KpiCard
+          label="Total API Calls"
+          value={formatNumber(data.totalCalls)}
+        />
+        <KpiCard
+          label="Revenue (USDC)"
+          value={formatUsdc(data.totalRevenueUsdc)}
+        />
+        <KpiCard
+          label="Active Agents"
+          value={formatNumber(data.activeBuyers)}
+        />
+        <KpiCard
+          label="Avg Quality Score"
+          value={formatPercent(data.avgQualityScore, 1)}
+        />
+      </div>
+
+      {/* ─── Price Ticker ─── */}
       <PriceTicker ticks={priceTicks} />
 
-      {/* Search */}
-      <SearchBar
-        onSearch={handleSearch}
-        isSearching={isSearching}
-        onClear={clearSearch}
-        hasResults={!!searchResults}
-      />
-
-      {/* Search Result Context */}
-      {searchResults && (
-        <div className="card px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <span className="text-brand-400 text-sm font-medium">
-              AI Router
-            </span>
-            <span className="text-zinc-400 text-sm">
-              {searchResults.matches.length} matches from{" "}
-              {searchResults.totalEvaluated} listings in{" "}
-              {searchResults.routeTimeMs}ms
-            </span>
-            <span className="badge bg-brand-500/15 text-brand-300">
-              {searchResults.intent.category}
-            </span>
-            <span className="text-zinc-500 text-xs">
-              {Math.round(searchResults.intent.confidence * 100)}% confidence
-            </span>
-          </div>
-          <button onClick={clearSearch} className="btn-ghost text-xs">
-            Clear
-          </button>
+      {/* ─── Top 5 APIs ─── */}
+      <section>
+        <h2 className="text-lg font-semibold mb-4 text-zinc-200">
+          Top APIs by Volume
+        </h2>
+        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
+          {data.topListings.map((listing, i) => (
+            <TopListingCard key={listing.id} listing={listing} rank={i + 1} />
+          ))}
         </div>
-      )}
+      </section>
 
-      {/* Filters (hidden during search) */}
-      {!searchResults && (
-        <div className="flex items-center justify-between gap-4">
-          <CategoryFilter
-            categories={CATEGORIES}
-            active={activeCategory}
-            onChange={setActiveCategory}
-          />
-          <div className="flex items-center gap-2">
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setSectorOpen((v) => !v)}
-                className={cn(
-                  "input-base flex items-center gap-2 min-w-[200px] text-left",
-                  sectors.length > 0 && "border-brand-600/40"
-                )}
-              >
-                <span className="flex-1 truncate">
-                  {sectors.length === 0
-                    ? "Sector / Industry"
-                    : sectors.length === 1
-                      ? SECTORS.find((s) => s.value === sectors[0])?.label
-                      : `${sectors.length} sectors`}
+      {/* ─── By Category ─── */}
+      <section className="space-y-6">
+        <h2 className="text-lg font-semibold text-zinc-200">By Category</h2>
+        {data.topCategories.map((cat) => (
+          <div key={cat.slug} className="card p-5">
+            {/* Category header */}
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <h3 className="text-sm font-semibold text-zinc-100">
+                  {cat.name}
+                </h3>
+                <span className="badge bg-surface-4 text-zinc-400">
+                  {cat.listingCount} listing{cat.listingCount !== 1 && "s"}
                 </span>
-                {sectors.length > 0 && (
-                  <span
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      setSectors([]);
-                    }}
-                    className="text-zinc-500 hover:text-zinc-300 text-xs"
-                  >
-                    &times;
-                  </span>
-                )}
-                <span className="text-zinc-500 text-xs">{sectorOpen ? "\u25B2" : "\u25BC"}</span>
-              </button>
-              {sectorOpen && (
-                <>
-                  <div
-                    className="fixed inset-0 z-10"
-                    onClick={() => setSectorOpen(false)}
-                  />
-                  <div className="absolute right-0 top-full mt-1 w-72 max-h-80 overflow-y-auto rounded-lg bg-surface-2 border border-surface-4 shadow-xl z-20 py-1">
-                    {SECTORS.map((s) => {
-                      const selected = sectors.includes(s.value);
-                      return (
-                        <button
-                          key={s.value}
-                          type="button"
-                          onClick={() => {
-                            if (selected) {
-                              setSectors(sectors.filter((v) => v !== s.value));
-                            } else {
-                              setSectors([...sectors, s.value]);
-                            }
-                          }}
-                          className={cn(
-                            "w-full px-3 py-2 text-left text-xs flex items-center gap-2 transition-colors",
-                            selected
-                              ? "bg-brand-600/10 text-brand-300"
-                              : "text-zinc-400 hover:bg-surface-3 hover:text-zinc-200"
-                          )}
-                        >
-                          <span className={cn(
-                            "w-4 h-4 rounded border flex items-center justify-center text-[10px] shrink-0",
-                            selected
-                              ? "bg-brand-600 border-brand-500 text-white"
-                              : "border-zinc-600"
-                          )}>
-                            {selected && "\u2713"}
-                          </span>
-                          {s.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                </>
-              )}
+              </div>
+              <div className="flex items-center gap-4 text-xs text-zinc-500">
+                <span>{formatNumber(cat.totalCalls)} calls</span>
+                <span>{formatUsdc(cat.totalRevenue)}</span>
+              </div>
             </div>
-            <select
-              value={sortBy}
-              onChange={(e) => setSortBy(e.target.value)}
-              className="input-base w-48"
-            >
-              {SORT_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
+
+            {/* Category listings grid */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              {cat.listings.map((listing) => (
+                <CompactListingCard key={listing.id} listing={listing} />
               ))}
-            </select>
+            </div>
+          </div>
+        ))}
+      </section>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Sub-components
+// ─────────────────────────────────────────────────────────────
+
+function KpiCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="card px-4 py-4">
+      <p className="text-2xs text-zinc-500 uppercase tracking-wider mb-1">
+        {label}
+      </p>
+      <p className="text-xl font-bold font-mono text-zinc-100">{value}</p>
+    </div>
+  );
+}
+
+function TopListingCard({
+  listing,
+  rank,
+}: {
+  listing: MarketListing;
+  rank: number;
+}) {
+  return (
+    <Link href={`/marketplace/${listing.slug}`}>
+      <div className="card p-4 hover:border-brand-600/40 hover:bg-surface-3/50 transition-all duration-200 cursor-pointer group relative">
+        {/* Rank badge */}
+        <span className="absolute top-2 right-2 w-6 h-6 rounded-full bg-brand-600/20 text-brand-300 text-2xs font-bold flex items-center justify-center">
+          #{rank}
+        </span>
+
+        {/* Header */}
+        <div className="flex items-center gap-2 mb-3">
+          <span className="text-lg">
+            {listingTypeIcon(listing.listingType)}
+          </span>
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-zinc-100 group-hover:text-brand-300 transition-colors truncate">
+              {listing.name}
+            </h3>
+            <p className="text-2xs text-zinc-500 truncate">
+              {listing.providerName}
+            </p>
           </div>
         </div>
-      )}
 
-      {/* Listing Grid */}
-      {isLoading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {Array.from({ length: 6 }).map((_, i) => (
-            <div key={i} className="card h-52 animate-pulse bg-surface-3/50" />
-          ))}
+        {/* Metrics */}
+        <div className="space-y-1.5 text-xs">
+          <MetricRow
+            label="Calls"
+            value={formatNumber(listing.totalCalls)}
+          />
+          <MetricRow
+            label="Revenue"
+            value={formatUsdc(listing.totalRevenue)}
+          />
+          <MetricRow
+            label="Latency"
+            value={formatLatency(listing.avgLatencyMs)}
+          />
+          <MetricRow
+            label="Quality"
+            value={formatPercent(listing.qualityScore, 1)}
+          />
+          <MetricRow
+            label="Price"
+            value={formatPricePerCall(listing.currentPriceUsdc)}
+            highlight
+          />
         </div>
-      ) : displayListings.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {displayListings.map((listing, i) => (
-            <ListingCard
-              key={listing.id}
-              listing={listing}
-              matchScore={searchResults?.matches[i]?.score}
-              matchReasons={searchResults?.matches[i]?.matchReasons}
-              style={{ animationDelay: `${i * 50}ms` }}
-              isWatched={watchedIds.has(listing.id)}
-              onWatchlistToggle={handleWatchlistToggle}
-            />
-          ))}
-        </div>
-      ) : (
-        <div className="card py-16 text-center">
-          <p className="text-zinc-400 text-lg">No listings found.</p>
-          {searchResults?.suggestions.map((s, i) => (
-            <p key={i} className="text-zinc-500 text-sm mt-2">
-              💡 {s}
+      </div>
+    </Link>
+  );
+}
+
+function CompactListingCard({ listing }: { listing: MarketListing }) {
+  return (
+    <Link href={`/marketplace/${listing.slug}`}>
+      <div className="px-3 py-3 rounded-lg bg-surface-2 border border-surface-4 hover:border-brand-600/30 hover:bg-surface-3/50 transition-all duration-150 cursor-pointer group">
+        {/* Name row */}
+        <div className="flex items-center gap-2 mb-2">
+          <span className="text-sm">
+            {listingTypeIcon(listing.listingType)}
+          </span>
+          <div className="min-w-0 flex-1">
+            <h4 className="text-xs font-semibold text-zinc-200 group-hover:text-brand-300 transition-colors truncate">
+              {listing.name}
+            </h4>
+            <p className="text-2xs text-zinc-500 truncate">
+              {listing.providerName}
             </p>
-          ))}
+          </div>
         </div>
-      )}
+
+        {/* Mini metrics */}
+        <div className="grid grid-cols-4 gap-1 text-center">
+          <MiniMetric
+            label="Calls"
+            value={formatNumber(listing.totalCalls)}
+          />
+          <MiniMetric
+            label="Latency"
+            value={formatLatency(listing.avgLatencyMs)}
+          />
+          <MiniMetric
+            label="Quality"
+            value={formatPercent(listing.qualityScore, 0)}
+          />
+          <MiniMetric
+            label="Price"
+            value={formatPricePerCall(listing.currentPriceUsdc)}
+            highlight
+          />
+        </div>
+      </div>
+    </Link>
+  );
+}
+
+function MetricRow({
+  label,
+  value,
+  highlight,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between">
+      <span className="text-zinc-500">{label}</span>
+      <span
+        className={cn(
+          "font-mono font-medium",
+          highlight ? "text-brand-300" : "text-zinc-200"
+        )}
+      >
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function MiniMetric({
+  label,
+  value,
+  highlight,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+}) {
+  return (
+    <div>
+      <p
+        className={cn(
+          "text-2xs font-mono font-medium",
+          highlight ? "text-brand-300" : "text-zinc-200"
+        )}
+      >
+        {value}
+      </p>
+      <p className="text-2xs text-zinc-600">{label}</p>
     </div>
   );
 }

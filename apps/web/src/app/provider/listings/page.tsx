@@ -127,6 +127,7 @@ export default function ProviderListingsPage() {
               {listings.map((listing) => (
                 <tr
                   key={listing.id}
+                  onClick={() => router.push(`/provider/listings/${listing.id}`)}
                   className="border-b border-surface-4/50 hover:bg-surface-3/30 transition-colors cursor-pointer"
                 >
                   <td className="px-4 py-3">

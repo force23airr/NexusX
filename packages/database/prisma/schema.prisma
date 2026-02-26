@@ -201,6 +201,13 @@ model Wallet {
   escrowUsdc      Decimal   @default(0) @map("escrow_usdc") @db.Decimal(18, 6)
   nonce           Int       @default(0)
   lastSyncedAt    DateTime? @map("last_synced_at")
+
+  // Auto-deposit: keep agent funded automatically
+  autoDepositEnabled    Boolean   @default(false) @map("auto_deposit_enabled")
+  autoDepositAmountUsdc Decimal   @default(50) @map("auto_deposit_amount_usdc") @db.Decimal(18, 6)
+  autoDepositThreshold  Decimal   @default(5) @map("auto_deposit_threshold") @db.Decimal(18, 6)
+  fundingSource         String?   @map("funding_source")  // "coinbase" | "external_wallet" | etc.
+
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
 

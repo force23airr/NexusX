@@ -108,7 +108,18 @@ export interface Wallet {
   chainId: number;
   balanceUsdc: number;
   escrowUsdc: number;
+  autoDepositEnabled: boolean;
+  autoDepositAmountUsdc: number;
+  autoDepositThreshold: number;
+  fundingSource: string | null;
   lastSyncedAt: string | null;
+}
+
+export interface WalletSettings {
+  autoDepositEnabled?: boolean;
+  autoDepositAmountUsdc?: number;
+  autoDepositThreshold?: number;
+  fundingSource?: string;
 }
 
 // ─── Provider ───
@@ -152,6 +163,43 @@ export interface DashboardStats {
   topCategories: { slug: string; name: string; count: number }[];
 }
 
+// ─── Market Dashboard ───
+
+export interface MarketActivity {
+  totalListings: number;
+  totalCalls: number;
+  totalRevenueUsdc: number;
+  activeBuyers: number;
+  avgQualityScore: number;
+  topListings: MarketListing[];
+  topCategories: MarketCategory[];
+}
+
+export interface MarketListing {
+  id: string;
+  slug: string;
+  name: string;
+  providerName: string;
+  listingType: ListingType;
+  categorySlug: string;
+  totalCalls: number;
+  totalRevenue: number;
+  currentPriceUsdc: number;
+  qualityScore: number;
+  avgLatencyMs: number;
+  uptimePercent: number;
+  tags: string[];
+}
+
+export interface MarketCategory {
+  slug: string;
+  name: string;
+  listingCount: number;
+  totalCalls: number;
+  totalRevenue: number;
+  listings: MarketListing[];
+}
+
 // ─── Pagination ───
 
 export interface PaginatedResponse<T> {
@@ -165,27 +213,17 @@ export interface PaginatedResponse<T> {
 // ─── Listing Detail (extended) ───
 
 export interface ListingDetail extends Listing {
+  healthCheckUrl: string | null;
   docsUrl: string | null;
   sandboxUrl: string | null;
   videoUrl: string | null;
   authType: string;
+  categoryName: string;
+  categoryId: string;
   sampleRequest: unknown | null;
   sampleResponse: unknown | null;
   errorRatePercent: number;
   priceHistory: { timestamp: string; price: number; changePercent: number }[];
-}
-
-// ─── Watchlist ───
-
-export interface WatchlistItem {
-  id: string;
-  listingId: string;
-  listingName: string;
-  listingSlug: string;
-  currentPriceUsdc: number;
-  alertOnPriceDrop: boolean;
-  alertThreshold: number | null;
-  createdAt: string;
 }
 
 // ─── API Playground ───
@@ -223,4 +261,23 @@ export interface PriceTick {
   previousPrice: number;
   changePercent: number;
   direction: "up" | "down" | "flat";
+}
+
+// ─── Provider Activity Log ───
+
+export interface ActivityEntry {
+  id: string;
+  status: TransactionStatus;
+  priceUsdc: number;
+  providerAmountUsdc: number;
+  latencyMs: number;
+  httpStatus: number;
+  billingMode: "INDIVIDUAL" | "BUNDLE_STEP";
+  createdAt: string;
+  listingId: string;
+  listingSlug: string;
+  listingName: string;
+  listingType: ListingType;
+  buyerId: string;
+  buyerName: string;
 }

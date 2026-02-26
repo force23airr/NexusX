@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { marketplace, buyer } from "@/lib/api";
+import { marketplace } from "@/lib/api";
 import {
   cn,
   formatUsdc,
@@ -45,12 +45,6 @@ export default function ListingDetailPage() {
   const [pgResponse, setPgResponse] = useState<PlaygroundResponse | null>(null);
   const [pgLoading, setPgLoading] = useState(false);
 
-  // Watchlist state
-  const [isWatching, setIsWatching] = useState(false);
-  const [showAlertPopover, setShowAlertPopover] = useState(false);
-  const [alertThreshold, setAlertThreshold] = useState("");
-  const [watchlistLoading, setWatchlistLoading] = useState(false);
-
   // Fetch listing detail
   useEffect(() => {
     if (!slug) return;
@@ -77,23 +71,6 @@ export default function ListingDetailPage() {
       .catch(console.error);
   }, [slug, pricePeriod]);
 
-  // Check if already watching
-  useEffect(() => {
-    if (!listing) return;
-    buyer
-      .getWatchlist()
-      .then((items) => {
-        const match = items.find((w) => w.listingId === listing.id);
-        if (match) {
-          setIsWatching(true);
-          if (match.alertThreshold) {
-            setAlertThreshold(String(match.alertThreshold));
-          }
-        }
-      })
-      .catch(() => {});
-  }, [listing]);
-
   // Playground send
   async function handleSendRequest() {
     setPgLoading(true);
@@ -114,44 +91,6 @@ export default function ListingDetailPage() {
       setPgResponse({ status: 0, headers: {}, body: message, responseTimeMs: 0 });
     } finally {
       setPgLoading(false);
-    }
-  }
-
-  // Watchlist toggle
-  async function handleWatchlistToggle() {
-    if (!listing) return;
-    setWatchlistLoading(true);
-    try {
-      if (isWatching) {
-        await buyer.removeFromWatchlist(listing.id);
-        setIsWatching(false);
-        setShowAlertPopover(false);
-      } else {
-        setShowAlertPopover(true);
-      }
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setWatchlistLoading(false);
-    }
-  }
-
-  async function handleAddToWatchlist() {
-    if (!listing) return;
-    setWatchlistLoading(true);
-    try {
-      const threshold = alertThreshold ? parseFloat(alertThreshold) : undefined;
-      await buyer.addToWatchlist({
-        listingId: listing.id,
-        alertOnPriceDrop: !!threshold,
-        alertThreshold: threshold,
-      });
-      setIsWatching(true);
-      setShowAlertPopover(false);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setWatchlistLoading(false);
     }
   }
 
@@ -207,63 +146,9 @@ export default function ListingDetailPage() {
             </p>
           </div>
         </div>
-        <div className="flex items-center gap-3">
-          <span className={cn("badge", listingStatusColor(listing.status))}>
-            {listing.status}
-          </span>
-          {/* Watchlist Button */}
-          <div className="relative">
-            <button
-              onClick={handleWatchlistToggle}
-              disabled={watchlistLoading}
-              className={cn(
-                "px-4 py-2 rounded-lg text-sm font-medium transition-all duration-150",
-                isWatching
-                  ? "bg-amber-500/15 text-amber-300 border border-amber-500/30 hover:bg-amber-500/25"
-                  : "btn-secondary"
-              )}
-            >
-              {isWatching ? "★ Watching" : "☆ Add to Watchlist"}
-            </button>
-            {/* Alert Popover */}
-            {showAlertPopover && (
-              <div className="absolute right-0 top-12 w-72 card p-4 z-50 shadow-xl">
-                <h4 className="text-sm font-semibold text-zinc-200 mb-2">
-                  Set Price Alert (optional)
-                </h4>
-                <p className="text-2xs text-zinc-500 mb-3">
-                  Get notified when the price drops to or below this threshold.
-                </p>
-                <div className="flex items-center gap-2 mb-3">
-                  <span className="text-xs text-zinc-400">$</span>
-                  <input
-                    type="number"
-                    step="0.0001"
-                    value={alertThreshold}
-                    onChange={(e) => setAlertThreshold(e.target.value)}
-                    placeholder={formatPricePerCall(listing.currentPriceUsdc)}
-                    className="input-base flex-1"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <button
-                    onClick={handleAddToWatchlist}
-                    disabled={watchlistLoading}
-                    className="btn-primary flex-1 text-xs"
-                  >
-                    Add to Watchlist
-                  </button>
-                  <button
-                    onClick={() => setShowAlertPopover(false)}
-                    className="btn-ghost text-xs"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+        <span className={cn("badge", listingStatusColor(listing.status))}>
+          {listing.status}
+        </span>
       </div>
 
       {/* Tags */}
