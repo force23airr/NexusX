@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
 import { randomUUID } from "crypto";
 import {
   searchListings,
@@ -682,7 +683,7 @@ export async function POST(req: NextRequest) {
   const routeTimeMs = Math.round(performance.now() - startTime);
 
   // 5. Log query (fire-and-forget)
-  const buyer = await prisma.user.findFirst({ where: { roles: { has: "BUYER" } } });
+  const buyer = await getCurrentUser();
   if (buyer) {
     prisma.queryLog.create({
       data: {

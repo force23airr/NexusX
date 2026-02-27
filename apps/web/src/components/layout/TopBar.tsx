@@ -10,6 +10,7 @@
 import { useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { SignInButton, UserButton, useUser } from "@clerk/nextjs";
 import { cn } from "@/lib/utils";
 
 interface Crumb {
@@ -83,6 +84,7 @@ function sectionHref(section: string): string {
 export function TopBar() {
   const pathname = usePathname();
   const crumbs = useMemo(() => buildCrumbs(pathname || "/"), [pathname]);
+  const { isSignedIn } = useUser();
 
   return (
     <header className="flex items-center justify-between h-12 px-6 border-b border-surface-4 bg-surface-1/60 backdrop-blur-sm shrink-0">
@@ -107,7 +109,7 @@ export function TopBar() {
         ))}
       </nav>
 
-      {/* Quick actions */}
+      {/* Quick actions + user */}
       <div className="flex items-center gap-1">
         {QUICK_ACTIONS.map((action) => (
           <Link
@@ -124,6 +126,24 @@ export function TopBar() {
             <span className="hidden md:inline">{action.label}</span>
           </Link>
         ))}
+        <div className="ml-2 pl-2 border-l border-surface-4">
+          {isSignedIn ? (
+            <UserButton
+              afterSignOutUrl="/"
+              appearance={{
+                elements: {
+                  avatarBox: "w-6 h-6",
+                },
+              }}
+            />
+          ) : (
+            <SignInButton mode="modal">
+              <button className="text-xs text-zinc-500 hover:text-zinc-300 px-2 py-1 rounded-md hover:bg-surface-3 transition-all duration-150">
+                Sign In
+              </button>
+            </SignInButton>
+          )}
+        </div>
       </div>
     </header>
   );

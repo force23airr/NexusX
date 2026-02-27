@@ -1,28 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
 
 export async function GET() {
-  // Demo: fetch first buyer user
-  const buyer = await prisma.user.findFirst({
-    where: { roles: { has: "BUYER" } },
-    include: { wallet: true },
-  });
-
-  if (!buyer || !buyer.wallet) {
-    return NextResponse.json({ error: "No buyer wallet found" }, { status: 404 });
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  const w = buyer.wallet;
+  const wallet = await prisma.wallet.findUnique({
+    where: { userId: user.id },
+  });
+
+  if (!wallet) {
+    return NextResponse.json({ error: "No wallet found" }, { status: 404 });
+  }
+
   return NextResponse.json({
-    address: w.address,
-    chainId: w.chainId,
-    balanceUsdc: Number(w.balanceUsdc),
-    escrowUsdc: Number(w.escrowUsdc),
-    autoDepositEnabled: w.autoDepositEnabled,
-    autoDepositAmountUsdc: Number(w.autoDepositAmountUsdc),
-    autoDepositThreshold: Number(w.autoDepositThreshold),
-    fundingSource: w.fundingSource,
-    lastSyncedAt: w.lastSyncedAt?.toISOString() ?? null,
+    address: wallet.address,
+    chainId: wallet.chainId,
+    balanceUsdc: Number(wallet.balanceUsdc),
+    escrowUsdc: Number(wallet.escrowUsdc),
+    autoDepositEnabled: wallet.autoDepositEnabled,
+    autoDepositAmountUsdc: Number(wallet.autoDepositAmountUsdc),
+    autoDepositThreshold: Number(wallet.autoDepositThreshold),
+    fundingSource: wallet.fundingSource,
+    lastSyncedAt: wallet.lastSyncedAt?.toISOString() ?? null,
   });
 }
 
@@ -30,13 +33,17 @@ export async function GET() {
 export async function PUT(req: NextRequest) {
   const body = await req.json();
 
-  const buyer = await prisma.user.findFirst({
-    where: { roles: { has: "BUYER" } },
-    include: { wallet: true },
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
+
+  const wallet = await prisma.wallet.findUnique({
+    where: { userId: user.id },
   });
 
-  if (!buyer || !buyer.wallet) {
-    return NextResponse.json({ error: "No buyer wallet found" }, { status: 404 });
+  if (!wallet) {
+    return NextResponse.json({ error: "No wallet found" }, { status: 404 });
   }
 
   const data: Record<string, unknown> = {};
@@ -55,7 +62,7 @@ export async function PUT(req: NextRequest) {
   }
 
   const updated = await prisma.wallet.update({
-    where: { id: buyer.wallet.id },
+    where: { id: wallet.id },
     data,
   });
 
@@ -76,17 +83,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid amount" }, { status: 400 });
   }
 
-  const buyer = await prisma.user.findFirst({
-    where: { roles: { has: "BUYER" } },
-    include: { wallet: true },
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
+
+  const wallet = await prisma.wallet.findUnique({
+    where: { userId: user.id },
   });
 
-  if (!buyer || !buyer.wallet) {
-    return NextResponse.json({ error: "No buyer wallet found" }, { status: 404 });
+  if (!wallet) {
+    return NextResponse.json({ error: "No wallet found" }, { status: 404 });
   }
 
   const updated = await prisma.wallet.update({
-    where: { id: buyer.wallet.id },
+    where: { id: wallet.id },
     data: {
       balanceUsdc: { increment: amount },
       lastSyncedAt: new Date(),

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentProvider } from "@/lib/auth";
 
 
 export async function GET(req: NextRequest) {
@@ -8,15 +9,12 @@ export async function GET(req: NextRequest) {
   const page = parseInt(searchParams.get("page") || "1", 10);
   const pageSize = 20;
 
-  // Demo: fetch first provider
-  const profile = await prisma.providerProfile.findFirst({
-    orderBy: { createdAt: "asc" },
-  });
-  if (!profile) {
-    return NextResponse.json({ items: [], total: 0, page: 1, pageSize, hasMore: false });
+  const result = await getCurrentProvider();
+  if (!result) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  const where: any = { providerId: profile.userId };
+  const where: Record<string, unknown> = { providerId: result.user.id };
   if (status) where.status = status;
 
   const [items, total] = await Promise.all([
@@ -90,15 +88,9 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Demo: fetch first provider
-  const profile = await prisma.providerProfile.findFirst({
-    orderBy: { createdAt: "asc" },
-  });
-  if (!profile) {
-    return NextResponse.json(
-      { error: "No provider profile found" },
-      { status: 403 }
-    );
+  const result = await getCurrentProvider();
+  if (!result) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   // Generate slug — deduplicate if needed
@@ -126,7 +118,7 @@ export async function POST(req: NextRequest) {
 
   const listing = await prisma.listing.create({
     data: {
-      providerId: profile.userId,
+      providerId: result.user.id,
       categoryId: body.categoryId,
       slug,
       name: body.name,

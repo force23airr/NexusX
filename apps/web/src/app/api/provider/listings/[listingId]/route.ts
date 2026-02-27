@@ -1,13 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-
-// ─── Demo auth helper ───
-
-async function getDemoProvider() {
-  return prisma.providerProfile.findFirst({
-    orderBy: { createdAt: "asc" },
-  });
-}
+import { getCurrentProvider } from "@/lib/auth";
 
 // ─────────────────────────────────────────────────────────────
 // GET /api/provider/listings/[listingId]
@@ -20,9 +13,9 @@ export async function GET(
 ) {
   const { listingId } = await params;
 
-  const profile = await getDemoProvider();
-  if (!profile) {
-    return NextResponse.json({ error: "No provider profile found" }, { status: 403 });
+  const result = await getCurrentProvider();
+  if (!result) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   const listing = await prisma.listing.findUnique({
@@ -40,7 +33,7 @@ export async function GET(
     return NextResponse.json({ error: "Listing not found" }, { status: 404 });
   }
 
-  if (listing.providerId !== profile.userId) {
+  if (listing.providerId !== result.user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -101,9 +94,9 @@ export async function PUT(
   const { listingId } = await params;
   const body = await req.json();
 
-  const profile = await getDemoProvider();
-  if (!profile) {
-    return NextResponse.json({ error: "No provider profile found" }, { status: 403 });
+  const result = await getCurrentProvider();
+  if (!result) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   const listing = await prisma.listing.findUnique({
@@ -114,7 +107,7 @@ export async function PUT(
     return NextResponse.json({ error: "Listing not found" }, { status: 404 });
   }
 
-  if (listing.providerId !== profile.userId) {
+  if (listing.providerId !== result.user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

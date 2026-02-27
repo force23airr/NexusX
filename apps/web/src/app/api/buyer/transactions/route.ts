@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
 
 
 export async function GET(req: NextRequest) {
@@ -8,15 +9,12 @@ export async function GET(req: NextRequest) {
   const page = parseInt(searchParams.get("page") || "1", 10);
   const pageSize = parseInt(searchParams.get("pageSize") || "20", 10);
 
-  // Demo: fetch first buyer user
-  const buyer = await prisma.user.findFirst({
-    where: { roles: { has: "BUYER" } },
-  });
-  if (!buyer) {
+  const user = await getCurrentUser();
+  if (!user) {
     return NextResponse.json({ items: [], total: 0, page: 1, pageSize, hasMore: false });
   }
 
-  const where: any = { buyerId: buyer.id };
+  const where: Record<string, unknown> = { buyerId: user.id };
   if (listingId) where.listingId = listingId;
 
   const [items, total] = await Promise.all([

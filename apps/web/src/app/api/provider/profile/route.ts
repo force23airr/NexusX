@@ -1,22 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentProvider } from "@/lib/auth";
 
 
 export async function GET() {
-  const profile = await prisma.providerProfile.findFirst({
-    orderBy: { createdAt: "asc" },
-    include: {
-      user: {
-        include: {
-          listings: { where: { status: "ACTIVE" }, select: { id: true } },
-        },
-      },
-    },
-  });
-
-  if (!profile) {
-    return NextResponse.json({ error: "No provider found" }, { status: 404 });
+  const result = await getCurrentProvider();
+  if (!result) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
+
+  const { profile } = result;
+
+  const listingCount = await prisma.listing.count({
+    where: { providerId: result.user.id, status: "ACTIVE" },
+  });
 
   return NextResponse.json({
     id: profile.id,
@@ -27,7 +24,7 @@ export async function GET() {
     payoutAddress: profile.payoutAddress,
     autoPayoutEnabled: profile.autoPayoutEnabled,
     autoPayoutThreshold: Number(profile.autoPayoutThreshold),
-    listingCount: profile.user.listings.length,
+    listingCount,
   });
 }
 
@@ -47,16 +44,13 @@ export async function PATCH(req: NextRequest) {
     );
   }
 
-  const profile = await prisma.providerProfile.findFirst({
-    orderBy: { createdAt: "asc" },
-  });
-
-  if (!profile) {
-    return NextResponse.json({ error: "No provider found" }, { status: 404 });
+  const result = await getCurrentProvider();
+  if (!result) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   await prisma.providerProfile.update({
-    where: { id: profile.id },
+    where: { id: result.profile.id },
     data: { payoutAddress },
   });
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentProvider } from "@/lib/auth";
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/provider/listings/[listingId]/test
@@ -14,12 +15,9 @@ export async function POST(
 ) {
   const { listingId } = await params;
 
-  // Demo auth
-  const profile = await prisma.providerProfile.findFirst({
-    orderBy: { createdAt: "asc" },
-  });
-  if (!profile) {
-    return NextResponse.json({ error: "No provider profile found" }, { status: 403 });
+  const result = await getCurrentProvider();
+  if (!result) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   const listing = await prisma.listing.findUnique({
@@ -30,14 +28,14 @@ export async function POST(
     return NextResponse.json({ error: "Listing not found" }, { status: 404 });
   }
 
-  if (listing.providerId !== profile.userId) {
+  if (listing.providerId !== result.user.id) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
   // Find an API key for this provider to authenticate with the gateway
   const apiKey = await prisma.apiKey.findFirst({
     where: {
-      userId: profile.userId,
+      userId: result.user.id,
       status: "ACTIVE",
     },
     select: { keyHash: true, keyPrefix: true },

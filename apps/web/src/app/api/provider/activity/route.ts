@@ -1,23 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentProvider } from "@/lib/auth";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const limit = Math.min(parseInt(searchParams.get("limit") || "50", 10), 100);
   const listingId = searchParams.get("listingId");
 
-  // Get the demo provider's listings
-  const providerProfile = await prisma.providerProfile.findFirst({
-    orderBy: { createdAt: "asc" },
-    select: { userId: true },
-  });
-
-  if (!providerProfile) {
-    return NextResponse.json({ items: [] });
+  const result = await getCurrentProvider();
+  if (!result) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   const where: Record<string, unknown> = {
-    listing: { providerId: providerProfile.userId },
+    listing: { providerId: result.user.id },
   };
   if (listingId) {
     where.listingId = listingId;

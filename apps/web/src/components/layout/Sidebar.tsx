@@ -8,6 +8,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { SignInButton, UserButton, useUser } from "@clerk/nextjs";
 import { cn } from "@/lib/utils";
 
 interface NavItem {
@@ -55,6 +56,7 @@ const NAV_SECTIONS: NavSection[] = [
 export function Sidebar() {
   const pathname = usePathname();
   const [collapsed, setCollapsed] = useState(false);
+  const { isSignedIn, user } = useUser();
 
   return (
     <aside
@@ -130,6 +132,40 @@ export function Sidebar() {
           </div>
         ))}
       </nav>
+
+      {/* User */}
+      <div className="px-3 py-3 border-t border-surface-4">
+        {isSignedIn ? (
+          <div className={cn("flex items-center gap-3", collapsed && "justify-center")}>
+            <UserButton
+              afterSignOutUrl="/"
+              appearance={{
+                elements: {
+                  avatarBox: "w-8 h-8",
+                },
+              }}
+            />
+            {!collapsed && (
+              <span className="text-sm text-zinc-300 truncate">
+                {user?.firstName || user?.emailAddresses?.[0]?.emailAddress?.split("@")[0] || "Account"}
+              </span>
+            )}
+          </div>
+        ) : (
+          <SignInButton mode="modal">
+            <button
+              className={cn(
+                "flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all duration-150 w-full",
+                "text-zinc-400 hover:bg-surface-3 hover:text-zinc-200",
+                collapsed && "justify-center px-0"
+              )}
+            >
+              <span className="text-base shrink-0 w-5 text-center">⊕</span>
+              {!collapsed && <span>Sign In</span>}
+            </button>
+          </SignInButton>
+        )}
+      </div>
 
       {/* Collapse Toggle */}
       <button

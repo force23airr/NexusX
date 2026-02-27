@@ -1,18 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentProvider } from "@/lib/auth";
 
 
 export async function GET() {
-  // Demo: fetch first provider
-  const profile = await prisma.providerProfile.findFirst({
-    orderBy: { createdAt: "asc" },
-  });
-  if (!profile) {
-    return NextResponse.json({ error: "No provider found" }, { status: 404 });
+  const result = await getCurrentProvider();
+  if (!result) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   const payouts = await prisma.payout.findMany({
-    where: { providerId: profile.id },
+    where: { providerId: result.profile.id },
     orderBy: { initiatedAt: "desc" },
   });
 
@@ -44,22 +42,20 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Valid amount is required" }, { status: 400 });
   }
 
-  const profile = await prisma.providerProfile.findFirst({
-    orderBy: { createdAt: "asc" },
-  });
-  if (!profile) {
-    return NextResponse.json({ error: "No provider found" }, { status: 404 });
+  const result = await getCurrentProvider();
+  if (!result) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  if (amountUsdc > Number(profile.pendingBalance)) {
+  if (amountUsdc > Number(result.profile.pendingBalance)) {
     return NextResponse.json({ error: "Insufficient balance" }, { status: 400 });
   }
 
   const payout = await prisma.payout.create({
     data: {
-      providerId: profile.id,
+      providerId: result.profile.id,
       amountUsdc,
-      destinationAddr: profile.payoutAddress || "0x0000000000000000000000000000000000000000",
+      destinationAddr: result.profile.payoutAddress || "0x0000000000000000000000000000000000000000",
       status: "PENDING",
     },
   });

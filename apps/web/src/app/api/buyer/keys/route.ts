@@ -1,19 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
 import { randomBytes, createHash } from "crypto";
 
 
 export async function GET() {
-  // Demo: fetch first buyer user
-  const buyer = await prisma.user.findFirst({
-    where: { roles: { has: "BUYER" } },
-  });
-  if (!buyer) {
-    return NextResponse.json({ error: "No buyer found" }, { status: 404 });
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   const keys = await prisma.apiKey.findMany({
-    where: { userId: buyer.id },
+    where: { userId: user.id },
     orderBy: { createdAt: "desc" },
   });
 
@@ -40,11 +38,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
   }
 
-  const buyer = await prisma.user.findFirst({
-    where: { roles: { has: "BUYER" } },
-  });
-  if (!buyer) {
-    return NextResponse.json({ error: "No buyer found" }, { status: 404 });
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
   // Generate a random API key
@@ -54,7 +50,7 @@ export async function POST(req: NextRequest) {
 
   const apiKey = await prisma.apiKey.create({
     data: {
-      userId: buyer.id,
+      userId: user.id,
       name,
       keyHash,
       keyPrefix,
@@ -71,6 +67,17 @@ export async function DELETE(req: NextRequest) {
 
   if (!keyId) {
     return NextResponse.json({ error: "Key ID is required" }, { status: 400 });
+  }
+
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
+
+  // Verify the key belongs to this user
+  const key = await prisma.apiKey.findUnique({ where: { id: keyId } });
+  if (!key || key.userId !== user.id) {
+    return NextResponse.json({ error: "Key not found" }, { status: 404 });
   }
 
   await prisma.apiKey.update({

@@ -1,20 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/auth";
 
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const status = searchParams.get("status");
 
-  // Demo: fetch first buyer user
-  const buyer = await prisma.user.findFirst({
-    where: { roles: { has: "BUYER" } },
-  });
-  if (!buyer) {
-    return NextResponse.json({ error: "No buyer found" }, { status: 404 });
+  const user = await getCurrentUser();
+  if (!user) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  const where: any = { buyerId: buyer.id };
+  const where: Record<string, unknown> = { buyerId: user.id };
   if (status && status !== "all") {
     where.status = status;
   }
