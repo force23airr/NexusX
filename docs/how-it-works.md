@@ -157,3 +157,7 @@ This is the broader principle: **agents should call the actual infrastructure of
 - Wire up individual integrations one by one
 
 NexusX handles all of it. Both sides connect once. Everything else is automatic.
+
+
+
+

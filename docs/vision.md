@@ -199,3 +199,49 @@ The only thing left is scale.
 
 *NexusX — the trusted clearing layer for the agentic economy.*
 *Any agent. Any capability. Pay on success. Settle on-chain.*
+
+
+
+Should NexusX have a skills area?                                                                                                     
+   
+  A skills area is the right instinct but the wrong ceiling. Here's why, and what's more powerful:                                      
+                                                                                                                                     
+  A skills area is a directory. Developers browse it, find the NexusX skill, install it manually. It solves discovery but it's passive —
+   it waits for someone to come looking. ClawHub has 5,700 skills. Most of them get installed once and forgotten. Skills are
+  documentation dressed up as a product.
+
+  What's more powerful: an Intent Registry.
+
+  Instead of teaching agents how to use NexusX through markdown files, NexusX publishes a live, queryable registry of what it can do — a
+   machine-readable catalog that agents can query at runtime.
+
+  Agent: "I need to translate text to French. What's available?"
+  Intent Registry: [
+    { provider: "deepl-api", price: $0.001, reliability: 99.2%, latency: 45ms },
+    { provider: "google-translate", price: $0.0008, reliability: 98.7%, latency: 38ms }
+  ]
+  Agent: picks the best one, calls it, done.
+
+  The agent doesn't read a skill file. It queries a live endpoint and gets real-time pricing, availability, and performance data. That's
+   not documentation — that's infrastructure.
+
+  What's even more powerful than that: .well-known/nexusx.json
+
+  This is the big play. Right now NexusX is a curated marketplace — providers have to register manually. The transformational move is
+  proposing a standard where any website or API can publish a file at:
+
+  https://anywebsite.com/.well-known/nexusx.json
+
+  That file declares: "I have these capabilities, here's my price, here's my endpoint, here's my OpenAPI spec." Agents that connect to
+  NexusX automatically discover it. No manual listing required. No developer has to submit anything.
+
+  This is what robots.txt did for search engines — it became the standard that every website adopted because search engines looked for
+  it. NexusX could do the same for agents. Every business that wants to be agent-accessible publishes that file. NexusX indexes it.
+  Agents find it.
+
+  That turns NexusX from a marketplace into the DNS of the agentic internet. Not a place you go to find APIs — the infrastructure that
+  makes every API on the internet agent-accessible automatically. That's the difference between building a mall and building the road
+  system.
+
+  The skills area is a good feature. The Intent Registry is a better product. The .well-known standard is the moat that wins the whole
+  category.
