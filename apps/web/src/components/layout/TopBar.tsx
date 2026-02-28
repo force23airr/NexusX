@@ -11,6 +11,7 @@ import { useMemo } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { SignInButton, UserButton, useUser } from "@clerk/nextjs";
+import { ThemeToggle } from "@/components/layout/ThemeToggle";
 import { cn } from "@/lib/utils";
 
 interface Crumb {
@@ -126,6 +127,7 @@ export function TopBar() {
             <span className="hidden md:inline">{action.label}</span>
           </Link>
         ))}
+        <ThemeToggle />
         <div className="ml-2 pl-2 border-l border-surface-4">
           {isSignedIn ? (
             <UserButton

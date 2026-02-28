@@ -157,7 +157,7 @@ export default function McpPreviewPanel({
 
       {!toolName ? (
         /* ── Empty state — visible enough to read the format ── */
-        <div className="rounded-lg border border-surface-4 bg-[#0d1117] p-5 space-y-3">
+        <div className="rounded-lg border border-surface-4 bg-[rgb(var(--code-bg))] p-5 space-y-3">
           <pre className="font-mono text-[13px] leading-relaxed whitespace-pre">
             <span className="text-zinc-600">{"{"}</span>{"\n"}
             {"  "}<span className="text-zinc-500">{'"name"'}</span><span className="text-zinc-600">:</span> <span className="text-zinc-500/70">{'"nexusx_your_api"'}</span><span className="text-zinc-600">,</span>{"\n"}
@@ -177,7 +177,7 @@ export default function McpPreviewPanel({
         <div className="space-y-3">
           {/* The JSON — this is the hero */}
           <div className="relative group">
-            <pre className="bg-[#0d1117] border border-surface-4 rounded-lg p-4 text-[13px] font-mono leading-relaxed overflow-x-auto max-h-[400px] overflow-y-auto whitespace-pre">
+            <pre className="bg-[rgb(var(--code-bg))] border border-surface-4 rounded-lg p-4 text-[13px] font-mono leading-relaxed overflow-x-auto max-h-[400px] overflow-y-auto whitespace-pre">
               {highlightJson(toolJson)}
             </pre>
             <button

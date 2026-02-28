@@ -2,14 +2,14 @@
 // NexusX — Root Layout
 // apps/web/src/app/layout.tsx
 //
-// App shell: dark theme, fonts, sidebar nav, global styles.
+// App shell: theme provider, fonts, sidebar nav, global styles.
 // ═══════════════════════════════════════════════════════════════
 
 import type { Metadata } from "next";
 import { DM_Sans, JetBrains_Mono } from "next/font/google";
-import { ClerkProvider } from "@clerk/nextjs";
-import { dark } from "@clerk/themes";
 import "./globals.css";
+import { ThemeProvider } from "@/components/layout/ThemeProvider";
+import { ClerkThemeWrapper } from "@/components/layout/ClerkThemeWrapper";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
 
@@ -38,19 +38,21 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`dark ${dmSans.variable} ${jetbrains.variable}`}>
+    <html lang="en" className={`${dmSans.variable} ${jetbrains.variable}`} suppressHydrationWarning>
       <body className="bg-surface-0 text-zinc-100 font-display antialiased">
-        <ClerkProvider appearance={{ baseTheme: dark }}>
-          <div className="flex h-screen overflow-hidden">
-            <Sidebar />
-            <div className="flex-1 flex flex-col overflow-hidden">
-              <TopBar />
-              <main className="flex-1 overflow-y-auto">
-                <div className="mx-auto max-w-7xl px-6 py-8">{children}</div>
-              </main>
+        <ThemeProvider>
+          <ClerkThemeWrapper>
+            <div className="flex h-screen overflow-hidden">
+              <Sidebar />
+              <div className="flex-1 flex flex-col overflow-hidden">
+                <TopBar />
+                <main className="flex-1 overflow-y-auto">
+                  <div className="mx-auto max-w-7xl px-6 py-8">{children}</div>
+                </main>
+              </div>
             </div>
-          </div>
-        </ClerkProvider>
+          </ClerkThemeWrapper>
+        </ThemeProvider>
       </body>
     </html>
   );

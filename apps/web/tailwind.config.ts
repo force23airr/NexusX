@@ -6,34 +6,47 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // ─── NexusX Brand ───
-        // Dark theme primary — electric cyan over deep slate.
+        // ─── NexusX Brand (CSS variable-backed for theme switching) ───
         brand: {
-          50: "#ecfeff",
-          100: "#cffafe",
-          200: "#a5f3fc",
-          300: "#67e8f9",
-          400: "#22d3ee",
-          500: "#06b6d4",
-          600: "#0891b2",
-          700: "#0e7490",
-          800: "#155e75",
-          900: "#164e63",
-          950: "#083344",
+          50: "rgb(var(--brand-50) / <alpha-value>)",
+          100: "rgb(var(--brand-100) / <alpha-value>)",
+          200: "rgb(var(--brand-200) / <alpha-value>)",
+          300: "rgb(var(--brand-300) / <alpha-value>)",
+          400: "rgb(var(--brand-400) / <alpha-value>)",
+          500: "rgb(var(--brand-500) / <alpha-value>)",
+          600: "rgb(var(--brand-600) / <alpha-value>)",
+          700: "rgb(var(--brand-700) / <alpha-value>)",
+          800: "rgb(var(--brand-800) / <alpha-value>)",
+          900: "rgb(var(--brand-900) / <alpha-value>)",
+          950: "rgb(var(--brand-950) / <alpha-value>)",
         },
         surface: {
-          0: "#0a0e14",
-          1: "#0f1318",
-          2: "#151a21",
-          3: "#1c222b",
-          4: "#252c37",
-          5: "#303846",
+          0: "rgb(var(--surface-0) / <alpha-value>)",
+          1: "rgb(var(--surface-1) / <alpha-value>)",
+          2: "rgb(var(--surface-2) / <alpha-value>)",
+          3: "rgb(var(--surface-3) / <alpha-value>)",
+          4: "rgb(var(--surface-4) / <alpha-value>)",
+          5: "rgb(var(--surface-5) / <alpha-value>)",
         },
         accent: {
-          green: "#34d399",
-          red: "#f87171",
-          amber: "#fbbf24",
-          blue: "#60a5fa",
+          green: "rgb(var(--accent-green) / <alpha-value>)",
+          red: "rgb(var(--accent-red) / <alpha-value>)",
+          amber: "rgb(var(--accent-amber) / <alpha-value>)",
+          blue: "rgb(var(--accent-blue) / <alpha-value>)",
+        },
+        // Override zinc so text-zinc-* classes adapt to theme
+        zinc: {
+          50: "rgb(var(--zinc-50) / <alpha-value>)",
+          100: "rgb(var(--zinc-100) / <alpha-value>)",
+          200: "rgb(var(--zinc-200) / <alpha-value>)",
+          300: "rgb(var(--zinc-300) / <alpha-value>)",
+          400: "rgb(var(--zinc-400) / <alpha-value>)",
+          500: "rgb(var(--zinc-500) / <alpha-value>)",
+          600: "rgb(var(--zinc-600) / <alpha-value>)",
+          700: "rgb(var(--zinc-700) / <alpha-value>)",
+          800: "rgb(var(--zinc-800) / <alpha-value>)",
+          900: "rgb(var(--zinc-900) / <alpha-value>)",
+          950: "rgb(var(--zinc-950) / <alpha-value>)",
         },
       },
       fontFamily: {
@@ -56,12 +69,12 @@ const config: Config = {
       keyframes: {
         priceUp: {
           "0%": { color: "inherit" },
-          "20%": { color: "#34d399" },
+          "20%": { color: "rgb(var(--accent-green))" },
           "100%": { color: "inherit" },
         },
         priceDown: {
           "0%": { color: "inherit" },
-          "20%": { color: "#f87171" },
+          "20%": { color: "rgb(var(--accent-red))" },
           "100%": { color: "inherit" },
         },
         slideIn: {
