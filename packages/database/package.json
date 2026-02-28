@@ -19,6 +19,7 @@
     "db:embed": "ts-node scripts/embed-listings.ts",
     "db:embed:force": "ts-node scripts/embed-listings.ts --force",
     "db:embed:synthetic": "ts-node scripts/embed-listings.ts --synthetic-only",
+    "db:embed:reindex": "ts-node scripts/embed-listings.ts --force --skip-synthetic",
     "postinstall": "prisma generate"
   },
   "prisma": {

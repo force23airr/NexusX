@@ -287,6 +287,19 @@ export default function CreateListingPage() {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [showFields, setShowFields] = useState(false); // collapsed until detect or manual toggle
 
+  // Import from Domain state
+  const [wizardMode, setWizardMode] = useState<"detect" | "import">("detect");
+  const [importDomain, setImportDomain] = useState("");
+  const [importLoading, setImportLoading] = useState(false);
+  const [importResult, setImportResult] = useState<{
+    imported: number;
+    skipped: number;
+    listings: { id: string; slug: string; name: string }[];
+    skippedDetails: { name: string; reason: string }[];
+    manifestProvider: { name: string; website?: string };
+  } | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+
   // Detection state
   const [detectStage, setDetectStage] = useState<DetectStage>("idle");
   const [detectWarnings, setDetectWarnings] = useState<string[]>([]);
@@ -377,6 +390,30 @@ export default function CreateListingPage() {
       for (const t of stageTimerRef.current) clearTimeout(t);
     };
   }, []);
+
+  // ─── Import from Domain ───
+  const handleImportManifest = useCallback(async () => {
+    if (!importDomain.trim()) return;
+    setImportLoading(true);
+    setImportError(null);
+    setImportResult(null);
+
+    try {
+      const result = await provider.importManifest(importDomain.trim());
+      setImportResult(result);
+      if (result.imported > 0) {
+        // Redirect after short delay so user can see results
+        setTimeout(() => {
+          router.push(`/provider/listings?imported=${result.imported}`);
+        }, 2000);
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Import failed";
+      setImportError(msg);
+    } finally {
+      setImportLoading(false);
+    }
+  }, [importDomain, router]);
 
   // ─── Validation ───
   const validateStep = useCallback(
@@ -509,6 +546,126 @@ export default function CreateListingPage() {
           {/* ═══ Step 1: API Details ═══ */}
           {currentStep === 1 && (
             <div className="space-y-6">
+              {/* Mode toggle */}
+              <div className="flex gap-1 p-1 bg-surface-2 border border-surface-4 rounded-lg w-fit">
+                <button
+                  type="button"
+                  onClick={() => setWizardMode("detect")}
+                  className={cn(
+                    "px-4 py-1.5 rounded-md text-sm font-medium transition-all",
+                    wizardMode === "detect"
+                      ? "bg-surface-3 text-zinc-100 shadow-sm"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  )}
+                >
+                  Auto-Detect Spec
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setWizardMode("import")}
+                  className={cn(
+                    "px-4 py-1.5 rounded-md text-sm font-medium transition-all",
+                    wizardMode === "import"
+                      ? "bg-surface-3 text-zinc-100 shadow-sm"
+                      : "text-zinc-500 hover:text-zinc-300"
+                  )}
+                >
+                  Import from Domain
+                </button>
+              </div>
+
+              {/* ── Import from Domain mode ── */}
+              {wizardMode === "import" && (
+                <section className="card p-6 space-y-4">
+                  <h2 className="text-lg font-semibold text-zinc-100 border-b border-surface-4 pb-3">
+                    Import from Domain
+                  </h2>
+                  <p className="text-sm text-zinc-500">
+                    Enter a domain that hosts a{" "}
+                    <code className="text-zinc-400 bg-surface-3 px-1 rounded">.well-known/nexusx.json</code>{" "}
+                    manifest. All capabilities will be imported as draft listings.
+                  </p>
+                  <div className="flex gap-3">
+                    <input
+                      className="input-base flex-1"
+                      placeholder="api.example.com"
+                      value={importDomain}
+                      onChange={(e) => setImportDomain(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") { e.preventDefault(); handleImportManifest(); }
+                      }}
+                      disabled={importLoading}
+                    />
+                    <button
+                      type="button"
+                      onClick={handleImportManifest}
+                      disabled={importLoading || !importDomain.trim()}
+                      className={cn(
+                        "btn-primary whitespace-nowrap min-w-[130px]",
+                        (importLoading || !importDomain.trim()) && "opacity-60 cursor-not-allowed"
+                      )}
+                    >
+                      {importLoading ? "Importing..." : "Import"}
+                    </button>
+                  </div>
+
+                  {/* Import error */}
+                  {importError && (
+                    <div className="text-sm text-red-400 bg-red-500/5 border border-red-500/20 rounded-lg px-3 py-2">
+                      {importError}
+                    </div>
+                  )}
+
+                  {/* Import result */}
+                  {importResult && (
+                    <div className="space-y-3 animate-fade-in">
+                      {importResult.imported > 0 && (
+                        <div className="text-sm text-emerald-400 bg-emerald-500/5 border border-emerald-500/20 rounded-lg px-3 py-3 space-y-2">
+                          <p className="font-medium">
+                            Imported {importResult.imported} listing{importResult.imported !== 1 ? "s" : ""} as drafts
+                            {importResult.manifestProvider?.name && (
+                              <span className="text-zinc-400 font-normal">
+                                {" "}from {importResult.manifestProvider.name}
+                              </span>
+                            )}
+                          </p>
+                          <ul className="space-y-1">
+                            {importResult.listings.map((l) => (
+                              <li key={l.id} className="text-zinc-300 text-xs font-mono">
+                                {l.name} &rarr; /{l.slug}
+                              </li>
+                            ))}
+                          </ul>
+                          <p className="text-xs text-zinc-500">
+                            Redirecting to your listings...
+                          </p>
+                        </div>
+                      )}
+                      {importResult.skipped > 0 && (
+                        <div className="text-sm text-amber-400 bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2 space-y-1">
+                          <p className="font-medium">
+                            Skipped {importResult.skipped}:
+                          </p>
+                          {importResult.skippedDetails.map((s, i) => (
+                            <p key={i} className="text-xs text-zinc-400">
+                              {s.name}: {s.reason}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                      {importResult.imported === 0 && importResult.skipped === 0 && (
+                        <div className="text-sm text-zinc-400 bg-surface-2 border border-surface-4 rounded-lg px-3 py-2">
+                          No capabilities found in the manifest.
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </section>
+              )}
+
+              {/* ── Auto-Detect Spec mode ── */}
+              {wizardMode === "detect" && (
+              <>
               {/* URL + Auto-Detect — always visible */}
               <section className="card p-6 space-y-4">
                 <h2 className="text-lg font-semibold text-zinc-100 border-b border-surface-4 pb-3">
@@ -769,6 +926,8 @@ export default function CreateListingPage() {
                     )}
                   </section>
                 </>
+              )}
+              </>
               )}
             </div>
           )}

@@ -1,15 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-
-// ─── SSRF protection: reject private/reserved IPs ───
-
-const PRIVATE_RANGES = [
-  /^127\./, /^10\./, /^172\.(1[6-9]|2\d|3[01])\./, /^192\.168\./,
-  /^0\./, /^169\.254\./, /^fc00:/i, /^fe80:/i, /^::1$/, /^localhost$/i,
-];
-
-function isPrivateHost(hostname: string): boolean {
-  return PRIVATE_RANGES.some((re) => re.test(hostname));
-}
+import { isPrivateHost } from "@/lib/ssrf";
+import { validateManifest } from "@nexusx/database";
 
 // ─── Category slug suggestion from spec keywords ───
 
@@ -107,6 +98,42 @@ interface InputSchemaField {
   type: string;
   required: boolean;
   description: string;
+}
+
+// ─── Extract from NexusX manifest ───
+
+function extractFromManifest(
+  cap: import("@nexusx/database").NexusXManifestCapability,
+  sourceUrl: string,
+  totalCapabilities: number,
+) {
+  const warnings: string[] = [
+    "NexusX manifest detected — use 'Import from Domain' to import all capabilities at once.",
+  ];
+  if (totalCapabilities > 1) {
+    warnings.push(
+      `This manifest declares ${totalCapabilities} capabilities. Only the first is shown here.`,
+    );
+  }
+
+  return {
+    detected: true,
+    name: cap.name,
+    description: cap.description,
+    baseUrl: cap.baseUrl,
+    healthCheckUrl: cap.healthCheckUrl || "",
+    docsUrl: cap.docsUrl || "",
+    authType: cap.authType || "api_key",
+    listingType: cap.listingType || "REST_API",
+    sampleRequest: cap.sampleRequest || null,
+    sampleResponse: cap.sampleResponse || null,
+    endpoints: cap.endpoint ? [{ path: cap.endpoint.path, method: cap.endpoint.method, summary: cap.description, requestSchema: null }] : [],
+    inputSchemaFields: [] as { name: string; type: string; required: boolean; description: string }[],
+    suggestedCategorySlug: cap.category || null,
+    tags: cap.tags || [],
+    healthCheckStatus: null as { ok: boolean; latencyMs: number } | null,
+    warnings,
+  };
 }
 
 function extractFromSpec(spec: Record<string, unknown>, sourceUrl: string) {
@@ -319,6 +346,7 @@ function tryParseYamlBasic(text: string): Record<string, unknown> | null {
 // ─── Common spec probe paths ───
 
 const PROBE_PATHS = [
+  "/.well-known/nexusx.json",
   "/openapi.json",
   "/swagger.json",
   "/.well-known/openapi.json",
@@ -507,8 +535,16 @@ export async function POST(req: NextRequest) {
     if (directText) {
       let spec: Record<string, unknown> | null = null;
       try { spec = JSON.parse(directText); } catch { spec = tryParseYamlBasic(directText); }
-      if (spec && (spec.openapi || spec.swagger)) {
-        result = extractFromSpec(spec, url);
+
+      // Check for NexusX manifest first
+      if (spec) {
+        const manifestCheck = validateManifest(spec);
+        if (manifestCheck.valid) {
+          const cap = manifestCheck.manifest.capabilities[0];
+          result = extractFromManifest(cap, url, manifestCheck.manifest.capabilities.length);
+        } else if (spec.openapi || spec.swagger) {
+          result = extractFromSpec(spec, url);
+        }
       }
     }
 
@@ -522,12 +558,26 @@ export async function POST(req: NextRequest) {
           if (!text) return null;
           let spec: Record<string, unknown> | null = null;
           try { spec = JSON.parse(text); } catch { spec = tryParseYamlBasic(text); }
-          if (spec && (spec.openapi || spec.swagger)) return { spec, url: probeUrl };
+          if (!spec) return null;
+
+          // NexusX manifest
+          const manifestCheck = validateManifest(spec);
+          if (manifestCheck.valid) return { manifest: manifestCheck.manifest, url: probeUrl };
+
+          // OpenAPI spec
+          if (spec.openapi || spec.swagger) return { spec, url: probeUrl };
           return null;
         })
       );
       const found = probeResults.find((r) => r !== null);
-      if (found) result = extractFromSpec(found.spec, found.url);
+      if (found) {
+        if ("manifest" in found) {
+          const cap = found.manifest.capabilities[0];
+          result = extractFromManifest(cap, found.url, found.manifest.capabilities.length);
+        } else {
+          result = extractFromSpec(found.spec, found.url);
+        }
+      }
     }
 
     clearTimeout(timeout);

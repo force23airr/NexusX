@@ -31,6 +31,13 @@ export {
   CURRENT_SYNTHETIC_VERSION,
 } from "./synthetic-queries";
 
+// ─── Manifest (.well-known/nexusx.json) ───
+export {
+  validateManifest,
+  type NexusXManifest,
+  type NexusXManifestCapability,
+} from "./manifest";
+
 // ─── Typed Query Helpers ───
 export {
   // Gateway

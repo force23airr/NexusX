@@ -18,6 +18,7 @@
 
 import { PrismaClient } from "@prisma/client";
 import { createHash, randomUUID } from "crypto";
+import { embedAllListings, type EmbeddingConfig } from "../../src/embeddings";
 
 const prisma = new PrismaClient();
 
@@ -444,6 +445,23 @@ async function main() {
     qualitySnapshots: await prisma.qualitySnapshot.count(),
     platformConfig: await prisma.platformConfig.count(),
   };
+
+  // ─── 12. Embeddings (optional) ───
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (openaiKey) {
+    console.log("  🧮 Generating embeddings...");
+    const embedConfig: EmbeddingConfig = { openaiApiKey: openaiKey };
+    const embedResult = await embedAllListings(prisma, embedConfig, {
+      force: true,
+      batchSize: 10,
+      delayMs: 100,
+    });
+    console.log(
+      `   Embedded: ${embedResult.embedded} | Skipped: ${embedResult.skipped} | Errors: ${embedResult.errors}`,
+    );
+  } else {
+    console.log("  ⏩ Skipping embeddings (no OPENAI_API_KEY)");
+  }
 
   console.log("\n✅ Seed complete!");
   console.log("   Records created:", JSON.stringify(counts, null, 2));

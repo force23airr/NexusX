@@ -379,4 +379,18 @@ export const provider = {
       method: "POST",
     });
   },
+
+  /** Import listings from a domain's .well-known/nexusx.json manifest. */
+  async importManifest(domain: string): Promise<{
+    imported: number;
+    skipped: number;
+    listings: { id: string; slug: string; name: string }[];
+    skippedDetails: { name: string; reason: string }[];
+    manifestProvider: { name: string; website?: string; contact?: string };
+  }> {
+    return apiFetch("/api/provider/import-manifest", {
+      method: "POST",
+      body: JSON.stringify({ domain }),
+    });
+  },
 };

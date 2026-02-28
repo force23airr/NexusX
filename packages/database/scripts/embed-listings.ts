@@ -9,6 +9,7 @@
 //   npm run db:embed               # Embed only un-embedded listings
 //   npm run db:embed:force          # Re-embed all listings
 //   npm run db:embed:synthetic      # Generate synthetic queries only
+//   npm run db:embed:reindex        # Re-embed all, skip synthetic queries
 //
 // Requires OPENAI_API_KEY in environment.
 // Optionally generates synthetic queries first (needs ANTHROPIC_API_KEY
@@ -23,6 +24,7 @@ async function main() {
   const args = process.argv.slice(2);
   const force = args.includes("--force");
   const syntheticOnly = args.includes("--synthetic-only");
+  const skipSynthetic = args.includes("--skip-synthetic");
 
   const openaiKey = process.env.OPENAI_API_KEY;
 
@@ -32,18 +34,22 @@ async function main() {
     process.exit(1);
   }
 
-  // Step 1: Generate synthetic queries
-  console.log("\n📝 Generating synthetic queries...\n");
+  // Step 1: Generate synthetic queries (unless --skip-synthetic)
+  if (!skipSynthetic) {
+    console.log("\n📝 Generating synthetic queries...\n");
 
-  const syntheticResult = await generateAllSyntheticQueries(prisma, { force });
-  console.log(
-    `   Generated: ${syntheticResult.generated} | Skipped: ${syntheticResult.skipped} | Errors: ${syntheticResult.errors}`,
-  );
+    const syntheticResult = await generateAllSyntheticQueries(prisma, { force });
+    console.log(
+      `   Generated: ${syntheticResult.generated} | Skipped: ${syntheticResult.skipped} | Errors: ${syntheticResult.errors}`,
+    );
 
-  if (syntheticOnly) {
-    console.log("\n✅ Synthetic query generation complete.\n");
-    await disconnectDatabase();
-    return;
+    if (syntheticOnly) {
+      console.log("\n✅ Synthetic query generation complete.\n");
+      await disconnectDatabase();
+      return;
+    }
+  } else {
+    console.log("\n⏩ Skipping synthetic query generation (--skip-synthetic)\n");
   }
 
   // Step 2: Embed listings
