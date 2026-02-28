@@ -33,6 +33,7 @@ export interface DiscoveredListing {
   listingType: string;
   categorySlug: string;
   tags: string[];
+  intents: string[];
   currentPriceUsdc: number;
   floorPriceUsdc: number;
   ceilingPriceUsdc: number | null;

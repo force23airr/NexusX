@@ -136,6 +136,7 @@ export async function POST(req: NextRequest) {
       capacityPerMinute: body.capacityPerMinute || 60,
       isUnique: body.isUnique || false,
       tags,
+      intents: Array.isArray(body.intents) ? body.intents : [],
       sampleRequest: body.sampleRequest || undefined,
       sampleResponse: body.sampleResponse || undefined,
       schemaSpec: schemaSpec || undefined,

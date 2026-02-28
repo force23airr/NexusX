@@ -6,6 +6,10 @@
 // tasks, selects the optimal API(s) from the marketplace,
 // chains them if needed, and returns unified results.
 //
+// Intent resolution: semantic-first via pgvector (listing intents
+// + embeddings), with KNOWN_CATEGORIES for endpoint/body inference
+// on matched listings.
+//
 // This is the brain behind the `nexusx` MCP tool — the single
 // entry point for any agent to access the entire marketplace.
 // ═══════════════════════════════════════════════════════════════
@@ -28,38 +32,21 @@ export interface OrchestrationArgs {
   priority_mode?: PriorityMode;
 }
 
-interface ClassifiedIntent {
-  intent: string;
-  categorySlug: string;
-  defaultSlug: string;
-  /** HTTP method + path for the provider endpoint. */
+interface ResolvedApi {
+  listing: DiscoveredListing;
   endpoint: { method: string; path: string };
-  /** Maps input fields to the expected request body shape. */
-  buildBody: (input: Record<string, unknown>, previousOutput?: unknown) => Record<string, unknown>;
-}
-
-interface ChainStep {
-  intent: ClassifiedIntent;
-  rawText: string;
+  body: Record<string, unknown>;
 }
 
 // ─────────────────────────────────────────────────────────────
-// INTENT PATTERNS
+// KNOWN CATEGORIES — endpoint + body builders for known types
 // ─────────────────────────────────────────────────────────────
 
-const INTENT_PATTERNS: Array<{
-  pattern: RegExp;
-  intent: string;
-  categorySlug: string;
-  defaultSlug: string;
+const KNOWN_CATEGORIES: Record<string, {
   endpoint: { method: string; path: string };
   buildBody: (input: Record<string, unknown>, prev?: unknown) => Record<string, unknown>;
-}> = [
-  {
-    pattern: /translat/i,
-    intent: "translate",
-    categorySlug: "translation",
-    defaultSlug: "deepl-translation-api",
+}> = {
+  "translation": {
     endpoint: { method: "POST", path: "/translate" },
     buildBody: (input, prev) => {
       const text = (input.text as string) ?? (prev as any)?.text ?? (typeof prev === "string" ? prev : "");
@@ -67,33 +54,21 @@ const INTENT_PATTERNS: Array<{
       return { text, target_lang: targetLang, source_lang: input.source_lang };
     },
   },
-  {
-    pattern: /sentim|emotion|classif.*text|analyz.*(?:tone|mood|feel)/i,
-    intent: "sentiment",
-    categorySlug: "sentiment-analysis",
-    defaultSlug: "sentiment-analysis-pro",
+  "sentiment-analysis": {
     endpoint: { method: "POST", path: "/sentiment" },
     buildBody: (input, prev) => {
       const text = (input.text as string) ?? extractText(prev);
       return { text };
     },
   },
-  {
-    pattern: /embed|vector|similar|encod.*text/i,
-    intent: "embed",
-    categorySlug: "embeddings",
-    defaultSlug: "text-embeddings-v3",
+  "embeddings": {
     endpoint: { method: "POST", path: "/embed" },
     buildBody: (input, prev) => {
       const text = (input.text as string) ?? extractText(prev);
       return { text, model: input.model };
     },
   },
-  {
-    pattern: /generat|write|chat|complet|reason|answer|explain|summar/i,
-    intent: "generate",
-    categorySlug: "language-models",
-    defaultSlug: "openai-gpt4-turbo",
+  "language-models": {
     endpoint: { method: "POST", path: "/chat/completions" },
     buildBody: (input, prev) => {
       if (input.messages) return { messages: input.messages, model: input.model };
@@ -104,26 +79,18 @@ const INTENT_PATTERNS: Array<{
       };
     },
   },
-  {
-    pattern: /detect|recogni|vision|image.*object|identif.*image/i,
-    intent: "detect",
-    categorySlug: "object-detection",
-    defaultSlug: "vision-object-detection",
+  "object-detection": {
     endpoint: { method: "POST", path: "/detect" },
     buildBody: (input) => ({
       image_url: input.image_url,
       image_base64: input.image_base64,
     }),
   },
-  {
-    pattern: /review|dataset|download|data.*set/i,
-    intent: "dataset",
-    categorySlug: "datasets",
-    defaultSlug: "restaurant-reviews-dataset",
+  "datasets": {
     endpoint: { method: "GET", path: "/reviews" },
     buildBody: () => ({}),
   },
-];
+};
 
 // Chaining conjunctions that split a task into multiple steps
 const CHAIN_SPLIT = /\b(?:then|and then|after that|followed by|next|afterwards)\b/i;
@@ -142,16 +109,16 @@ export class OrchestratorService {
   /**
    * Execute an orchestrated task.
    *
-   * 1. Parse task into chain steps
-   * 2. For each step: classify intent → select API → execute → chain output
+   * 1. Parse task into chain steps (split on "then"/"and then" etc.)
+   * 2. For each step: semantic search → infer endpoint → build body → execute
    * 3. Return combined result with execution plan
    */
   async execute(args: OrchestrationArgs): Promise<ToolCallResult> {
     const { task, input = {}, budget_max_usdc, priority_mode = "balanced" } = args;
 
     // 1. Parse chain steps
-    const steps = this.parseChainSteps(task);
-    if (steps.length === 0) {
+    const rawSteps = this.parseChainSteps(task);
+    if (rawSteps.length === 0) {
       return {
         content: [{ type: "text", text: "I couldn't understand the task. Try describing what API capability you need (e.g., \"translate this text to French\", \"analyze the sentiment\", \"generate embeddings\")." }],
         isError: true,
@@ -165,26 +132,24 @@ export class OrchestratorService {
     let totalCost = 0;
     let totalLatency = 0;
 
-    for (let i = 0; i < steps.length; i++) {
-      const step = steps[i];
+    for (let i = 0; i < rawSteps.length; i++) {
+      const stepText = rawSteps[i];
 
-      // Select best API for this intent
-      const listing = await this.selectApi(step.intent, priority_mode, budget_max_usdc);
-      if (!listing) {
-        plan.push(`Step ${i + 1}: ${step.intent.intent} — No API found`);
+      // Resolve API via semantic search
+      const resolved = await this.resolveApi(stepText, input, priority_mode, budget_max_usdc, previousOutput);
+      if (!resolved) {
+        plan.push(`Step ${i + 1}: "${stepText}" — No API found`);
         return {
           content: [{
             type: "text",
-            text: `No API available for "${step.rawText}" (intent: ${step.intent.intent}). Available categories may not include this capability yet.`,
+            text: `No API available for "${stepText}". The marketplace may not have a listing matching this capability yet.`,
           }],
           isError: true,
         };
       }
 
-      plan.push(`Step ${i + 1}: ${step.intent.intent} → ${listing.slug} ($${listing.currentPriceUsdc.toFixed(6)})`);
-
-      // Build request body (chain previous output if multi-step)
-      const body = step.intent.buildBody(input, previousOutput);
+      const { listing, endpoint, body } = resolved;
+      plan.push(`Step ${i + 1}: ${listing.categorySlug} → ${listing.slug} ($${listing.currentPriceUsdc.toFixed(6)})`);
 
       // Find the tool name for this listing
       const toolName = this.findToolName(listing.slug);
@@ -197,8 +162,8 @@ export class OrchestratorService {
 
       // Execute via the existing executor (handles x402 payment automatically)
       const result = await this.executor.execute(toolName, {
-        path: step.intent.endpoint.path,
-        method: step.intent.endpoint.method,
+        path: endpoint.path,
+        method: endpoint.method,
         body: Object.keys(body).length > 0 ? body : undefined,
       });
 
@@ -223,14 +188,14 @@ export class OrchestratorService {
 
       if (result.isError) {
         // If this step failed, try a fallback in the same category
-        const fallback = await this.findFallback(listing, step.intent.categorySlug, priority_mode, budget_max_usdc);
+        const fallback = await this.findFallback(listing, listing.categorySlug, priority_mode, budget_max_usdc);
         if (fallback) {
-          plan.push(`Step ${i + 1} (fallback): ${step.intent.intent} → ${fallback.slug}`);
+          plan.push(`Step ${i + 1} (fallback): ${listing.categorySlug} → ${fallback.slug}`);
           const fallbackToolName = this.findToolName(fallback.slug);
           if (fallbackToolName) {
             const fallbackResult = await this.executor.execute(fallbackToolName, {
-              path: step.intent.endpoint.path,
-              method: step.intent.endpoint.method,
+              path: endpoint.path,
+              method: endpoint.method,
               body: Object.keys(body).length > 0 ? body : undefined,
             });
 
@@ -259,90 +224,117 @@ export class OrchestratorService {
     return this.buildSuccessResult(plan, stepResults, previousOutput, totalCost, totalLatency);
   }
 
-  // ─── Intent Classification ───
+  // ─── Chain Parsing ───
 
-  private parseChainSteps(task: string): ChainStep[] {
-    // Split by chaining conjunctions
-    const segments = task.split(CHAIN_SPLIT).map(s => s.trim()).filter(Boolean);
-
-    const steps: ChainStep[] = [];
-    for (const segment of segments) {
-      const intent = this.classifyIntent(segment);
-      if (intent) {
-        steps.push({ intent, rawText: segment });
-      }
-    }
-
-    return steps;
+  private parseChainSteps(task: string): string[] {
+    return task.split(CHAIN_SPLIT).map(s => s.trim()).filter(Boolean);
   }
 
-  private classifyIntent(text: string): ClassifiedIntent | null {
-    for (const pattern of INTENT_PATTERNS) {
-      if (pattern.pattern.test(text)) {
-        return {
-          intent: pattern.intent,
-          categorySlug: pattern.categorySlug,
-          defaultSlug: pattern.defaultSlug,
-          endpoint: pattern.endpoint,
-          buildBody: pattern.buildBody,
-        };
-      }
-    }
+  // ─── Semantic-First API Resolution ───
 
-    // Fallback: treat as a generic LLM generation task
-    return {
-      intent: "generate",
-      categorySlug: "language-models",
-      defaultSlug: "openai-gpt4-turbo",
-      endpoint: { method: "POST", path: "/chat/completions" },
-      buildBody: (input, prev) => {
-        const content = (input.text as string) ?? (input.prompt as string) ?? extractText(prev) ?? text;
-        return { messages: [{ role: "user", content }] };
-      },
-    };
-  }
-
-  // ─── API Selection ───
-
-  private async selectApi(
-    intent: ClassifiedIntent,
+  /**
+   * Resolve the best API for a task step using semantic search.
+   *
+   * 1. Semantic search with raw task text against listing embeddings
+   *    (which now include provider-declared intents)
+   * 2. Infer endpoint from matched listing's category or schemaSpec
+   * 3. Build request body using known category builders or generic pass-through
+   */
+  private async resolveApi(
+    taskText: string,
+    input: Record<string, unknown>,
     priorityMode: PriorityMode,
     budgetMax?: number,
-  ): Promise<DiscoveredListing | null> {
-    // First try semantic search (pgvector)
-    try {
-      const searchResult = await this.discovery.semanticSearch(intent.intent, {
-        limit: 5,
-        budgetMaxUsdc: budgetMax,
-        priorityMode,
-      });
+    previousOutput?: unknown,
+  ): Promise<ResolvedApi | null> {
+    // 1. Semantic search — task text directly against listing embeddings
+    const result = await this.discovery.semanticSearch(taskText, {
+      limit: 5,
+      budgetMaxUsdc: budgetMax,
+      priorityMode,
+    });
 
-      if (searchResult.listings.length > 0) {
-        // Filter to same category if possible
-        const sameCat = searchResult.listings.filter(l => l.categorySlug === intent.categorySlug);
-        if (sameCat.length > 0) return this.rankByPriority(sameCat, priorityMode)[0];
-        return this.rankByPriority(searchResult.listings, priorityMode)[0];
-      }
-    } catch {
-      // Fall through to registry lookup
+    let listing: DiscoveredListing | null = result.listings.length > 0
+      ? this.rankByPriority(result.listings, priorityMode)[0]
+      : null;
+
+    // Fallback: search the tool registry if semantic search returned nothing
+    if (!listing) {
+      listing = this.registryFallback(taskText, priorityMode, budgetMax);
     }
 
-    // Fallback: filter registry by category
+    if (!listing) return null;
+
+    // 2. Infer endpoint
+    const endpoint = this.inferEndpoint(listing);
+
+    // 3. Build body
+    const body = this.buildBody(listing.categorySlug, input, previousOutput, taskText);
+
+    return { listing, endpoint, body };
+  }
+
+  /**
+   * Infer the HTTP endpoint for a listing.
+   * Known category → schemaSpec → default POST /
+   */
+  private inferEndpoint(listing: DiscoveredListing): { method: string; path: string } {
+    const known = KNOWN_CATEGORIES[listing.categorySlug];
+    if (known) return known.endpoint;
+
+    if (listing.schemaSpec?.endpoint) {
+      const ep = listing.schemaSpec.endpoint as { method?: string; path?: string };
+      return { method: ep.method || "POST", path: ep.path || "/" };
+    }
+
+    return { method: "POST", path: "/" };
+  }
+
+  /**
+   * Build the request body for a listing.
+   * Known category → specialized builder, unknown → generic pass-through.
+   */
+  private buildBody(
+    categorySlug: string,
+    input: Record<string, unknown>,
+    previousOutput: unknown,
+    taskText: string,
+  ): Record<string, unknown> {
+    const known = KNOWN_CATEGORIES[categorySlug];
+    if (known) return known.buildBody(input, previousOutput);
+
+    // Generic: pass input directly, add task text if no structured input
+    if (Object.keys(input).length > 0) return input;
+
+    const text = extractText(previousOutput) || taskText;
+    return { input: text };
+  }
+
+  /**
+   * Fallback: search the tool registry by keyword when semantic search returns nothing.
+   */
+  private registryFallback(
+    taskText: string,
+    priorityMode: PriorityMode,
+    budgetMax?: number,
+  ): DiscoveredListing | null {
     const allTools = this.registry.getAllTools();
+    const lowerTask = taskText.toLowerCase();
+
     const candidates = allTools
       .filter(t => t.kind === "listing" && t.listing)
       .map(t => t.listing!)
-      .filter(l => l.categorySlug === intent.categorySlug)
-      .filter(l => !budgetMax || l.currentPriceUsdc <= budgetMax);
+      .filter(l => !budgetMax || l.currentPriceUsdc <= budgetMax)
+      .filter(l => {
+        const searchText = `${l.name} ${l.description} ${l.tags.join(" ")} ${l.categorySlug} ${l.intents.join(" ")}`.toLowerCase();
+        return lowerTask.split(/\s+/).some(word => searchText.includes(word));
+      });
 
-    if (candidates.length > 0) {
-      return this.rankByPriority(candidates, priorityMode)[0];
-    }
-
-    // Last resort: use the default slug
-    const defaultTool = allTools.find(t => t.slug === intent.defaultSlug);
-    return defaultTool?.listing || null;
+    if (candidates.length === 0) return null;
+    return this.rankByPriority(candidates, priorityMode)[0];
   }
+
+  // ─── Priority Ranking ───
 
   private rankByPriority(listings: DiscoveredListing[], mode: PriorityMode): DiscoveredListing[] {
     return [...listings].sort((a, b) => {
@@ -353,7 +345,6 @@ export class OrchestratorService {
           return b.qualityScore - a.qualityScore;
         case "balanced":
         default: {
-          // Balanced: score = quality * 0.6 + (1 - normalized_price) * 0.4
           const maxPrice = Math.max(...listings.map(l => l.currentPriceUsdc), 0.000001);
           const scoreA = a.qualityScore * 0.6 + (1 - a.currentPriceUsdc / maxPrice) * 0.4;
           const scoreB = b.qualityScore * 0.6 + (1 - b.currentPriceUsdc / maxPrice) * 0.4;

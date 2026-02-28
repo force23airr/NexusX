@@ -277,6 +277,7 @@ model Listing {
 
   // Discovery metadata
   tags              String[]      @default([])
+  intents           String[]      @default([])
   sampleRequest     Json?         @map("sample_request")
   sampleResponse    Json?         @map("sample_response")
   schemaSpec        Json?         @map("schema_spec")

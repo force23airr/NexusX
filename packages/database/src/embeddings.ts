@@ -106,6 +106,7 @@ export function buildEmbeddingText(listing: {
   description: string;
   categorySlug?: string;
   tags?: string[];
+  intents?: string[];
   syntheticQueries?: string[];
 }): string {
   const parts: string[] = [
@@ -113,6 +114,7 @@ export function buildEmbeddingText(listing: {
     listing.categorySlug ?? "",
     listing.description,
     ...(listing.tags ?? []),
+    ...(listing.intents ?? []),
     ...(listing.syntheticQueries ?? []),
   ];
   return parts.filter(Boolean).join(" ").slice(0, 8000);
@@ -178,6 +180,7 @@ export async function embedListing(
       name: true,
       description: true,
       tags: true,
+      intents: true,
       embeddedAt: true,
       syntheticQueries: true,
       category: { select: { slug: true } },
@@ -192,6 +195,7 @@ export async function embedListing(
     description: listing.description,
     categorySlug: listing.category.slug,
     tags: listing.tags,
+    intents: listing.intents,
     syntheticQueries: listing.syntheticQueries,
   });
 

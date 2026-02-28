@@ -324,6 +324,7 @@ export const provider = {
     ceilingPriceUsdc?: number;
     capacityPerMinute: number;
     tags: string[];
+    intents?: string[];
     isUnique: boolean;
     sampleRequest?: unknown;
     sampleResponse?: unknown;

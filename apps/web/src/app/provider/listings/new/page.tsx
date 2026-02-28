@@ -77,6 +77,7 @@ interface WizardFormData {
   authType: string;
   sampleRequest: string;
   sampleResponse: string;
+  intents: string[];
   endpoints: DetectEndpoint[];
   inputSchemaFields: InputSchemaField[];
   // Step 2
@@ -105,6 +106,7 @@ const INITIAL_STATE: WizardFormData = {
   authType: "api_key",
   sampleRequest: "",
   sampleResponse: "",
+  intents: [],
   endpoints: [],
   inputSchemaFields: [],
   floorPrice: "",
@@ -456,6 +458,7 @@ export default function CreateListingPage() {
         ceilingPriceUsdc: form.ceilingPrice ? parseFloat(form.ceilingPrice) : undefined,
         capacityPerMinute: parseInt(form.capacityPerMinute, 10) || 60,
         tags: [],
+        intents: form.intents,
         isUnique: false,
         sampleRequest,
         sampleResponse,
@@ -613,6 +616,48 @@ export default function CreateListingPage() {
                         placeholder="What does your API do? This becomes the MCP tool description agents will read."
                         value={form.description}
                         onChange={(e) => setField("description", e.target.value)}
+                      />
+                    </div>
+
+                    {/* Intent Tags */}
+                    <div>
+                      <FieldLabel label="Intents" />
+                      <p className="text-2xs text-zinc-500 mb-2">
+                        What can agents do with your API? Press Enter or comma to add.
+                      </p>
+                      <div className="flex flex-wrap gap-1.5 mb-2">
+                        {form.intents.map((intent, idx) => (
+                          <span
+                            key={idx}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 bg-brand-600/10 text-brand-300 border border-brand-600/20 rounded text-xs"
+                          >
+                            {intent}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const next = form.intents.filter((_, i) => i !== idx);
+                                setField("intents", next);
+                              }}
+                              className="text-brand-400 hover:text-red-400 ml-0.5"
+                            >
+                              &times;
+                            </button>
+                          </span>
+                        ))}
+                      </div>
+                      <input
+                        className="input-base w-full"
+                        placeholder="e.g., translate text between languages, detect sentiment..."
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === ",") {
+                            e.preventDefault();
+                            const val = (e.target as HTMLInputElement).value.trim().replace(/,$/, "");
+                            if (val && !form.intents.includes(val)) {
+                              setField("intents", [...form.intents, val]);
+                              (e.target as HTMLInputElement).value = "";
+                            }
+                          }
+                        }}
                       />
                     </div>
 
