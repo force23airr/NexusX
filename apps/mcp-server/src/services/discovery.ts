@@ -315,7 +315,7 @@ export class DiscoveryService {
       listingType: r.listingType,
       categorySlug: r.categorySlug,
       tags: r.tags,
-      intents: [],
+      intents: r.intents ?? [],
       currentPriceUsdc: r.currentPriceUsdc,
       floorPriceUsdc: r.floorPriceUsdc,
       ceilingPriceUsdc: r.ceilingPriceUsdc,

@@ -11,6 +11,7 @@
 
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
+import { corsMiddleware } from "./middleware/cors";
 import { createAuthMiddleware } from "./middleware/auth";
 import { RateLimiter, createRateLimitMiddleware } from "./middleware/rateLimiter";
 import { createX402PaymentMiddleware } from "./middleware/x402Payment";
@@ -94,6 +95,9 @@ export function createGatewayApp(
   const app = express();
 
   // ─── Global middleware ───
+
+  // CORS — must be first so OPTIONS preflights bypass auth/payment.
+  app.use(corsMiddleware);
 
   // Trust proxy (for X-Forwarded-For behind load balancer).
   app.set("trust proxy", true);

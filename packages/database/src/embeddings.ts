@@ -41,6 +41,7 @@ export interface SemanticSearchResult {
   description: string;
   categorySlug: string;
   tags: string[];
+  intents: string[];
   currentPriceUsdc: number;
   floorPriceUsdc: number;
   ceilingPriceUsdc: number | null;
@@ -277,6 +278,7 @@ interface VectorSearchRow {
   description: string;
   categorySlug: string;
   tags: string[];
+  intents: string[];
   currentPriceUsdc: number;
   floorPriceUsdc: number;
   ceilingPriceUsdc: number | null;
@@ -322,6 +324,7 @@ async function vectorSearch(
         l.description,
         c.slug                                            AS "categorySlug",
         l.tags,
+        l.intents,
         l.current_price_usdc::float                       AS "currentPriceUsdc",
         l.floor_price_usdc::float                         AS "floorPriceUsdc",
         l.ceiling_price_usdc::float                       AS "ceilingPriceUsdc",
@@ -360,6 +363,7 @@ async function vectorSearch(
       l.description,
       c.slug                                            AS "categorySlug",
       l.tags,
+      l.intents,
       l.current_price_usdc::float                       AS "currentPriceUsdc",
       l.floor_price_usdc::float                         AS "floorPriceUsdc",
       l.ceiling_price_usdc::float                       AS "ceilingPriceUsdc",
@@ -474,6 +478,7 @@ function rerank(
       description: row.description,
       categorySlug: row.categorySlug,
       tags: row.tags,
+      intents: row.intents,
       currentPriceUsdc: row.currentPriceUsdc,
       floorPriceUsdc: row.floorPriceUsdc,
       ceilingPriceUsdc: row.ceilingPriceUsdc,
