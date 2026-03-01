@@ -90,7 +90,7 @@ export function createAuthMiddleware(
       return;
     }
 
-    const prefix = rawKey.slice(0, 8);
+    const prefix = rawKey.slice(4, 12);
 
     // ─── Lookup by prefix ───
     let record: ApiKeyRecord | null;

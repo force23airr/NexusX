@@ -110,8 +110,11 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     }
 
     // ─── 3. Determine sandbox mode ───
-    const isSandbox = req.headers["x-nexusx-sandbox"] === "true";
-    if (isSandbox) {
+    // Trust only validated sources: ctx.isSandbox (set by middleware after config check)
+    // or route.isSandbox (database-driven, from listing.sandboxUrl).
+    // NEVER trust the raw X-NexusX-Sandbox request header here.
+    const isSandbox = ctx.isSandbox === true || route.isSandbox;
+    if (ctx.isSandbox && !route.isSandbox) {
       route = { ...route, isSandbox: true };
     }
 

@@ -471,7 +471,7 @@ describe("Bundle Session Routes", () => {
 
     const { deps } = createMockDeps({
       lookupApiKey: async (prefix) => {
-        if (prefix !== rawKey.slice(0, 8)) return null;
+        if (prefix !== rawKey.slice(4, 12)) return null;
         return {
           id: "key_001",
           userId: "usr_001",
@@ -571,7 +571,7 @@ describe("Proxy Bundle Billing", () => {
     const { rawKey, keyHash } = generateApiKey();
     const { deps, transactions } = createMockDeps({
       lookupApiKey: async (prefix) => {
-        if (prefix !== rawKey.slice(0, 8)) return null;
+        if (prefix !== rawKey.slice(4, 12)) return null;
         return {
           id: "key_001",
           userId: "usr_001",

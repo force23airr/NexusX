@@ -43,10 +43,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  // Generate a random API key
-  const rawKey = `nxs_${randomBytes(32).toString("hex")}`;
+  // Generate a random API key in canonical format: nxs_PREFIX_BODY
+  const prefix = randomBytes(4).toString("hex");   // 8 hex chars
+  const body = randomBytes(14).toString("hex");     // 28 hex chars
+  const rawKey = `nxs_${prefix}_${body}`;
   const keyHash = createHash("sha256").update(rawKey).digest("hex");
-  const keyPrefix = rawKey.slice(0, 8);
+  const keyPrefix = prefix;
 
   const apiKey = await prisma.apiKey.create({
     data: {

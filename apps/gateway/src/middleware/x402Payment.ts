@@ -12,7 +12,7 @@
 //   4. If present → verify via facilitator (settlement deferred to proxy)
 //   5. On success → attach RequestContext with deferred payment info
 //
-// Sandbox mode (X-NexusX-Sandbox: true) bypasses payment.
+// Sandbox mode (X-NexusX-Sandbox: true) bypasses payment when sandboxEnabled is true.
 // ═══════════════════════════════════════════════════════════════
 
 import { randomUUID } from "crypto";
@@ -65,10 +65,14 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
       return;
     }
 
-    // ─── Sandbox bypass ───
-    const isSandbox = req.headers["x-nexusx-sandbox"] === "true";
+    // ─── Sandbox bypass (config-gated) ───
+    // Only honor the sandbox header when sandboxEnabled is true in gateway config.
+    // In production (sandboxEnabled: false), this header is ignored entirely.
+    const isSandbox =
+      gatewayConfig.sandboxEnabled &&
+      req.headers["x-nexusx-sandbox"] === "true";
+
     if (isSandbox) {
-      // Attach minimal context for sandbox mode.
       const ctx: RequestContext = {
         buyerId: "sandbox",
         buyerAddress: "0x0000000000000000000000000000000000000000",
@@ -77,6 +81,7 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
         requestId,
         receivedAt: Date.now(),
         authMode: "x402",
+        isSandbox: true,
       };
       (req as any).ctx = ctx;
       next();

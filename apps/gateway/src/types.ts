@@ -21,6 +21,8 @@ export interface RequestContext {
   receivedAt: number;
   /** Auth mode used for this request. */
   authMode?: "api_key" | "x402";
+  /** Whether this request is in validated sandbox mode (set by middleware, not from raw header). */
+  isSandbox?: boolean;
   /** x402 payment context, present when authMode is "x402" and settlement is complete. */
   x402?: X402PaymentContext;
   /** Deferred x402 payment proof — verified but not yet settled. Settled after upstream success. */
@@ -215,7 +217,7 @@ export const DEFAULT_GATEWAY_CONFIG: GatewayConfig = {
   maxBodySizeBytes: 10 * 1024 * 1024, // 10 MB
   platformFeeRate: 0.12,
   redisUrl: "redis://localhost:6379",
-  sandboxEnabled: true,
+  sandboxEnabled: false,
   routeCacheTtlMs: 60_000,         // 1 minute
   healthCheckIntervalMs: 300_000,  // 5 minutes
   x402Enabled: false,
