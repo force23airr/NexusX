@@ -99,14 +99,11 @@ export function createGatewayApp(
   // CORS — must be first so OPTIONS preflights bypass auth/payment.
   app.use(corsMiddleware);
 
-  // Trust proxy (for X-Forwarded-For behind load balancer).
-  app.set("trust proxy", true);
+  // Trust only the first proxy hop (the load balancer directly in front of the gateway).
+  app.set("trust proxy", 1);
 
-  // Request ID header.
-  app.use((_req: Request, res: Response, next: NextFunction) => {
-    res.setHeader("X-Powered-By", "NexusX-Gateway");
-    next();
-  });
+  // Disable server fingerprinting.
+  app.disable("x-powered-by");
 
   // Body size limit.
   app.use(express.raw({
@@ -196,6 +193,7 @@ export function createGatewayApp(
       routeResolver,
       emitSignal: deps.emitDemandSignal,
       gatewayConfig: cfg,
+      redis: deps.redis,
     });
 
     app.use(

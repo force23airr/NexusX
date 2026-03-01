@@ -23,6 +23,11 @@ export class CredentialService {
    * Returns null if no credential env var is set for this slug.
    */
   getCredential(slug: string): UpstreamCredential | null {
+    // Validate slug: only lowercase alphanumeric and hyphens, min 2 chars
+    if (!/^[a-z0-9][a-z0-9-]*[a-z0-9]$/.test(slug)) {
+      return null;
+    }
+
     if (this.cache.has(slug)) {
       return this.cache.get(slug)!;
     }
@@ -38,7 +43,7 @@ export class CredentialService {
     // Format: headerName:headerValue (split on first colon only)
     const colonIdx = envValue.indexOf(":");
     if (colonIdx === -1) {
-      console.warn(`[CredentialService] Invalid format for ${envKey} — expected "headerName:headerValue"`);
+      console.warn(`[CredentialService] Invalid credential format for slug "${slug}" — expected "headerName:headerValue"`);
       this.cache.set(slug, null);
       return null;
     }

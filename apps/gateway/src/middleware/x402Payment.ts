@@ -15,11 +15,12 @@
 // Sandbox mode (X-NexusX-Sandbox: true) bypasses payment when sandboxEnabled is true.
 // ═══════════════════════════════════════════════════════════════
 
-import { randomUUID } from "crypto";
+import { randomUUID, createHash } from "crypto";
 import type { Request, Response, NextFunction } from "express";
 import type { RouteResolver } from "../services/routeResolver";
 import { X402Adapter } from "../services/x402Adapter";
 import type { RequestContext, DemandSignalEvent, GatewayConfig } from "../types";
+import type Redis from "ioredis";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -29,6 +30,7 @@ export interface X402MiddlewareConfig {
   routeResolver: RouteResolver;
   emitSignal: (signal: DemandSignalEvent) => void;
   gatewayConfig: GatewayConfig;
+  redis?: Redis;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -43,7 +45,7 @@ export interface X402MiddlewareConfig {
  * current auction price as the payment requirement.
  */
 export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
-  const { routeResolver, emitSignal, gatewayConfig } = config;
+  const { routeResolver, emitSignal, gatewayConfig, redis } = config;
 
   const adapter = new X402Adapter({
     facilitatorUrl: gatewayConfig.x402FacilitatorUrl,
@@ -159,6 +161,26 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
         },
       });
       return;
+    }
+
+    // ─── Replay protection: reject duplicate X-Payment headers ───
+    if (redis) {
+      try {
+        const paymentHash = createHash("sha256").update(paymentHeader).digest("hex");
+        const dedupKey = `nexusx:x402:seen:${paymentHash}`;
+        const wasNew = await redis.set(dedupKey, requestId, "EX", 300, "NX");
+        if (!wasNew) {
+          res.status(409).json({
+            error: "PAYMENT_REPLAY",
+            message: "This payment proof has already been used.",
+            requestId,
+          });
+          return;
+        }
+      } catch (err) {
+        // Redis unavailable — allow request through (defense-in-depth)
+        console.warn("[x402] Redis dedup check failed, allowing request:", err);
+      }
     }
 
     // ─── Verify payment proof ───

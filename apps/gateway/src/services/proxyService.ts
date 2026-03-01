@@ -155,7 +155,8 @@ export class ProxyService {
         };
       }
 
-      const message = err instanceof Error ? err.message : "Unknown proxy error";
+      const internalMsg = err instanceof Error ? err.message : "Unknown proxy error";
+      console.error(`[Proxy] Upstream error for ${requestId}:`, internalMsg);
 
       return {
         statusCode: 502,
@@ -166,7 +167,7 @@ export class ProxyService {
         body: Buffer.from(
           JSON.stringify({
             error: "BAD_GATEWAY",
-            message: `Upstream provider error: ${message}`,
+            message: "Upstream provider is unreachable.",
             requestId,
           })
         ),

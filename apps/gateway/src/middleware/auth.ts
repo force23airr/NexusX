@@ -58,7 +58,6 @@ export function createAuthMiddleware(
 
     // ─── Extract API key ───
     const authHeader = req.headers["authorization"];
-    const queryKey = req.query["api_key"] as string | undefined;
     const headerKey = req.headers["x-nexusx-key"] as string | undefined;
 
     let rawKey: string | undefined;
@@ -67,14 +66,12 @@ export function createAuthMiddleware(
       rawKey = authHeader.slice(7).trim();
     } else if (headerKey) {
       rawKey = headerKey.trim();
-    } else if (queryKey) {
-      rawKey = queryKey.trim();
     }
 
     if (!rawKey) {
       res.status(401).json({
         error: "UNAUTHORIZED",
-        message: "Missing API key. Provide via Authorization: Bearer <key>, X-NexusX-Key header, or ?api_key= query param.",
+        message: "Missing API key. Provide via Authorization: Bearer <key> or X-NexusX-Key header.",
         requestId,
       });
       return;
@@ -148,10 +145,7 @@ export function createAuthMiddleware(
 
     // ─── Check IP allowlist ───
     if (record.allowedIps.length > 0) {
-      const clientIp =
-        (req.headers["x-forwarded-for"] as string)?.split(",")[0]?.trim() ||
-        req.socket.remoteAddress ||
-        "";
+      const clientIp = req.ip || req.socket.remoteAddress || "";
 
       if (!record.allowedIps.includes(clientIp)) {
         res.status(403).json({
