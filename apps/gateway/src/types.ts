@@ -70,6 +70,14 @@ export interface ListingRoute {
   capacityPerMinute: number;
   status: string;
   isSandbox: boolean;
+
+  // Discovery metadata (for Bazaar indexing via outputSchema)
+  name?: string;
+  description?: string;
+  tags?: string[];
+  sampleRequest?: Record<string, unknown> | null;
+  sampleResponse?: Record<string, unknown> | null;
+  sourceType?: string | null;
 }
 
 /** Upstream proxy response. */

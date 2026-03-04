@@ -57,6 +57,12 @@ const deps: GatewayDependencies = {
       capacityPerMinute: listing.capacityPerMinute,
       status: listing.status,
       isSandbox: listing.sandboxUrl !== null,
+      name: listing.name,
+      description: listing.description,
+      tags: listing.tags,
+      sampleRequest: listing.sampleRequest as Record<string, unknown> | null,
+      sampleResponse: listing.sampleResponse as Record<string, unknown> | null,
+      sourceType: listing.sourceType ?? null,
     };
   },
 
@@ -77,6 +83,12 @@ const deps: GatewayDependencies = {
       capacityPerMinute: listing.capacityPerMinute,
       status: listing.status,
       isSandbox: listing.sandboxUrl !== null,
+      name: listing.name,
+      description: listing.description,
+      tags: listing.tags,
+      sampleRequest: listing.sampleRequest as Record<string, unknown> | null,
+      sampleResponse: listing.sampleResponse as Record<string, unknown> | null,
+      sourceType: listing.sourceType ?? null,
     };
   },
 

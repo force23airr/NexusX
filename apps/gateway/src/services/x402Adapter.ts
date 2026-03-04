@@ -44,6 +44,8 @@ export interface PaymentRequirement {
     name: string;
     version: string;
   };
+  /** v1 discovery metadata for Bazaar indexing. */
+  outputSchema?: Record<string, unknown>;
 }
 
 /** Result of verifying an x402 payment proof. */
@@ -101,12 +103,17 @@ export class X402Adapter {
     listingSlug: string,
     resourceUrl: string
   ): PaymentRequirement {
-    return {
+    // Use listing description if available, fall back to generic.
+    const description = route.description
+      ? `${route.name ?? listingSlug}: ${route.description}`
+      : `NexusX API call: ${listingSlug}`;
+
+    const requirement: PaymentRequirement = {
       scheme: "exact",
       network: this.config.network,
       maxAmountRequired: this.toUsdcAtomicString(route.currentPriceUsdc),
       resource: resourceUrl,
-      description: `NexusX API call: ${listingSlug}`,
+      description,
       mimeType: "application/json",
       payTo: this.config.platformAddress,
       maxTimeoutSeconds: 30,
@@ -118,6 +125,15 @@ export class X402Adapter {
         version: "2",
       },
     };
+
+    // Add Bazaar discovery metadata for native listings only.
+    // Bazaar-imported listings (sourceType === "bazaar") are already indexed
+    // in the Bazaar — adding outputSchema would cause double-listing.
+    if (route.sourceType !== "bazaar") {
+      requirement.outputSchema = this.buildOutputSchema(route);
+    }
+
+    return requirement;
   }
 
   /**
@@ -283,6 +299,32 @@ export class X402Adapter {
         paymentMethod: "x402",
       },
     };
+  }
+
+  /**
+   * Build the outputSchema for v1 Bazaar discovery.
+   * Maps listing metadata to the structure expected by
+   * extractDiscoveryInfoV1() in @x402/extensions.
+   */
+  private buildOutputSchema(route: ListingRoute): Record<string, unknown> {
+    const input: Record<string, unknown> = {
+      type: "http",
+      method: "POST",
+      discoverable: true,
+    };
+
+    if (route.sampleRequest && typeof route.sampleRequest === "object") {
+      input.bodyType = "json";
+      input.body = route.sampleRequest;
+    }
+
+    const schema: Record<string, unknown> = { input };
+
+    if (route.sampleResponse && typeof route.sampleResponse === "object") {
+      schema.output = route.sampleResponse;
+    }
+
+    return schema;
   }
 
   /**

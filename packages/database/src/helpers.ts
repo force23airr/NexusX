@@ -92,6 +92,12 @@ export async function lookupListingBySlug(
     capacityPerMinute: listing.capacityPerMinute,
     status: listing.status,
     isSandbox: !!listing.sandboxUrl,
+    name: listing.name,
+    description: listing.description,
+    tags: listing.tags,
+    sampleRequest: listing.sampleRequest as Record<string, unknown> | null,
+    sampleResponse: listing.sampleResponse as Record<string, unknown> | null,
+    sourceType: listing.sourceType ?? null,
   };
 }
 
@@ -124,6 +130,12 @@ export async function lookupListingById(
     capacityPerMinute: listing.capacityPerMinute,
     status: listing.status,
     isSandbox: !!listing.sandboxUrl,
+    name: listing.name,
+    description: listing.description,
+    tags: listing.tags,
+    sampleRequest: listing.sampleRequest as Record<string, unknown> | null,
+    sampleResponse: listing.sampleResponse as Record<string, unknown> | null,
+    sourceType: listing.sourceType ?? null,
   };
 }
 
