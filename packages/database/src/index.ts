@@ -25,6 +25,22 @@ export {
   type EmbedResult,
 } from "./embeddings";
 
+// ─── Bazaar Indexer ───
+export {
+  indexBazaar,
+  fetchBazaarResources,
+  filterBazaarResources,
+  generateBazaarSlug,
+  inferCategorySlug,
+  parseUsdcPrice,
+  BAZAAR_PROVIDER_ID,
+  GENERAL_CATEGORY_ID,
+  type BazaarResource,
+  type BazaarAccept,
+  type IndexBazaarOptions,
+  type IndexBazaarResult,
+} from "./bazaar-indexer";
+
 export {
   generateSyntheticQueries,
   generateAllSyntheticQueries,

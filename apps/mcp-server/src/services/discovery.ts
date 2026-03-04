@@ -77,6 +77,9 @@ export class DiscoveryService {
         schemaSpec: l.schemaSpec as Record<string, unknown> | null,
         docsUrl: l.docsUrl,
         providerName: l.provider.displayName,
+        sourceType: l.sourceType ?? null,
+        sourceResourceUrl: l.sourceResourceUrl ?? null,
+        baseUrl: l.baseUrl,
       };
     });
   }
@@ -122,6 +125,9 @@ export class DiscoveryService {
       schemaSpec: l.schemaSpec as Record<string, unknown> | null,
       docsUrl: l.docsUrl,
       providerName: l.provider.displayName,
+      sourceType: l.sourceType ?? null,
+      sourceResourceUrl: l.sourceResourceUrl ?? null,
+      baseUrl: l.baseUrl,
     };
   }
 
@@ -328,6 +334,9 @@ export class DiscoveryService {
       schemaSpec: null,
       docsUrl: null,
       providerName: r.providerName,
+      sourceType: null,
+      sourceResourceUrl: null,
+      baseUrl: "",
     };
   }
 }

@@ -46,6 +46,10 @@ export interface DiscoveredListing {
   schemaSpec: Record<string, unknown> | null;
   docsUrl: string | null;
   providerName: string;
+  // Source tracking (for Bazaar-imported listings)
+  sourceType: string | null;
+  sourceResourceUrl: string | null;
+  baseUrl: string;
 }
 
 /** One step inside a composite bundle. */

@@ -289,6 +289,10 @@ model Listing {
   syntheticQueries         String[]      @default([]) @map("synthetic_queries")
   syntheticQueriesVersion  Int           @default(0) @map("synthetic_queries_version")
 
+  // Source tracking (for Bazaar-imported listings)
+  sourceType          String?   @map("source_type")         // "bazaar" | null (native)
+  sourceResourceUrl   String?   @map("source_resource_url") // original Bazaar resource URL
+
   // Aggregate counters (denormalized for query performance)
   totalCalls        BigInt        @default(0) @map("total_calls")
   totalRevenue      Decimal       @default(0) @map("total_revenue") @db.Decimal(18, 6)
@@ -326,6 +330,7 @@ model Listing {
   @@index([avgRating])
   @@index([tags], type: Gin)
   @@index([createdAt])
+  @@index([sourceType, sourceResourceUrl])
   @@map("listings")
 }
 

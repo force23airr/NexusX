@@ -17,7 +17,8 @@
 import type { ToolExecutor, ToolCallResult } from "../tools/executor";
 import type { DiscoveryService } from "./discovery";
 import type { ToolRegistry } from "../tools/registry";
-import type { DiscoveredListing } from "../types";
+import type { CdpWalletService } from "./cdp-wallet";
+import type { DiscoveredListing, X402PaymentRequirements } from "../types";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -100,11 +101,18 @@ const CHAIN_SPLIT = /\b(?:then|and then|after that|followed by|next|afterwards)\
 // ─────────────────────────────────────────────────────────────
 
 export class OrchestratorService {
+  private cdpWallet?: CdpWalletService;
+
   constructor(
     private executor: ToolExecutor,
     private discovery: DiscoveryService,
     private registry: ToolRegistry,
   ) {}
+
+  /** Inject CDP wallet for direct external Bazaar calls. */
+  setCdpWallet(wallet: CdpWalletService): void {
+    this.cdpWallet = wallet;
+  }
 
   /**
    * Execute an orchestrated task.
@@ -151,21 +159,27 @@ export class OrchestratorService {
       const { listing, endpoint, body } = resolved;
       plan.push(`Step ${i + 1}: ${listing.categorySlug} → ${listing.slug} ($${listing.currentPriceUsdc.toFixed(6)})`);
 
-      // Find the tool name for this listing
-      const toolName = this.findToolName(listing.slug);
-      if (!toolName) {
-        return {
-          content: [{ type: "text", text: `API "${listing.slug}" is not registered as a tool. Try refreshing.` }],
-          isError: true,
-        };
-      }
+      let result: ToolCallResult;
 
-      // Execute via the existing executor (handles x402 payment automatically)
-      const result = await this.executor.execute(toolName, {
-        path: endpoint.path,
-        method: endpoint.method,
-        body: Object.keys(body).length > 0 ? body : undefined,
-      });
+      if (listing.sourceType === "bazaar") {
+        // Bazaar listing — call external URL directly with x402 payment
+        result = await this.executeExternal(listing, endpoint, body);
+      } else {
+        // Native listing — go through gateway via executor
+        const toolName = this.findToolName(listing.slug);
+        if (!toolName) {
+          return {
+            content: [{ type: "text", text: `API "${listing.slug}" is not registered as a tool. Try refreshing.` }],
+            isError: true,
+          };
+        }
+
+        result = await this.executor.execute(toolName, {
+          path: endpoint.path,
+          method: endpoint.method,
+          body: Object.keys(body).length > 0 ? body : undefined,
+        });
+      }
 
       // Parse cost from metadata
       const costMatch = result.content.find(c => c.text.includes("Price:"))?.text.match(/Price: \$([0-9.]+)/);
@@ -371,6 +385,113 @@ export class OrchestratorService {
 
     if (alternatives.length === 0) return null;
     return this.rankByPriority(alternatives, priorityMode)[0];
+  }
+
+  // ─── External Bazaar Execution ───
+
+  /**
+   * Call an external Bazaar service directly with x402 payment.
+   * Bypasses the NexusX gateway — the upstream handles its own x402 verification.
+   */
+  private async executeExternal(
+    listing: DiscoveredListing,
+    endpoint: { method: string; path: string },
+    body: Record<string, unknown>,
+  ): Promise<ToolCallResult> {
+    const baseUrl = listing.baseUrl.replace(/\/+$/, "");
+    const path = endpoint.path.startsWith("/") ? endpoint.path : `/${endpoint.path}`;
+    const url = `${baseUrl}${path}`;
+    const startMs = Date.now();
+
+    try {
+      // First attempt — no payment
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      const fetchOptions: RequestInit = {
+        method: endpoint.method,
+        headers,
+        signal: AbortSignal.timeout(30_000),
+      };
+
+      if (endpoint.method !== "GET" && Object.keys(body).length > 0) {
+        fetchOptions.body = JSON.stringify(body);
+      }
+
+      let response = await fetch(url, fetchOptions);
+
+      // Handle x402 payment flow
+      if (response.status === 402 && this.cdpWallet?.isAvailable) {
+        const requirementsBody = await response.json().catch(() => null) as Record<string, unknown> | null;
+        const rawReqs = requirementsBody?.accepts ?? requirementsBody?.paymentRequirements;
+        const requirements = Array.isArray(rawReqs) ? rawReqs as X402PaymentRequirements[] : undefined;
+
+        if (requirements && Array.isArray(requirements) && requirements.length > 0) {
+          try {
+            const xPayment = await this.cdpWallet.buildPaymentHeader(requirements[0]);
+            const retryHeaders: Record<string, string> = {
+              "Content-Type": "application/json",
+              "X-Payment": xPayment,
+            };
+
+            const retryOptions: RequestInit = {
+              method: endpoint.method,
+              headers: retryHeaders,
+              signal: AbortSignal.timeout(30_000),
+            };
+
+            if (endpoint.method !== "GET" && Object.keys(body).length > 0) {
+              retryOptions.body = JSON.stringify(body);
+            }
+
+            response = await fetch(url, retryOptions);
+          } catch (payErr) {
+            return {
+              content: [{
+                type: "text",
+                text: `x402 payment failed for Bazaar service ${listing.slug}: ${payErr instanceof Error ? payErr.message : "unknown error"}`,
+              }],
+              isError: true,
+            };
+          }
+        }
+      }
+
+      const latencyMs = Date.now() - startMs;
+      const responseBody = await response.text();
+
+      if (!response.ok) {
+        return {
+          content: [{
+            type: "text",
+            text: `External Bazaar API call failed (HTTP ${response.status}):\n${responseBody}`,
+          }],
+          isError: true,
+        };
+      }
+
+      const metadata = [
+        "--- NexusX Metadata (Bazaar External) ---",
+        `Service: ${listing.slug}`,
+        `URL: ${url}`,
+        `Price: $${listing.currentPriceUsdc.toFixed(6)} USDC`,
+        `Latency: ${latencyMs}ms`,
+        `Source: x402 Bazaar`,
+      ].join("\n");
+
+      return {
+        content: [
+          { type: "text", text: responseBody },
+          { type: "text", text: metadata },
+        ],
+      };
+    } catch (err) {
+      return {
+        content: [{
+          type: "text",
+          text: `External Bazaar call failed for ${listing.slug}: ${err instanceof Error ? err.message : "unknown error"}`,
+        }],
+        isError: true,
+      };
+    }
   }
 
   // ─── Tool Name Resolution ───

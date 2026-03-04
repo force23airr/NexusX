@@ -36,6 +36,7 @@ const ID = {
   providerVisionAI: "00000000-0000-4000-a000-000000000014",
   providerEmbedCo: "00000000-0000-4000-a000-000000000015",
   providerDataVault: "00000000-0000-4000-a000-000000000016",
+  providerBazaar: "00000000-0000-4000-a000-000000000099",
   buyerAlice: "00000000-0000-4000-a000-000000000020",
   buyerBob: "00000000-0000-4000-a000-000000000021",
   buyerCarla: "00000000-0000-4000-a000-000000000022",
@@ -51,6 +52,7 @@ const ID = {
   catSentiment: "00000000-0000-4000-b000-000000000008",
   catEmbeddings: "00000000-0000-4000-b000-000000000009",
   catObjDetection: "00000000-0000-4000-b000-000000000010",
+  catGeneral: "00000000-0000-4000-b000-000000000099",
 
   // Listings
   lstGPT4: "00000000-0000-4000-c000-000000000001",
@@ -69,6 +71,7 @@ const ID = {
   ppVisionAI: "00000000-0000-4000-d000-000000000014",
   ppEmbedCo: "00000000-0000-4000-d000-000000000015",
   ppDataVault: "00000000-0000-4000-d000-000000000016",
+  ppBazaar: "00000000-0000-4000-d000-000000000099",
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -103,6 +106,7 @@ async function main() {
     { id: ID.catSentiment, slug: "sentiment-analysis", name: "Sentiment Analysis", parentId: ID.catNLP, depth: 2, sortOrder: 3 },
     { id: ID.catEmbeddings, slug: "embeddings", name: "Embeddings & Vectors", parentId: ID.catNLP, depth: 2, sortOrder: 4 },
     { id: ID.catObjDetection, slug: "object-detection", name: "Object Detection", parentId: ID.catVision, depth: 2, sortOrder: 1 },
+    { id: ID.catGeneral, slug: "general", name: "General Services", depth: 0, sortOrder: 3 },
   ];
 
   for (const cat of categories) {
@@ -124,6 +128,7 @@ async function main() {
     { id: ID.providerVisionAI, email: "api@visionai.dev", displayName: "VisionAI", roles: ["PROVIDER" as const] },
     { id: ID.providerEmbedCo, email: "api@embedco.io", displayName: "EmbedCo", roles: ["PROVIDER" as const] },
     { id: ID.providerDataVault, email: "data@datavault.io", displayName: "DataVault", roles: ["PROVIDER" as const] },
+    { id: ID.providerBazaar, email: "bazaar@x402.org", displayName: "x402 Bazaar", roles: ["PROVIDER" as const] },
     { id: ID.buyerAlice, email: "alice@startup.io", displayName: "Alice Chen", roles: ["BUYER" as const], kycStatus: "VERIFIED" as const },
     { id: ID.buyerBob, email: "bob@enterprise.co", displayName: "Bob Martinez", roles: ["BUYER" as const], kycStatus: "VERIFIED" as const },
     { id: ID.buyerCarla, email: "carla@research.edu", displayName: "Carla Rossi", roles: ["BUYER" as const] },
@@ -151,6 +156,7 @@ async function main() {
     { userId: ID.providerVisionAI, address: wallet("P014"), balanceUsdc: 0 },
     { userId: ID.providerEmbedCo, address: wallet("P015"), balanceUsdc: 0 },
     { userId: ID.providerDataVault, address: wallet("P016"), balanceUsdc: 0 },
+    { userId: ID.providerBazaar, address: wallet("P099"), balanceUsdc: 0 },
     { userId: ID.buyerAlice, address: wallet("B020"), balanceUsdc: 500, escrowUsdc: 100 },
     { userId: ID.buyerBob, address: wallet("B021"), balanceUsdc: 2000, escrowUsdc: 500 },
     { userId: ID.buyerCarla, address: wallet("B022"), balanceUsdc: 50, escrowUsdc: 10 },
@@ -174,6 +180,7 @@ async function main() {
     { id: ID.ppVisionAI, userId: ID.providerVisionAI, companyName: "VisionAI Labs", website: "https://visionai.dev", payoutAddress: wallet("P014") },
     { id: ID.ppEmbedCo, userId: ID.providerEmbedCo, companyName: "EmbedCo", website: "https://embedco.io", payoutAddress: wallet("P015") },
     { id: ID.ppDataVault, userId: ID.providerDataVault, companyName: "DataVault Inc", website: "https://datavault.io", payoutAddress: wallet("P016") },
+    { id: ID.ppBazaar, userId: ID.providerBazaar, companyName: "x402 Bazaar (Coinbase)", website: "https://x402.org", payoutAddress: "0x0000000000000000000000000000000000000000" },
   ];
 
   for (const pp of providers) {
