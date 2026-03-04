@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
+import { isPrivateHost } from "@/lib/ssrf";
 
 
 export async function GET(req: NextRequest) {
@@ -9,7 +10,7 @@ export async function GET(req: NextRequest) {
   const page = parseInt(searchParams.get("page") || "1", 10);
   const pageSize = 20;
 
-  const result = await getCurrentProvider();
+  const result = await getCurrentProvider(req);
   if (!result) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
@@ -77,10 +78,10 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const body = await req.json();
 
-  // Validate required fields
-  const required = ["name", "description", "listingType", "categoryId", "baseUrl", "floorPriceUsdc"];
+  // Validate required fields (categorySlug accepted instead of categoryId)
+  const required = ["name", "baseUrl", "floorPriceUsdc"];
   for (const field of required) {
-    if (!body[field]) {
+    if (!body[field] && body[field] !== 0) {
       return NextResponse.json(
         { error: `Missing required field: ${field}` },
         { status: 400 }
@@ -88,9 +89,37 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const result = await getCurrentProvider();
+  const result = await getCurrentProvider(req);
   if (!result) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
+
+  // Validate baseUrl — block private/internal addresses (SSRF prevention)
+  try {
+    const parsed = new URL(body.baseUrl);
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      return NextResponse.json({ error: "baseUrl must use HTTP or HTTPS" }, { status: 400 });
+    }
+    if (isPrivateHost(parsed.hostname)) {
+      return NextResponse.json({ error: "baseUrl cannot point to private/internal addresses" }, { status: 400 });
+    }
+  } catch {
+    return NextResponse.json({ error: "baseUrl is not a valid URL" }, { status: 400 });
+  }
+
+  // Resolve category — accept categoryId or categorySlug
+  let categoryId: string = body.categoryId;
+  if (!categoryId && body.categorySlug) {
+    const cat = await prisma.category.findFirst({ where: { slug: body.categorySlug } });
+    if (cat) categoryId = cat.id;
+  }
+  if (!categoryId) {
+    // Fall back to first available category
+    const fallback = await prisma.category.findFirst({ orderBy: { name: "asc" } });
+    if (!fallback) {
+      return NextResponse.json({ error: "No categories available" }, { status: 400 });
+    }
+    categoryId = fallback.id;
   }
 
   // Generate slug — deduplicate if needed
@@ -119,11 +148,11 @@ export async function POST(req: NextRequest) {
   const listing = await prisma.listing.create({
     data: {
       providerId: result.user.id,
-      categoryId: body.categoryId,
+      categoryId,
       slug,
       name: body.name,
-      description: body.description,
-      listingType: body.listingType,
+      description: body.description || "",
+      listingType: body.listingType || "REST_API",
       status: "DRAFT",
       baseUrl: body.baseUrl,
       healthCheckUrl: body.healthCheckUrl || null,
@@ -143,5 +172,15 @@ export async function POST(req: NextRequest) {
     },
   });
 
-  return NextResponse.json({ id: listing.id, slug: listing.slug }, { status: 201 });
+  // Return full DeployResult shape expected by the CLI
+  const mcpToolName = `nexusx_${slug.replace(/-/g, "_")}`;
+  return NextResponse.json({
+    id: listing.id,
+    slug: listing.slug,
+    name: listing.name,
+    listingUrl: `https://nexusx.dev/marketplace/${listing.slug}`,
+    mcpToolName,
+    floorPriceUsdc: Number(listing.floorPriceUsdc),
+    ceilingPriceUsdc: listing.ceilingPriceUsdc ? Number(listing.ceilingPriceUsdc) : undefined,
+  }, { status: 201 });
 }

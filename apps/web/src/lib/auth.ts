@@ -1,5 +1,7 @@
 import { auth, currentUser } from "@clerk/nextjs/server";
 import { prisma } from "@/lib/prisma";
+import { getProviderFromApiKey } from "@/lib/apiKeyAuth";
+import type { NextRequest } from "next/server";
 import type { User, ProviderProfile } from "@prisma/client";
 
 /**
@@ -50,12 +52,21 @@ export async function getCurrentUser(): Promise<User | null> {
 /**
  * Get the current authenticated provider profile.
  * Auto-creates ProviderProfile and adds PROVIDER role if missing.
+ * Accepts optional NextRequest to support API key auth (for CLI usage).
  * Returns null if not authenticated.
  */
-export async function getCurrentProvider(): Promise<{
+export async function getCurrentProvider(
+  req?: NextRequest
+): Promise<{
   user: User;
   profile: ProviderProfile;
 } | null> {
+  // Try API key auth first (for CLI / programmatic access)
+  if (req) {
+    const apiKeyResult = await getProviderFromApiKey(req);
+    if (apiKeyResult) return apiKeyResult;
+  }
+
   const user = await getCurrentUser();
   if (!user) return null;
 

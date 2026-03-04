@@ -332,6 +332,9 @@ async function main() {
     { userId: ID.buyerAlice, name: "Alice Development", rawKey: "nxs_alicedev_abcdefghijklmnopqrstuvwxyz02", rateLimitRpm: 30 },
     { userId: ID.buyerBob, name: "Bob Production", rawKey: "nxs_bobprod0_abcdefghijklmnopqrstuvwxyz03", rateLimitRpm: 200 },
     { userId: ID.buyerCarla, name: "Carla Research", rawKey: "nxs_carlares_abcdefghijklmnopqrstuvwxyz04", rateLimitRpm: 60 },
+    // Provider API keys (for CLI deploy)
+    { userId: ID.providerOpenAI, name: "OpenAI Provider CLI", rawKey: "nxs_oaiprov0_abcdefghijklmnopqrstuvwxyz05", rateLimitRpm: 60 },
+    { userId: ID.providerAnthropic, name: "Anthropic Provider CLI", rawKey: "nxs_antprov0_abcdefghijklmnopqrstuvwxyz06", rateLimitRpm: 60 },
   ];
 
   for (const key of apiKeys) {
@@ -488,6 +491,12 @@ async function main() {
 
   console.log("\n✅ Seed complete!");
   console.log("   Records created:", JSON.stringify(counts, null, 2));
+
+  // Print dev API keys for CLI usage
+  console.log("\n  🔑 Dev API keys for CLI:");
+  console.log("     Provider (OpenAI):     NEXUSX_API_TOKEN=nxs_oaiprov0_abcdefghijklmnopqrstuvwxyz05");
+  console.log("     Provider (Anthropic):  NEXUSX_API_TOKEN=nxs_antprov0_abcdefghijklmnopqrstuvwxyz06");
+  console.log("     Buyer (Alice):         NEXUSX_API_TOKEN=nxs_aliceprd_abcdefghijklmnopqrstuvwxyz01");
 }
 
 main()

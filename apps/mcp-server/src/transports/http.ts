@@ -8,10 +8,10 @@
 // ═══════════════════════════════════════════════════════════════
 
 import express from "express";
-import type { Request, Response } from "express";
+import type { Request, Response, NextFunction } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { randomUUID } from "crypto";
+import { randomUUID, timingSafeEqual } from "crypto";
 
 interface SessionEntry {
   transport: StreamableHTTPServerTransport;
@@ -19,6 +19,7 @@ interface SessionEntry {
 }
 
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
+const startedAt = Date.now();
 
 /**
  * Start the MCP server on an Express HTTP server.
@@ -29,10 +30,36 @@ export async function startHttpTransport(
   port: number,
 ): Promise<void> {
   const app = express();
+  app.disable("x-powered-by");
   const sessions = new Map<string, SessionEntry>();
 
   // Parse JSON bodies for MCP protocol messages
   app.use(express.json());
+
+  // ─── CORS ───
+  app.use((_req: Request, res: Response, next: NextFunction) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Mcp-Session-Id");
+    res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
+    if (_req.method === "OPTIONS") { res.status(204).end(); return; }
+    next();
+  });
+
+  // ─── Optional Bearer Token Auth ───
+  const authToken = process.env.MCP_AUTH_TOKEN;
+  if (authToken) {
+    app.use("/mcp", (req: Request, res: Response, next: NextFunction) => {
+      if (req.method === "OPTIONS") return next();
+      const bearer = req.headers.authorization?.replace("Bearer ", "");
+      if (!bearer || !timingSafeEqual(Buffer.from(bearer), Buffer.from(authToken))) {
+        res.status(401).json({ error: "Invalid or missing auth token" });
+        return;
+      }
+      next();
+    });
+    console.error("[MCP HTTP] Auth token required for /mcp endpoint");
+  }
 
   // ─── MCP Endpoint ───
   app.all("/mcp", async (req: Request, res: Response) => {
@@ -90,6 +117,9 @@ export async function startHttpTransport(
       status: "ok",
       transport: "http",
       activeSessions: sessions.size,
+      authEnabled: !!authToken,
+      uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
+      endpoint: `http://localhost:${port}/mcp`,
       timestamp: new Date().toISOString(),
     });
   });
@@ -107,8 +137,9 @@ export async function startHttpTransport(
   }, 60_000);
 
   // ─── Start ───
-  app.listen(port, () => {
-    console.error(`[MCP] HTTP transport listening on port ${port}`);
+  app.listen(port, "0.0.0.0", () => {
+    console.error(`[MCP] HTTP transport listening on 0.0.0.0:${port}`);
     console.error(`[MCP] Endpoint: http://localhost:${port}/mcp`);
+    console.error(`[MCP] Health:   http://localhost:${port}/health`);
   });
 }

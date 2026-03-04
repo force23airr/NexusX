@@ -15,26 +15,48 @@ export const mcpCommand = new Command("mcp")
   .option("--port <port>", "HTTP port (when --transport http)", "3400")
   .option("--budget <usdc>", "Per-session USDC budget for agent calls", "5.00")
   .option("--token <token>", "NexusX API token (or set NEXUSX_API_TOKEN)")
+  .option("--auth-token <token>", "Bearer token to protect the MCP endpoint (or set MCP_AUTH_TOKEN)")
   .action((opts) => {
     // Accept token via --token or NEXUSX_API_TOKEN; MCP server reads NEXUSX_API_KEY
     const apiKey = opts.token ?? process.env.NEXUSX_API_TOKEN ?? process.env.NEXUSX_API_KEY;
+    const mcpAuthToken = opts.authToken ?? process.env.MCP_AUTH_TOKEN;
 
     const env: Record<string, string | undefined> = {
       ...process.env,
       NEXUSX_TRANSPORT: opts.transport,
-      PORT: opts.port,
+      MCP_PORT: opts.port,
       NEXUSX_SESSION_BUDGET_USDC: opts.budget,
       ...(apiKey ? { NEXUSX_API_KEY: apiKey } : {}),
+      ...(mcpAuthToken ? { MCP_AUTH_TOKEN: mcpAuthToken } : {}),
     };
 
     // In the published package, resolve the bundled mcp-server.
     // In the monorepo, defer to the apps/mcp-server package.
     const serverPath =
       process.env.NEXUSX_MCP_SERVER_PATH ??
-      new URL("../../../mcp-server/dist/server.js", import.meta.url).pathname;
+      new URL("../../../mcp-server/dist/index.js", import.meta.url).pathname;
 
     if (opts.transport === "http") {
-      console.log(chalk.dim(`  NexusX MCP server starting on port ${opts.port}...`));
+      console.log();
+      console.log(chalk.bold("  NexusX MCP Server"));
+      console.log(chalk.dim("  ─────────────────────────────────────────"));
+      console.log(`  ${chalk.bold("Transport")}    HTTP`);
+      console.log(`  ${chalk.bold("Port")}         ${opts.port}`);
+      console.log(`  ${chalk.bold("Endpoint")}     http://localhost:${opts.port}/mcp`);
+      console.log(`  ${chalk.bold("Auth")}         ${mcpAuthToken ? "Bearer token required" : chalk.yellow("None (open)")}`);
+      console.log();
+      console.log(chalk.bold("  Connect from Claude Desktop / Cursor:"));
+      console.log(chalk.dim(`
+  {
+    "mcpServers": {
+      "nexusx": {
+        "url": "http://localhost:${opts.port}/mcp"${mcpAuthToken ? `,
+        "headers": { "Authorization": "Bearer ${mcpAuthToken}" }` : ""}
+      }
+    }
+  }
+      `.trim()));
+      console.log();
     }
 
     const child = spawn(process.execPath, [serverPath], {

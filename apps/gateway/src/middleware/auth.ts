@@ -7,7 +7,7 @@
 // On success, attaches a RequestContext for downstream handlers.
 // ═══════════════════════════════════════════════════════════════
 
-import { createHash, randomUUID } from "crypto";
+import { createHash, randomUUID, timingSafeEqual, randomBytes } from "crypto";
 import type { Request, Response, NextFunction } from "express";
 import type { RequestContext } from "../types";
 
@@ -112,9 +112,9 @@ export function createAuthMiddleware(
       return;
     }
 
-    // ─── Verify full hash ───
+    // ─── Verify full hash (timing-safe) ───
     const hash = createHash("sha256").update(rawKey).digest("hex");
-    if (hash !== record.keyHash) {
+    if (!timingSafeEqual(Buffer.from(hash), Buffer.from(record.keyHash))) {
       res.status(401).json({
         error: "INVALID_KEY",
         message: "API key not recognized.",
@@ -195,9 +195,7 @@ export function generateApiKey(): { rawKey: string; keyHash: string; keyPrefix: 
 function randomChars(length: number): string {
   const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
   let result = "";
-  const bytes = new Uint8Array(length);
-  globalThis.crypto?.getRandomValues?.(bytes) ??
-    bytes.forEach((_, i) => (bytes[i] = Math.floor(Math.random() * 256)));
+  const bytes = randomBytes(length);
   for (let i = 0; i < length; i++) {
     result += chars[bytes[i] % chars.length];
   }
