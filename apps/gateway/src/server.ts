@@ -25,6 +25,7 @@ import { createProxyRoute, extractListingSlug } from "./routes/proxy";
 import { createBundleSessionRoutes } from "./routes/bundle-sessions";
 import { createHealthRoutes } from "./routes/health";
 import { createPriceHistoryRoutes } from "./routes/price-history";
+import { QualityMonitorWorker, loadQualityMonitorConfig } from "./workers/qualityMonitor";
 import type {
   GatewayConfig,
   DemandSignalEvent,
@@ -237,7 +238,7 @@ export function createGatewayApp(
     console.log("[Gateway] Cleaned up resources.");
   }
 
-  return { app, cleanup, config: cfg, rateLimiter, routeResolver, billingService };
+  return { app, cleanup, config: cfg, rateLimiter, routeResolver, billingService, reliabilityAggregator };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -253,7 +254,8 @@ export function startGateway(
   config?: Partial<GatewayConfig>,
   priceWs?: PriceWebSocketServer,
 ): void {
-  const { app, cleanup, config: cfg } = createGatewayApp(deps, config);
+  const { app, cleanup, config: cfg, reliabilityAggregator } = createGatewayApp(deps, config);
+  let qualityMonitor: QualityMonitorWorker | undefined;
 
   const server = app.listen(cfg.port, async () => {
     console.log(`[Gateway] NexusX API Gateway listening on port ${cfg.port}`);
@@ -276,11 +278,22 @@ export function startGateway(
         console.error("[Gateway] Failed to attach WebSocket price server:", err);
       }
     }
+
+    // Start quality monitor worker
+    if (deps.prisma && reliabilityAggregator) {
+      const monitorConfig = loadQualityMonitorConfig();
+      qualityMonitor = new QualityMonitorWorker(deps.prisma, reliabilityAggregator, monitorConfig);
+      qualityMonitor.start();
+    }
   });
 
   // Graceful shutdown.
   const shutdown = async (signal: string) => {
     console.log(`[Gateway] Received ${signal}. Shutting down gracefully...`);
+
+    if (qualityMonitor) {
+      qualityMonitor.stop();
+    }
 
     if (priceWs) {
       await priceWs.destroy();
