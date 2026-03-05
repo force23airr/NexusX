@@ -1,9 +1,10 @@
 // ═══════════════════════════════════════════════════════════════
-// NexusX — Provider SDK Barrel Export
+// NexusX — SDK Barrel Export
 // packages/sdk/src/index.ts
 //
 // Public API surface:
-//   import { NexusXProvider, WebhookHandler, verifyWebhookSignature } from "@nexusx/sdk";
+//   import { NexusXProvider } from "@nexusx/sdk";          // Provider
+//   import { NexusXAgent, createViemSigner } from "@nexusx/sdk";  // Agent
 // ═══════════════════════════════════════════════════════════════
 
 // ─── Provider Client ───
@@ -50,3 +51,21 @@ export type {
   ApiResponse,
   PaginatedResponse,
 } from "./provider/types";
+
+// ─── Agent Client ───
+export { NexusXAgent } from "./agent/client";
+export { createViemSigner } from "./agent/signer";
+export type {
+  NexusXAgentConfig,
+  WalletSigner,
+  X402PaymentRequirements,
+  CallParams,
+  CallResult,
+  ChainStep,
+  ChainResult,
+  SearchMatch,
+  SearchResult,
+  PricingInfo,
+  ReliabilityInfo,
+  BudgetState,
+} from "./agent/types";
