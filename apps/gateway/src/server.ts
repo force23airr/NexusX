@@ -26,6 +26,7 @@ import { createBundleSessionRoutes } from "./routes/bundle-sessions";
 import { createHealthRoutes } from "./routes/health";
 import { createPriceHistoryRoutes } from "./routes/price-history";
 import { QualityMonitorWorker, loadQualityMonitorConfig } from "./workers/qualityMonitor";
+import { IndexingWorker, loadIndexingWorkerConfig } from "./workers/indexingWorker";
 import type {
   GatewayConfig,
   DemandSignalEvent,
@@ -256,6 +257,7 @@ export function startGateway(
 ): void {
   const { app, cleanup, config: cfg, reliabilityAggregator } = createGatewayApp(deps, config);
   let qualityMonitor: QualityMonitorWorker | undefined;
+  let indexingWorker: IndexingWorker | undefined;
 
   const server = app.listen(cfg.port, async () => {
     console.log(`[Gateway] NexusX API Gateway listening on port ${cfg.port}`);
@@ -285,6 +287,13 @@ export function startGateway(
       qualityMonitor = new QualityMonitorWorker(deps.prisma, reliabilityAggregator, monitorConfig);
       qualityMonitor.start();
     }
+
+    // Start indexing worker
+    if (deps.prisma) {
+      const indexingConfig = loadIndexingWorkerConfig();
+      indexingWorker = new IndexingWorker(deps.prisma, deps.redis, indexingConfig);
+      indexingWorker.start();
+    }
   });
 
   // Graceful shutdown.
@@ -293,6 +302,9 @@ export function startGateway(
 
     if (qualityMonitor) {
       qualityMonitor.stop();
+    }
+    if (indexingWorker) {
+      indexingWorker.stop();
     }
 
     if (priceWs) {

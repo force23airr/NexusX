@@ -11,6 +11,9 @@ import type { DiscoveryService } from "../services/discovery";
 import type { BundleEngine } from "../services/bundle-engine";
 import { bundleSlugToToolName } from "../services/bundle-engine";
 import { generateInputSchema, generateBundleInputSchema } from "./schemas";
+import type Redis from "ioredis";
+
+const SEARCH_VERSION_KEY = "nexusx:search-version";
 
 export interface RegisteredTool {
   toolName: string;
@@ -28,11 +31,14 @@ export class ToolRegistry {
   private refreshInterval: ReturnType<typeof setInterval> | null = null;
   private discovery: DiscoveryService;
   private bundleEngine?: BundleEngine;
+  private redis?: Redis;
+  private lastSearchVersion: number = -1;
   private onToolsChanged?: () => void;
 
-  constructor(discovery: DiscoveryService, bundleEngine?: BundleEngine) {
+  constructor(discovery: DiscoveryService, bundleEngine?: BundleEngine, redis?: Redis) {
     this.discovery = discovery;
     this.bundleEngine = bundleEngine;
+    this.redis = redis;
   }
 
   /**
@@ -51,10 +57,12 @@ export class ToolRegistry {
 
   /**
    * Start periodic refresh of the tool registry.
+   * When Redis is available, uses version-based polling:
+   * only refreshes when the search-version counter changes.
    */
   startRefresh(intervalMs: number): void {
     if (this.refreshInterval) return;
-    this.refreshInterval = setInterval(() => this.refresh(), intervalMs);
+    this.refreshInterval = setInterval(() => this.versionAwareRefresh(), intervalMs);
   }
 
   /**
@@ -167,7 +175,33 @@ export class ToolRegistry {
     return this.tools.size;
   }
 
+  /**
+   * Force an immediate refresh of the tool registry.
+   */
+  async forceRefresh(): Promise<void> {
+    await this.refresh();
+  }
+
   // ─── Internal ───
+
+  /**
+   * Check Redis search-version counter before doing a full refresh.
+   * If the version hasn't changed, skip the refresh entirely.
+   * Falls back to unconditional refresh if Redis is unavailable.
+   */
+  private async versionAwareRefresh(): Promise<void> {
+    if (this.redis) {
+      try {
+        const raw = await this.redis.get(SEARCH_VERSION_KEY);
+        const version = raw ? parseInt(raw, 10) : 0;
+        if (version === this.lastSearchVersion) return;
+        this.lastSearchVersion = version;
+      } catch {
+        // Redis unavailable — fall through to unconditional refresh
+      }
+    }
+    await this.refresh();
+  }
 
   private hasChanged(newTools: Map<string, RegisteredTool>): boolean {
     if (newTools.size !== this.tools.size) return true;

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
+import { enqueueActivationEvent } from "@nexusx/database";
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/provider/listings/[listingId]/status
@@ -59,6 +60,13 @@ export async function POST(
     const updated = await prisma.listing.update({
       where: { id: listingId },
       data,
+    });
+
+    // Enqueue durable activation indexing job
+    await enqueueActivationEvent(prisma, {
+      type: "LISTING_ACTIVATED",
+      listingId,
+      timestamp: new Date(),
     });
 
     return NextResponse.json({ status: updated.status });

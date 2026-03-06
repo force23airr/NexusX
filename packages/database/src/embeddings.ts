@@ -62,6 +62,10 @@ export interface SearchListingsOptions {
   similarityThreshold?: number;
   priorityMode?: PriorityMode;
   budgetMaxUsdc?: number;
+  /** Hard metadata filters applied before semantic search. */
+  metadataFilters?: import("./metadata-filters").MetadataFilters;
+  /** Use deterministic tiered ranking instead of weighted-sum reranker. */
+  hybrid?: boolean;
 }
 
 export interface EmbedResult {
@@ -302,6 +306,7 @@ async function vectorSearch(
     limit?: number;
     similarityThreshold?: number;
     budgetMaxUsdc?: number;
+    preFilteredIds?: string[];
   },
 ): Promise<VectorSearchRow[]> {
   if (queryEmbedding.length !== DB_VECTOR_DIMENSIONS) {
@@ -314,45 +319,17 @@ async function vectorSearch(
   const threshold = options.similarityThreshold ?? DEFAULT_SIMILARITY_THRESHOLD;
   const vectorStr = `[${queryEmbedding.join(",")}]`;
 
+  // Build dynamic WHERE conditions
+  const extraConditions: Prisma.Sql[] = [];
   if (options.budgetMaxUsdc !== undefined) {
-    return prisma.$queryRaw<VectorSearchRow[]>(Prisma.sql`
-      SELECT
-        l.id                                              AS "listingId",
-        l.slug,
-        l.name,
-        l.listing_type::text                              AS "listingType",
-        l.description,
-        c.slug                                            AS "categorySlug",
-        l.tags,
-        l.intents,
-        l.current_price_usdc::float                       AS "currentPriceUsdc",
-        l.floor_price_usdc::float                         AS "floorPriceUsdc",
-        l.ceiling_price_usdc::float                       AS "ceilingPriceUsdc",
-        l.capacity_per_minute                             AS "capacityPerMinute",
-        COALESCE(qs.composite_score::float / 100.0, 0.5)  AS "qualityScore",
-        COALESCE(qs.median_latency_ms::float, 200)        AS "avgLatencyMs",
-        COALESCE(qs.uptime_percent::float, 99.0)          AS "uptimePercent",
-        l.total_calls                                     AS "totalCalls",
-        u.display_name                                    AS "providerName",
-        1 - (l.embedding <=> ${vectorStr}::vector)         AS similarity
-      FROM listings l
-      JOIN categories c ON c.id = l.category_id
-      JOIN users u ON u.id = l.provider_id
-      LEFT JOIN LATERAL (
-        SELECT composite_score, median_latency_ms, uptime_percent
-        FROM quality_snapshots
-        WHERE listing_id = l.id
-        ORDER BY computed_at DESC
-        LIMIT 1
-      ) qs ON true
-      WHERE l.status = 'ACTIVE'
-        AND l.embedding IS NOT NULL
-        AND 1 - (l.embedding <=> ${vectorStr}::vector) >= ${threshold}
-        AND l.current_price_usdc <= ${options.budgetMaxUsdc}
-      ORDER BY l.embedding <=> ${vectorStr}::vector
-      LIMIT ${limit}
-    `);
+    extraConditions.push(Prisma.sql`AND l.current_price_usdc <= ${options.budgetMaxUsdc}`);
   }
+  if (options.preFilteredIds && options.preFilteredIds.length > 0) {
+    extraConditions.push(Prisma.sql`AND l.id = ANY(${options.preFilteredIds}::uuid[])`);
+  }
+  const extraWhere = extraConditions.length > 0
+    ? Prisma.sql`${Prisma.join(extraConditions, " ")}`
+    : Prisma.empty;
 
   return prisma.$queryRaw<VectorSearchRow[]>(Prisma.sql`
     SELECT
@@ -387,6 +364,7 @@ async function vectorSearch(
     WHERE l.status = 'ACTIVE'
       AND l.embedding IS NOT NULL
       AND 1 - (l.embedding <=> ${vectorStr}::vector) >= ${threshold}
+      ${extraWhere}
     ORDER BY l.embedding <=> ${vectorStr}::vector
     LIMIT ${limit}
   `);
@@ -462,13 +440,35 @@ function rerank(
     // Popularity: log-scaled, capped
     const popScore = Math.log(1 + Number(row.totalCalls)) / Math.log(1 + maxCalls);
 
+    // Hybrid retrieval boost signals (deterministic)
+    // Exact intent match: listing declares an intent that matches a query token
+    const intentTokens = new Set(row.intents.map((i) => i.toLowerCase()));
+    const exactIntentMatch = Array.from(queryTokens).some((qt) => intentTokens.has(qt));
+
+    // Provider name match: query mentions the provider by name
+    const providerLower = row.providerName.toLowerCase();
+    const providerNameMatch = Array.from(queryTokens).some(
+      (qt) => qt.length >= 3 && providerLower.includes(qt),
+    );
+
+    // Exact tag overlap (fraction of query tokens found in tags)
+    const exactTagOverlap = queryTokens.size > 0
+      ? Array.from(queryTokens).filter((qt) => tagTokens.has(qt)).length / queryTokens.size
+      : 0;
+
+    // Hybrid boosts
+    const intentBoost = exactIntentMatch ? 0.15 : 0;
+    const providerBoost = providerNameMatch ? 0.20 : 0;
+    const tagBoost = exactTagOverlap * 0.10;
+
     // Composite
     const compositeScore =
       simScore * weights.similarity +
       priceScore * weights.price +
       qualScore * weights.quality +
       nameTagOverlap * weights.nameTagOverlap +
-      popScore * weights.popularity;
+      popScore * weights.popularity +
+      intentBoost + providerBoost + tagBoost;
 
     return {
       listingId: row.listingId,
@@ -577,18 +577,43 @@ export async function searchListings(
   // 1. Get query embedding (cached if Redis available)
   const queryEmbedding = await getCachedQueryEmbedding(query, config, options?.redis);
 
-  // 2. pgvector search — fetch top 50
+  // 1.5. Pre-filter by metadata if filters provided
+  let preFilteredIds: string[] | undefined;
+  if (options?.metadataFilters) {
+    const { buildMetadataWhereClause } = await import("./metadata-filters");
+    const where = buildMetadataWhereClause(options.metadataFilters);
+    const candidates = await prisma.listing.findMany({
+      where,
+      select: { id: true },
+    });
+    preFilteredIds = candidates.map((c) => c.id);
+    if (preFilteredIds.length === 0) {
+      return []; // No listings match the metadata filters
+    }
+  }
+
+  // 2. pgvector search — fetch top 50 (pre-filtered if metadata filters applied)
   const rawResults = await vectorSearch(prisma, queryEmbedding, {
     limit: PGVECTOR_TOP_N,
     similarityThreshold: threshold,
     budgetMaxUsdc: options?.budgetMaxUsdc,
+    preFilteredIds,
   });
 
   // 3. Category diversity filter
   const diverse = applyDiversityFilter(rawResults);
 
-  // 4. Rerank
-  const reranked = rerank(diverse, query, priorityMode);
+  // 4. Rerank — use deterministic ranker in hybrid mode, weighted-sum otherwise
+  let reranked: SemanticSearchResult[];
+  if (options?.hybrid) {
+    const { deterministicRank } = await import("./deterministic-ranker");
+    // First do standard rerank to get SemanticSearchResult with hybrid boosts
+    const withBoosts = rerank(diverse, query, priorityMode);
+    // Then apply deterministic tier-based sorting
+    reranked = deterministicRank(withBoosts, query, priorityMode);
+  } else {
+    reranked = rerank(diverse, query, priorityMode);
+  }
 
   // 5. Return top-N
   return reranked.slice(0, limit);

@@ -29,6 +29,7 @@ import { createCompareToolsHandler } from "./prompts/compare";
 import { BundleEngine } from "./services/bundle-engine";
 import { OrchestratorService } from "./services/orchestrator";
 import type { PrismaClient } from "@prisma/client";
+import Redis from "ioredis";
 
 export interface McpServerContext {
   server: McpServer;
@@ -68,7 +69,22 @@ export async function createMcpServer(
   const bundleEngine = new BundleEngine(prisma);
   const budget = new BudgetTracker(config.sessionBudgetUsdc);
   const priceSubscriber = new PriceSubscriber(config.redisUrl, config.gatewayUrl);
-  const registry = new ToolRegistry(discovery, bundleEngine);
+
+  // Create Redis client for version-based registry refresh
+  let registryRedis: Redis | undefined;
+  try {
+    registryRedis = new Redis(config.redisUrl, {
+      maxRetriesPerRequest: 1,
+      lazyConnect: true,
+      enableOfflineQueue: false,
+    });
+    await registryRedis.connect();
+  } catch {
+    console.error("[MCP] Redis unavailable — registry will use unconditional refresh.");
+    registryRedis = undefined;
+  }
+
+  const registry = new ToolRegistry(discovery, bundleEngine, registryRedis);
   const executor = new ToolExecutor(registry, gateway, budget, cdpWallet);
   executor.setDiscoveryService(discovery);
 
@@ -292,6 +308,9 @@ export async function createMcpServer(
   async function cleanup(): Promise<void> {
     registry.stopRefresh();
     await priceSubscriber.stop();
+    if (registryRedis) {
+      registryRedis.disconnect();
+    }
     console.error("[MCP] Server cleaned up.");
   }
 

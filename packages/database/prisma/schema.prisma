@@ -132,31 +132,31 @@ enum AuditAction {
 
 /// Core user account. A single user can be both a provider and buyer.
 model User {
-  id            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  externalId    String?   @unique @map("external_id")
-  email         String    @unique
-  displayName   String    @map("display_name")
-  avatarUrl     String?   @map("avatar_url")
-  roles         UserRole[]
-  kycStatus     KycStatus @default(NONE) @map("kyc_status")
-  isActive      Boolean   @default(true) @map("is_active")
-  metadata      Json?     @default("{}")
-  createdAt     DateTime  @default(now()) @map("created_at")
-  updatedAt     DateTime  @updatedAt @map("updated_at")
+  id          String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  externalId  String?    @unique @map("external_id")
+  email       String     @unique
+  displayName String     @map("display_name")
+  avatarUrl   String?    @map("avatar_url")
+  roles       UserRole[]
+  kycStatus   KycStatus  @default(NONE) @map("kyc_status")
+  isActive    Boolean    @default(true) @map("is_active")
+  metadata    Json?      @default("{}")
+  createdAt   DateTime   @default(now()) @map("created_at")
+  updatedAt   DateTime   @updatedAt @map("updated_at")
 
   // Relations
-  wallet            Wallet?
-  providerProfile   ProviderProfile?
-  apiKeys           ApiKey[]
-  listings          Listing[]
-  transactions      Transaction[]       @relation("BuyerTransactions")
-  bundleSessions    BundleExecutionSession[] @relation("BundleSessionBuyer")
+  wallet                    Wallet?
+  providerProfile           ProviderProfile?
+  apiKeys                   ApiKey[]
+  listings                  Listing[]
+  transactions              Transaction[]              @relation("BuyerTransactions")
+  bundleSessions            BundleExecutionSession[]   @relation("BundleSessionBuyer")
   bundleProviderSettlements BundleProviderSettlement[] @relation("BundleProviderUser")
-  ratings           Rating[]
-  watchlistItems    WatchlistItem[]
-  subscriptions     Subscription[]
-  queryLogs         QueryLog[]
-  auditLogs         AuditLog[]          @relation("AuditActor")
+  ratings                   Rating[]
+  watchlistItems            WatchlistItem[]
+  subscriptions             Subscription[]
+  queryLogs                 QueryLog[]
+  auditLogs                 AuditLog[]                 @relation("AuditActor")
 
   @@index([email])
   @@index([kycStatus])
@@ -165,19 +165,19 @@ model User {
 
 /// Extended profile for providers with payout and verification details.
 model ProviderProfile {
-  id                  String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId              String    @unique @map("user_id") @db.Uuid
-  companyName         String?   @map("company_name")
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId              String   @unique @map("user_id") @db.Uuid
+  companyName         String?  @map("company_name")
   website             String?
   description         String?
-  totalRevenue        Decimal   @default(0) @map("total_revenue") @db.Decimal(18, 6)
-  totalPayouts        Decimal   @default(0) @map("total_payouts") @db.Decimal(18, 6)
-  pendingBalance      Decimal   @default(0) @map("pending_balance") @db.Decimal(18, 6)
-  payoutAddress       String?   @map("payout_address")
-  autoPayoutEnabled   Boolean   @default(false) @map("auto_payout_enabled")
-  autoPayoutThreshold Decimal   @default(100) @map("auto_payout_threshold") @db.Decimal(18, 6)
-  createdAt           DateTime  @default(now()) @map("created_at")
-  updatedAt           DateTime  @updatedAt @map("updated_at")
+  totalRevenue        Decimal  @default(0) @map("total_revenue") @db.Decimal(18, 6)
+  totalPayouts        Decimal  @default(0) @map("total_payouts") @db.Decimal(18, 6)
+  pendingBalance      Decimal  @default(0) @map("pending_balance") @db.Decimal(18, 6)
+  payoutAddress       String?  @map("payout_address")
+  autoPayoutEnabled   Boolean  @default(false) @map("auto_payout_enabled")
+  autoPayoutThreshold Decimal  @default(100) @map("auto_payout_threshold") @db.Decimal(18, 6)
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
 
   // Relations
   user    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -193,23 +193,23 @@ model ProviderProfile {
 
 /// Embedded USDC wallet linked to a user. One wallet per user.
 model Wallet {
-  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId          String    @unique @map("user_id") @db.Uuid
-  address         String    @unique
-  chainId         Int       @default(8453) @map("chain_id")
-  balanceUsdc     Decimal   @default(0) @map("balance_usdc") @db.Decimal(18, 6)
-  escrowUsdc      Decimal   @default(0) @map("escrow_usdc") @db.Decimal(18, 6)
-  nonce           Int       @default(0)
-  lastSyncedAt    DateTime? @map("last_synced_at")
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String    @unique @map("user_id") @db.Uuid
+  address      String    @unique
+  chainId      Int       @default(8453) @map("chain_id")
+  balanceUsdc  Decimal   @default(0) @map("balance_usdc") @db.Decimal(18, 6)
+  escrowUsdc   Decimal   @default(0) @map("escrow_usdc") @db.Decimal(18, 6)
+  nonce        Int       @default(0)
+  lastSyncedAt DateTime? @map("last_synced_at")
 
   // Auto-deposit: keep agent funded automatically
-  autoDepositEnabled    Boolean   @default(false) @map("auto_deposit_enabled")
-  autoDepositAmountUsdc Decimal   @default(50) @map("auto_deposit_amount_usdc") @db.Decimal(18, 6)
-  autoDepositThreshold  Decimal   @default(5) @map("auto_deposit_threshold") @db.Decimal(18, 6)
-  fundingSource         String?   @map("funding_source")  // "coinbase" | "external_wallet" | etc.
+  autoDepositEnabled    Boolean @default(false) @map("auto_deposit_enabled")
+  autoDepositAmountUsdc Decimal @default(50) @map("auto_deposit_amount_usdc") @db.Decimal(18, 6)
+  autoDepositThreshold  Decimal @default(5) @map("auto_deposit_threshold") @db.Decimal(18, 6)
+  fundingSource         String? @map("funding_source") // "coinbase" | "external_wallet" | etc.
 
-  createdAt       DateTime  @default(now()) @map("created_at")
-  updatedAt       DateTime  @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -225,17 +225,17 @@ model Wallet {
 
 /// Hierarchical category tree for marketplace taxonomy.
 model Category {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  slug        String    @unique
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  slug        String   @unique
   name        String
   description String?
-  parentId    String?   @map("parent_id") @db.Uuid
-  depth       Int       @default(0)
-  sortOrder   Int       @default(0) @map("sort_order")
-  isActive    Boolean   @default(true) @map("is_active")
-  metadata    Json?     @default("{}")
-  createdAt   DateTime  @default(now()) @map("created_at")
-  updatedAt   DateTime  @updatedAt @map("updated_at")
+  parentId    String?  @map("parent_id") @db.Uuid
+  depth       Int      @default(0)
+  sortOrder   Int      @default(0) @map("sort_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  metadata    Json?    @default("{}")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
 
   // Relations
   parent   Category?  @relation("CategoryTree", fields: [parentId], references: [id])
@@ -250,75 +250,91 @@ model Category {
 /// A provider's API/data listing on the marketplace.
 /// This is the central entity — everything else references it.
 model Listing {
-  id                String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  providerId        String        @map("provider_id") @db.Uuid
-  categoryId        String        @map("category_id") @db.Uuid
-  slug              String        @unique
-  name              String
-  description       String
-  listingType       ListingType   @map("listing_type")
-  status            ListingStatus @default(DRAFT)
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  providerId  String        @map("provider_id") @db.Uuid
+  categoryId  String        @map("category_id") @db.Uuid
+  slug        String        @unique
+  name        String
+  description String
+  listingType ListingType   @map("listing_type")
+  status      ListingStatus @default(DRAFT)
 
   // Endpoint configuration
-  baseUrl           String        @map("base_url")
-  healthCheckUrl    String?       @map("health_check_url")
-  docsUrl           String?       @map("docs_url")
-  sandboxUrl        String?       @map("sandbox_url")
-  authType          String        @default("api_key") @map("auth_type")
+  baseUrl        String  @map("base_url")
+  healthCheckUrl String? @map("health_check_url")
+  docsUrl        String? @map("docs_url")
+  sandboxUrl     String? @map("sandbox_url")
+  authType       String  @default("api_key") @map("auth_type")
 
   // Pricing (provider-configured bounds)
-  floorPriceUsdc    Decimal       @map("floor_price_usdc") @db.Decimal(18, 6)
-  ceilingPriceUsdc  Decimal?      @map("ceiling_price_usdc") @db.Decimal(18, 6)
-  currentPriceUsdc  Decimal       @map("current_price_usdc") @db.Decimal(18, 6)
+  floorPriceUsdc   Decimal  @map("floor_price_usdc") @db.Decimal(18, 6)
+  ceilingPriceUsdc Decimal? @map("ceiling_price_usdc") @db.Decimal(18, 6)
+  currentPriceUsdc Decimal  @map("current_price_usdc") @db.Decimal(18, 6)
 
   // Capacity
-  capacityPerMinute Int           @default(60) @map("capacity_per_minute")
-  isUnique          Boolean       @default(false) @map("is_unique")
+  capacityPerMinute Int     @default(60) @map("capacity_per_minute")
+  isUnique          Boolean @default(false) @map("is_unique")
 
   // Discovery metadata
-  tags              String[]      @default([])
-  intents           String[]      @default([])
-  sampleRequest     Json?         @map("sample_request")
-  sampleResponse    Json?         @map("sample_response")
-  schemaSpec        Json?         @map("schema_spec")
+  tags           String[] @default([])
+  intents        String[] @default([])
+  sampleRequest  Json?    @map("sample_request")
+  sampleResponse Json?    @map("sample_response")
+  schemaSpec     Json?    @map("schema_spec")
+
+  // Universal metadata filters (v1 — cross-domain)
+  availabilityRegions String[] @default([]) @map("availability_regions") // ISO 3166-1 alpha-2 (empty = global)
+  restrictedRegions   String[] @default([]) @map("restricted_regions") // blocked countries
+  complianceTags      String[] @default([]) @map("compliance_tags") // ["GDPR","HIPAA","SOC2","PCI-DSS"]
+  capabilityTags      String[] @default([]) @map("capability_tags") // ["translate","embed","detect","trade"]
+  inputModalities     String[] @default([]) @map("input_modalities") // ["text","image","audio","video"]
+  outputModalities    String[] @default([]) @map("output_modalities") // ["text","image","audio","structured-data"]
+  domainMetadata      Json?    @map("domain_metadata") // extensible per-domain facets
 
   // Semantic search (pgvector)
-  embedding                Unsupported("vector(512)")?
-  embeddingModel           String?       @map("embedding_model")
-  embeddedAt               DateTime?     @map("embedded_at")
-  syntheticQueries         String[]      @default([]) @map("synthetic_queries")
-  syntheticQueriesVersion  Int           @default(0) @map("synthetic_queries_version")
+  embedding               Unsupported("vector(512)")?
+  embeddingModel          String?                     @map("embedding_model")
+  embeddedAt              DateTime?                   @map("embedded_at")
+  syntheticQueries        String[]                    @default([]) @map("synthetic_queries")
+  syntheticQueriesVersion Int                         @default(0) @map("synthetic_queries_version")
 
   // Source tracking (for Bazaar-imported listings)
-  sourceType          String?   @map("source_type")         // "bazaar" | null (native)
-  sourceResourceUrl   String?   @map("source_resource_url") // original Bazaar resource URL
+  sourceType        String? @map("source_type") // "bazaar" | null (native)
+  sourceResourceUrl String? @map("source_resource_url") // original Bazaar resource URL
+
+  // Indexing version (incremented each time the listing is re-indexed)
+  listingIndexVersion Int @default(0) @map("listing_index_version")
+
+  // Cold-start exploration tracking
+  discoveryImpressions Int @default(0) @map("discovery_impressions")
+  discoveryClicks      Int @default(0) @map("discovery_clicks")
 
   // Aggregate counters (denormalized for query performance)
-  totalCalls        BigInt        @default(0) @map("total_calls")
-  totalRevenue      Decimal       @default(0) @map("total_revenue") @db.Decimal(18, 6)
-  avgRating         Decimal       @default(0) @map("avg_rating") @db.Decimal(3, 2)
-  ratingCount       Int           @default(0) @map("rating_count")
+  totalCalls   BigInt  @default(0) @map("total_calls")
+  totalRevenue Decimal @default(0) @map("total_revenue") @db.Decimal(18, 6)
+  avgRating    Decimal @default(0) @map("avg_rating") @db.Decimal(3, 2)
+  ratingCount  Int     @default(0) @map("rating_count")
 
-  createdAt         DateTime      @default(now()) @map("created_at")
-  updatedAt         DateTime      @updatedAt @map("updated_at")
-  publishedAt       DateTime?     @map("published_at")
-  deprecatedAt      DateTime?     @map("deprecated_at")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  publishedAt  DateTime? @map("published_at")
+  deprecatedAt DateTime? @map("deprecated_at")
 
   // Relations
-  provider          User                @relation(fields: [providerId], references: [id], onDelete: Cascade)
-  category          Category            @relation(fields: [categoryId], references: [id])
-  demandSignals     DemandSignal[]
-  demandSnapshots   DemandSnapshot[]
-  qualitySnapshots  QualitySnapshot[]
-  supplySnapshots   SupplySnapshot[]
-  priceSnapshots    PriceSnapshot[]
-  auctionResults    AuctionResult[]
-  transactions      Transaction[]
-  ratings           Rating[]
-  watchlistItems    WatchlistItem[]
-  subscriptions     Subscription[]
-  queryLogs         QueryLog[]
-  providerMetrics   ProviderMetricRaw[]
+  provider                  User                       @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  category                  Category                   @relation(fields: [categoryId], references: [id])
+  demandSignals             DemandSignal[]
+  demandSnapshots           DemandSnapshot[]
+  qualitySnapshots          QualitySnapshot[]
+  supplySnapshots           SupplySnapshot[]
+  priceSnapshots            PriceSnapshot[]
+  auctionResults            AuctionResult[]
+  transactions              Transaction[]
+  ratings                   Rating[]
+  watchlistItems            WatchlistItem[]
+  subscriptions             Subscription[]
+  queryLogs                 QueryLog[]
+  providerMetrics           ProviderMetricRaw[]
   bundleProviderSettlements BundleProviderSettlement[]
 
   @@index([providerId])
@@ -329,6 +345,11 @@ model Listing {
   @@index([totalCalls])
   @@index([avgRating])
   @@index([tags], type: Gin)
+  @@index([availabilityRegions], type: Gin)
+  @@index([complianceTags], type: Gin)
+  @@index([capabilityTags], type: Gin)
+  @@index([inputModalities], type: Gin)
+  @@index([outputModalities], type: Gin)
   @@index([createdAt])
   @@index([sourceType, sourceResourceUrl])
   @@map("listings")
@@ -341,13 +362,13 @@ model Listing {
 /// Individual demand signal captured from the gateway.
 /// High-write table — partitioned by timestamp in production.
 model DemandSignal {
-  id          String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  listingId   String           @map("listing_id") @db.Uuid
-  buyerId     String?          @map("buyer_id") @db.Uuid
-  type        DemandSignalType
-  weight      Decimal          @db.Decimal(6, 3)
-  metadata    Json?            @default("{}")
-  capturedAt  DateTime         @default(now()) @map("captured_at")
+  id         String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId  String           @map("listing_id") @db.Uuid
+  buyerId    String?          @map("buyer_id") @db.Uuid
+  type       DemandSignalType
+  weight     Decimal          @db.Decimal(6, 3)
+  metadata   Json?            @default("{}")
+  capturedAt DateTime         @default(now()) @map("captured_at")
 
   // Relations
   listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
@@ -362,14 +383,14 @@ model DemandSignal {
 /// Point-in-time demand state snapshot for a listing.
 /// Written by the DemandTracker service every window cycle.
 model DemandSnapshot {
-  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  listingId     String   @map("listing_id") @db.Uuid
-  score         Decimal  @db.Decimal(6, 2)
-  rawSignalSum  Decimal  @map("raw_signal_sum") @db.Decimal(12, 3)
-  uniqueBuyers  Int      @map("unique_buyers")
-  velocity      Decimal  @db.Decimal(8, 4)
-  windowMs      Int      @map("window_ms")
-  computedAt    DateTime @map("computed_at")
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId    String   @map("listing_id") @db.Uuid
+  score        Decimal  @db.Decimal(6, 2)
+  rawSignalSum Decimal  @map("raw_signal_sum") @db.Decimal(12, 3)
+  uniqueBuyers Int      @map("unique_buyers")
+  velocity     Decimal  @db.Decimal(8, 4)
+  windowMs     Int      @map("window_ms")
+  computedAt   DateTime @map("computed_at")
 
   // Relations
   listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
@@ -487,14 +508,14 @@ model PriceSnapshot {
 /// Complete auction result record.
 /// One row per pricing engine computation cycle per listing.
 model AuctionResult {
-  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  listingId      String   @map("listing_id") @db.Uuid
-  price          Decimal  @db.Decimal(18, 6)
-  floorPrice     Decimal  @map("floor_price") @db.Decimal(18, 6)
-  multipliers    Json
-  inputs         Json
-  computeTimeUs  Int      @map("compute_time_us")
-  computedAt     DateTime @map("computed_at")
+  id            String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId     String   @map("listing_id") @db.Uuid
+  price         Decimal  @db.Decimal(18, 6)
+  floorPrice    Decimal  @map("floor_price") @db.Decimal(18, 6)
+  multipliers   Json
+  inputs        Json
+  computeTimeUs Int      @map("compute_time_us")
+  computedAt    DateTime @map("computed_at")
 
   // Relations
   listing Listing @relation(fields: [listingId], references: [id], onDelete: Cascade)
@@ -511,42 +532,42 @@ model AuctionResult {
 /// Individual API call transaction billed to a buyer.
 /// Maps 1:1 to a gateway request that was priced and charged.
 model Transaction {
-  id                 String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  listingId          String            @map("listing_id") @db.Uuid
-  buyerId            String            @map("buyer_id") @db.Uuid
-  status             TransactionStatus @default(PENDING)
-  billingMode        TransactionBillingMode @default(INDIVIDUAL) @map("billing_mode")
-  bundleSessionId    String?           @map("bundle_session_id") @db.Uuid
-  bundleStepIndex    Int?              @map("bundle_step_index")
-  settledViaBundle   Boolean           @default(false) @map("settled_via_bundle")
+  id               String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId        String                 @map("listing_id") @db.Uuid
+  buyerId          String                 @map("buyer_id") @db.Uuid
+  status           TransactionStatus      @default(PENDING)
+  billingMode      TransactionBillingMode @default(INDIVIDUAL) @map("billing_mode")
+  bundleSessionId  String?                @map("bundle_session_id") @db.Uuid
+  bundleStepIndex  Int?                   @map("bundle_step_index")
+  settledViaBundle Boolean                @default(false) @map("settled_via_bundle")
 
   // Pricing at time of call
-  priceUsdc          Decimal           @map("price_usdc") @db.Decimal(18, 6)
-  platformFeeUsdc    Decimal           @map("platform_fee_usdc") @db.Decimal(18, 6)
-  providerAmountUsdc Decimal           @map("provider_amount_usdc") @db.Decimal(18, 6)
-  feeRateApplied     Decimal           @map("fee_rate_applied") @db.Decimal(6, 4)
-  quotedPriceUsdc    Decimal?          @map("quoted_price_usdc") @db.Decimal(18, 6)
-  quotedPlatformFeeUsdc Decimal?       @map("quoted_platform_fee_usdc") @db.Decimal(18, 6)
-  quotedProviderAmountUsdc Decimal?    @map("quoted_provider_amount_usdc") @db.Decimal(18, 6)
+  priceUsdc                Decimal  @map("price_usdc") @db.Decimal(18, 6)
+  platformFeeUsdc          Decimal  @map("platform_fee_usdc") @db.Decimal(18, 6)
+  providerAmountUsdc       Decimal  @map("provider_amount_usdc") @db.Decimal(18, 6)
+  feeRateApplied           Decimal  @map("fee_rate_applied") @db.Decimal(6, 4)
+  quotedPriceUsdc          Decimal? @map("quoted_price_usdc") @db.Decimal(18, 6)
+  quotedPlatformFeeUsdc    Decimal? @map("quoted_platform_fee_usdc") @db.Decimal(18, 6)
+  quotedProviderAmountUsdc Decimal? @map("quoted_provider_amount_usdc") @db.Decimal(18, 6)
 
   // Gateway metadata
-  requestId          String            @unique @map("request_id")
-  responseTimeMs     Int?              @map("response_time_ms")
-  httpStatus         Int?              @map("http_status")
-  bytesTransferred   Int?              @map("bytes_transferred")
+  requestId        String @unique @map("request_id")
+  responseTimeMs   Int?   @map("response_time_ms")
+  httpStatus       Int?   @map("http_status")
+  bytesTransferred Int?   @map("bytes_transferred")
 
   // Settlement reference
-  settlementId       String?           @map("settlement_id") @db.Uuid
-  settledAt          DateTime?         @map("settled_at")
+  settlementId String?   @map("settlement_id") @db.Uuid
+  settledAt    DateTime? @map("settled_at")
 
-  createdAt          DateTime          @default(now()) @map("created_at")
-  updatedAt          DateTime          @updatedAt @map("updated_at")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relations
-  listing                 Listing                 @relation(fields: [listingId], references: [id])
-  buyer                   User                    @relation("BuyerTransactions", fields: [buyerId], references: [id])
-  settlement              Settlement?             @relation(fields: [settlementId], references: [id])
-  bundleSession           BundleExecutionSession? @relation(fields: [bundleSessionId], references: [id])
+  listing                  Listing                   @relation(fields: [listingId], references: [id])
+  buyer                    User                      @relation("BuyerTransactions", fields: [buyerId], references: [id])
+  settlement               Settlement?               @relation(fields: [settlementId], references: [id])
+  bundleSession            BundleExecutionSession?   @relation(fields: [bundleSessionId], references: [id])
   bundleProviderSettlement BundleProviderSettlement?
 
   @@index([listingId, createdAt])
@@ -564,29 +585,29 @@ model Transaction {
 /// Pre-registered bundle execution lifecycle tracked by the gateway.
 /// Captures agreed pricing and final one-time settlement details.
 model BundleExecutionSession {
-  id                     String             @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  buyerId                String             @map("buyer_id") @db.Uuid
-  apiKeyId               String?            @map("api_key_id") @db.Uuid
-  bundleSlug             String             @map("bundle_slug")
-  bundleName             String?            @map("bundle_name")
-  status                 BundleSessionStatus @default(REGISTERED)
-  toolSlugs              String[]           @default([]) @map("tool_slugs")
-  registeredGrossPriceUsdc Decimal          @default(0) @map("registered_gross_price_usdc") @db.Decimal(18, 6)
-  executedGrossPriceUsdc Decimal            @default(0) @map("executed_gross_price_usdc") @db.Decimal(18, 6)
-  targetBundlePriceUsdc  Decimal            @map("target_bundle_price_usdc") @db.Decimal(18, 6)
-  billedPriceUsdc        Decimal            @default(0) @map("billed_price_usdc") @db.Decimal(18, 6)
-  discountUsdc           Decimal            @default(0) @map("discount_usdc") @db.Decimal(18, 6)
-  platformFeeRate        Decimal            @map("platform_fee_rate") @db.Decimal(6, 4)
-  platformFeeUsdc        Decimal            @default(0) @map("platform_fee_usdc") @db.Decimal(18, 6)
-  providerPoolUsdc       Decimal            @default(0) @map("provider_pool_usdc") @db.Decimal(18, 6)
-  metadata               Json?              @default("{}")
-  expiresAt              DateTime?          @map("expires_at")
-  createdAt              DateTime           @default(now()) @map("created_at")
-  updatedAt              DateTime           @updatedAt @map("updated_at")
-  finalizedAt            DateTime?          @map("finalized_at")
+  id                       String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyerId                  String              @map("buyer_id") @db.Uuid
+  apiKeyId                 String?             @map("api_key_id") @db.Uuid
+  bundleSlug               String              @map("bundle_slug")
+  bundleName               String?             @map("bundle_name")
+  status                   BundleSessionStatus @default(REGISTERED)
+  toolSlugs                String[]            @default([]) @map("tool_slugs")
+  registeredGrossPriceUsdc Decimal             @default(0) @map("registered_gross_price_usdc") @db.Decimal(18, 6)
+  executedGrossPriceUsdc   Decimal             @default(0) @map("executed_gross_price_usdc") @db.Decimal(18, 6)
+  targetBundlePriceUsdc    Decimal             @map("target_bundle_price_usdc") @db.Decimal(18, 6)
+  billedPriceUsdc          Decimal             @default(0) @map("billed_price_usdc") @db.Decimal(18, 6)
+  discountUsdc             Decimal             @default(0) @map("discount_usdc") @db.Decimal(18, 6)
+  platformFeeRate          Decimal             @map("platform_fee_rate") @db.Decimal(6, 4)
+  platformFeeUsdc          Decimal             @default(0) @map("platform_fee_usdc") @db.Decimal(18, 6)
+  providerPoolUsdc         Decimal             @default(0) @map("provider_pool_usdc") @db.Decimal(18, 6)
+  metadata                 Json?               @default("{}")
+  expiresAt                DateTime?           @map("expires_at")
+  createdAt                DateTime            @default(now()) @map("created_at")
+  updatedAt                DateTime            @updatedAt @map("updated_at")
+  finalizedAt              DateTime?           @map("finalized_at")
 
   // Relations
-  buyer               User                      @relation("BundleSessionBuyer", fields: [buyerId], references: [id])
+  buyer               User                       @relation("BundleSessionBuyer", fields: [buyerId], references: [id])
   transactions        Transaction[]
   providerSettlements BundleProviderSettlement[]
 
@@ -599,17 +620,17 @@ model BundleExecutionSession {
 /// Revenue split audit rows for bundle settlement.
 /// One row per settled bundle step transaction.
 model BundleProviderSettlement {
-  id                String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  bundleSessionId   String   @map("bundle_session_id") @db.Uuid
-  transactionId     String   @unique @map("transaction_id") @db.Uuid
-  providerId        String   @map("provider_id") @db.Uuid
-  listingId         String   @map("listing_id") @db.Uuid
-  listPriceUsdc     Decimal  @map("list_price_usdc") @db.Decimal(18, 6)
-  weight            Decimal  @db.Decimal(10, 8)
-  allocatedPriceUsdc Decimal @map("allocated_price_usdc") @db.Decimal(18, 6)
-  platformFeeUsdc   Decimal  @map("platform_fee_usdc") @db.Decimal(18, 6)
-  providerAmountUsdc Decimal @map("provider_amount_usdc") @db.Decimal(18, 6)
-  createdAt         DateTime @default(now()) @map("created_at")
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  bundleSessionId    String   @map("bundle_session_id") @db.Uuid
+  transactionId      String   @unique @map("transaction_id") @db.Uuid
+  providerId         String   @map("provider_id") @db.Uuid
+  listingId          String   @map("listing_id") @db.Uuid
+  listPriceUsdc      Decimal  @map("list_price_usdc") @db.Decimal(18, 6)
+  weight             Decimal  @db.Decimal(10, 8)
+  allocatedPriceUsdc Decimal  @map("allocated_price_usdc") @db.Decimal(18, 6)
+  platformFeeUsdc    Decimal  @map("platform_fee_usdc") @db.Decimal(18, 6)
+  providerAmountUsdc Decimal  @map("provider_amount_usdc") @db.Decimal(18, 6)
+  createdAt          DateTime @default(now()) @map("created_at")
 
   // Relations
   bundleSession BundleExecutionSession @relation(fields: [bundleSessionId], references: [id], onDelete: Cascade)
@@ -634,17 +655,17 @@ model Settlement {
   transactionCount Int              @map("transaction_count")
 
   // On-chain reference
-  txHash           String?          @unique @map("tx_hash")
-  blockNumber      BigInt?          @map("block_number")
-  chainId          Int              @default(8453) @map("chain_id")
-  gasUsed          BigInt?          @map("gas_used")
-  gasCostUsdc      Decimal?         @map("gas_cost_usdc") @db.Decimal(18, 6)
+  txHash      String?  @unique @map("tx_hash")
+  blockNumber BigInt?  @map("block_number")
+  chainId     Int      @default(8453) @map("chain_id")
+  gasUsed     BigInt?  @map("gas_used")
+  gasCostUsdc Decimal? @map("gas_cost_usdc") @db.Decimal(18, 6)
 
-  batchedAt        DateTime         @default(now()) @map("batched_at")
-  submittedAt      DateTime?        @map("submitted_at")
-  confirmedAt      DateTime?        @map("confirmed_at")
-  failedAt         DateTime?        @map("failed_at")
-  failureReason    String?          @map("failure_reason")
+  batchedAt     DateTime  @default(now()) @map("batched_at")
+  submittedAt   DateTime? @map("submitted_at")
+  confirmedAt   DateTime? @map("confirmed_at")
+  failedAt      DateTime? @map("failed_at")
+  failureReason String?   @map("failure_reason")
 
   // Relations
   transactions Transaction[]
@@ -685,18 +706,18 @@ model Payout {
 /// Buyer API key for gateway authentication.
 /// Supports multiple keys per user for different environments.
 model ApiKey {
-  id            String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  userId        String       @map("user_id") @db.Uuid
-  name          String
-  keyHash       String       @unique @map("key_hash")
-  keyPrefix     String       @map("key_prefix") @db.VarChar(8)
-  status        ApiKeyStatus @default(ACTIVE)
-  rateLimitRpm  Int          @default(60) @map("rate_limit_rpm")
-  allowedIps    String[]     @default([]) @map("allowed_ips")
-  lastUsedAt    DateTime?    @map("last_used_at")
-  expiresAt     DateTime?    @map("expires_at")
-  createdAt     DateTime     @default(now()) @map("created_at")
-  revokedAt     DateTime?    @map("revoked_at")
+  id           String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId       String       @map("user_id") @db.Uuid
+  name         String
+  keyHash      String       @unique @map("key_hash")
+  keyPrefix    String       @map("key_prefix") @db.VarChar(8)
+  status       ApiKeyStatus @default(ACTIVE)
+  rateLimitRpm Int          @default(60) @map("rate_limit_rpm")
+  allowedIps   String[]     @default([]) @map("allowed_ips")
+  lastUsedAt   DateTime?    @map("last_used_at")
+  expiresAt    DateTime?    @map("expires_at")
+  createdAt    DateTime     @default(now()) @map("created_at")
+  revokedAt    DateTime?    @map("revoked_at")
 
   // Relations
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -742,12 +763,12 @@ model Subscription {
 /// Buyer's watchlist entry for a listing.
 /// Generates WATCHLIST_ADD demand signals.
 model WatchlistItem {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  buyerId   String   @map("buyer_id") @db.Uuid
-  listingId String   @map("listing_id") @db.Uuid
-  alertOnPriceDrop Boolean @default(false) @map("alert_on_price_drop")
+  id               String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  buyerId          String   @map("buyer_id") @db.Uuid
+  listingId        String   @map("listing_id") @db.Uuid
+  alertOnPriceDrop Boolean  @default(false) @map("alert_on_price_drop")
   alertThreshold   Decimal? @map("alert_threshold") @db.Decimal(18, 6)
-  createdAt DateTime @default(now()) @map("created_at")
+  createdAt        DateTime @default(now()) @map("created_at")
 
   // Relations
   buyer   User    @relation(fields: [buyerId], references: [id], onDelete: Cascade)
@@ -853,4 +874,44 @@ model AuditLog {
   @@index([action])
   @@index([createdAt])
   @@map("audit_logs")
+}
+
+// ─────────────────────────────────────────────────────────────
+// INDEXING — Pending Activation Queue
+// ─────────────────────────────────────────────────────────────
+
+/// Durable queue for listing activation events.
+/// The IndexingWorker polls this table and processes each event.
+model PendingActivation {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId String   @map("listing_id") @db.Uuid
+  eventType String   @map("event_type") // "LISTING_ACTIVATED"
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([createdAt])
+  @@map("pending_activations")
+}
+
+// ─────────────────────────────────────────────────────────────
+// DEMAND GAPS — Unmet Agent Search Intents
+// ─────────────────────────────────────────────────────────────
+
+/// Tracks search intents that returned no results or low confidence.
+/// Clusters unmet demands so providers know what to build.
+model DemandGap {
+  id                  String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  intentCluster       String   @map("intent_cluster")
+  sampleQueries       String[] @default([]) @map("sample_queries")
+  queryCount          Int      @default(1) @map("query_count")
+  avgConfidence       Decimal  @default(0) @map("avg_confidence") @db.Decimal(5, 4)
+  isResolved          Boolean  @default(false) @map("is_resolved")
+  resolvedByListingId String?  @map("resolved_by_listing_id") @db.Uuid
+  firstSeenAt         DateTime @default(now()) @map("first_seen_at")
+  lastSeenAt          DateTime @default(now()) @map("last_seen_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  @@index([intentCluster])
+  @@index([isResolved])
+  @@index([queryCount])
+  @@map("demand_gaps")
 }

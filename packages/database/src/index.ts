@@ -47,6 +47,33 @@ export {
   CURRENT_SYNTHETIC_VERSION,
 } from "./synthetic-queries";
 
+// ─── Activation Pipeline ───
+export {
+  enqueueActivationEvent,
+  processActivation,
+  type ActivationEvent,
+  type ActivationPipelineResult,
+} from "./activation-pipeline";
+
+// ─── Metadata Filters ───
+export {
+  buildMetadataWhereClause,
+  type MetadataFilters,
+} from "./metadata-filters";
+
+// ─── Deterministic Ranker ───
+export { deterministicRank } from "./deterministic-ranker";
+
+// ─── Cold-Start Explorer ───
+export { computeExplorationBonus } from "./cold-start-explorer";
+
+// ─── Demand Gap Tracker ───
+export {
+  recordUnmetDemand,
+  getTopDemandGaps,
+  checkDemandGapMatch,
+} from "./demand-gap-tracker";
+
 // ─── Manifest (.well-known/nexusx.json) ───
 export {
   validateManifest,
