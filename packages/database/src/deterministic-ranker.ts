@@ -14,7 +14,9 @@
 //   5. Price
 // ═══════════════════════════════════════════════════════════════
 
+import type { Prisma } from "@prisma/client";
 import type { SemanticSearchResult, PriorityMode } from "./embeddings";
+import { computeExplorationBonus } from "./cold-start-explorer";
 
 // ─── Capability Tiers ────────────────────────────────────────
 
@@ -45,11 +47,18 @@ function classifyCapabilityTier(
 
 // ─── Provider Match ──────────────────────────────────────────
 
-function isProviderMatch(result: SemanticSearchResult, queryTokens: Set<string>): boolean {
+function isProviderMatch(
+  result: SemanticSearchResult,
+  query: string,
+  queryTokens: Set<string>,
+): boolean {
   const providerLower = result.providerName.toLowerCase();
-  return Array.from(queryTokens).some(
-    (qt) => qt.length >= 3 && providerLower.includes(qt),
-  );
+  if (providerLower.length >= 3 && query.includes(providerLower)) {
+    return true;
+  }
+
+  const providerTokens = providerLower.split(/\s+/).filter((token) => token.length >= 3);
+  return providerTokens.some((token) => queryTokens.has(token));
 }
 
 // ─── Tiebreaker Score ────────────────────────────────────────
@@ -58,19 +67,52 @@ function tiebreakerScore(
   result: SemanticSearchResult,
   priorityMode: PriorityMode,
   maxPrice: number,
+  maxLatency: number,
 ): number {
-  const qualityNorm = result.qualityScore; // 0-1
+  const qualityNorm = result.qualityScore;
   const priceNorm = maxPrice > 0 ? 1 - result.currentPriceUsdc / maxPrice : 0.5;
+  const latencyNorm = maxLatency > 0 ? 1 - result.avgLatencyMs / maxLatency : 0.5;
 
   switch (priorityMode) {
     case "frugal":
-      return priceNorm * 0.6 + qualityNorm * 0.4;
+      return priceNorm * 0.45 + qualityNorm * 0.35 + latencyNorm * 0.20;
     case "mission_critical":
-      return qualityNorm * 0.7 + priceNorm * 0.3;
+      return qualityNorm * 0.5 + latencyNorm * 0.35 + priceNorm * 0.15;
     case "balanced":
     default:
-      return qualityNorm * 0.5 + priceNorm * 0.5;
+      return qualityNorm * 0.4 + latencyNorm * 0.3 + priceNorm * 0.3;
   }
+}
+
+function isJsonObject(value: Prisma.JsonValue | null | undefined): value is Prisma.JsonObject {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function activeDemandGapBoost(result: SemanticSearchResult): number {
+  const metadata = result.domainMetadata;
+  if (!isJsonObject(metadata)) return 0;
+
+  const rootBoost = metadata.demandGapBoost;
+  const rootExpiry = typeof metadata.boostExpiresAt === "string" ? metadata.boostExpiresAt : null;
+  const nested = isJsonObject(metadata.nexusxDiscovery as Prisma.JsonValue | undefined)
+    ? (metadata.nexusxDiscovery as Prisma.JsonObject)
+    : null;
+
+  const boostFlag = typeof rootBoost === "boolean"
+    ? rootBoost
+    : typeof nested?.demandGapBoost === "boolean"
+      ? nested.demandGapBoost
+      : false;
+  const expiryValue = rootExpiry ?? (typeof nested?.boostExpiresAt === "string" ? nested.boostExpiresAt : null);
+
+  if (!boostFlag || !expiryValue) return 0;
+
+  const expiresAt = new Date(expiryValue);
+  if (Number.isNaN(expiresAt.getTime()) || expiresAt.getTime() <= Date.now()) {
+    return 0;
+  }
+
+  return 0.08;
 }
 
 // ─── Main Ranker ─────────────────────────────────────────────
@@ -90,28 +132,48 @@ export function deterministicRank(
   const queryTokens = new Set(
     query.toLowerCase().split(/\s+/).filter((t) => t.length > 0),
   );
+  const normalizedQuery = query.toLowerCase();
   const maxPrice = Math.max(...results.map((r) => r.currentPriceUsdc), 0.000001);
+  const maxLatency = Math.max(...results.map((r) => r.avgLatencyMs), 1);
+  const totalImpressions = results.reduce(
+    (sum, result) => sum + Math.max(result.discoveryImpressions, 0),
+    0,
+  );
 
   // Score each result
   const scored = results.map((result) => {
     const tier = classifyCapabilityTier(result, queryTokens);
     const tierRank = tier === "HIGH" ? 2 : tier === "MEDIUM" ? 1 : 0;
-    const providerMatch = isProviderMatch(result, queryTokens) ? 1 : 0;
-    const tiebreaker = tiebreakerScore(result, priorityMode, maxPrice);
+    const providerMatch = isProviderMatch(result, normalizedQuery, queryTokens) ? 1 : 0;
+    const tiebreaker = tiebreakerScore(result, priorityMode, maxPrice, maxLatency);
+    const explorationBonus = computeExplorationBonus(
+      {
+        discoveryImpressions: result.discoveryImpressions,
+        publishedAt: result.publishedAt,
+        qualityScore: result.qualityScore,
+      },
+      totalImpressions,
+    );
+    const demandGapBoost = activeDemandGapBoost(result);
+    const withinTierScore = tiebreaker + explorationBonus + demandGapBoost;
 
-    return { result, tierRank, providerMatch, tiebreaker };
+    return { result, tierRank, providerMatch, withinTierScore };
   });
 
   // Lexicographic sort: tier (desc) → provider match (desc) → tiebreaker (desc)
   scored.sort((a, b) => {
     if (a.tierRank !== b.tierRank) return b.tierRank - a.tierRank;
     if (a.providerMatch !== b.providerMatch) return b.providerMatch - a.providerMatch;
-    return b.tiebreaker - a.tiebreaker;
+    return b.withinTierScore - a.withinTierScore;
   });
 
   // Update composite scores to reflect the deterministic ranking
-  return scored.map(({ result, tierRank, tiebreaker }, index) => ({
+  return scored.map(({ result, tierRank, providerMatch, withinTierScore }, index) => ({
     ...result,
-    compositeScore: tierRank + tiebreaker + (scored.length - index) * 0.0001,
+    compositeScore:
+      tierRank * 100 +
+      providerMatch * 10 +
+      withinTierScore +
+      (scored.length - index) * 0.0001,
   }));
 }

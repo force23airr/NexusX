@@ -7,7 +7,9 @@
 // doesn't serve Asia, it never appears for an Asian agent.
 // ═══════════════════════════════════════════════════════════════
 
-import { Prisma } from "@prisma/client";
+import { ListingType, Prisma } from "@prisma/client";
+
+const VALID_LISTING_TYPES = new Set<string>(Object.values(ListingType));
 
 export interface MetadataFilters {
   /** Caller's country code (ISO 3166-1 alpha-2). Filters by availabilityRegions/restrictedRegions. */
@@ -85,9 +87,12 @@ export function buildMetadataWhereClause(
 
   // Listing type
   if (filters.listingType) {
-    conditions.push({
-      listingType: filters.listingType as Prisma.EnumListingTypeFilter["equals"],
-    });
+    const normalizedType = filters.listingType.toUpperCase();
+    if (VALID_LISTING_TYPES.has(normalizedType)) {
+      conditions.push({
+        listingType: normalizedType as Prisma.EnumListingTypeFilter["equals"],
+      });
+    }
   }
 
   // Max price

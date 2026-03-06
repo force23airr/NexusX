@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getCurrentProvider } from "@/lib/auth";
 import { getTopDemandGaps } from "@nexusx/database";
 
 // ─────────────────────────────────────────────────────────────
@@ -9,6 +10,11 @@ import { getTopDemandGaps } from "@nexusx/database";
 // ─────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
+  const provider = await getCurrentProvider(req);
+  if (!provider) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
+
   const { searchParams } = new URL(req.url);
   const limit = Math.min(parseInt(searchParams.get("limit") || "20", 10), 100);
 

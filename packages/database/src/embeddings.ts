@@ -35,6 +35,7 @@ export type FallbackReason =
 
 export interface SemanticSearchResult {
   listingId: string;
+  providerId: string;
   slug: string;
   name: string;
   listingType: string;
@@ -51,6 +52,9 @@ export interface SemanticSearchResult {
   uptimePercent: number;
   totalCalls: number;
   providerName: string;
+  discoveryImpressions: number;
+  publishedAt: Date | null;
+  domainMetadata: Prisma.JsonValue | null;
   similarity: number;
   compositeScore: number;
   fallbackReason?: FallbackReason;
@@ -276,6 +280,7 @@ export async function embedAllListings(
 
 interface VectorSearchRow {
   listingId: string;
+  providerId: string;
   slug: string;
   name: string;
   listingType: string;
@@ -292,6 +297,9 @@ interface VectorSearchRow {
   uptimePercent: number;
   totalCalls: bigint;
   providerName: string;
+  discoveryImpressions: number;
+  publishedAt: Date | null;
+  domainMetadata: Prisma.JsonValue | null;
   similarity: number;
 }
 
@@ -334,6 +342,7 @@ async function vectorSearch(
   return prisma.$queryRaw<VectorSearchRow[]>(Prisma.sql`
     SELECT
       l.id                                              AS "listingId",
+      l.provider_id                                     AS "providerId",
       l.slug,
       l.name,
       l.listing_type::text                              AS "listingType",
@@ -350,6 +359,9 @@ async function vectorSearch(
       COALESCE(qs.uptime_percent::float, 99.0)          AS "uptimePercent",
       l.total_calls                                     AS "totalCalls",
       u.display_name                                    AS "providerName",
+      l.discovery_impressions                           AS "discoveryImpressions",
+      l.published_at                                    AS "publishedAt",
+      l.domain_metadata                                 AS "domainMetadata",
       1 - (l.embedding <=> ${vectorStr}::vector)         AS similarity
     FROM listings l
     JOIN categories c ON c.id = l.category_id
@@ -472,6 +484,7 @@ function rerank(
 
     return {
       listingId: row.listingId,
+      providerId: row.providerId,
       slug: row.slug,
       name: row.name,
       listingType: row.listingType,
@@ -488,6 +501,9 @@ function rerank(
       uptimePercent: row.uptimePercent,
       totalCalls: Number(row.totalCalls),
       providerName: row.providerName,
+      discoveryImpressions: row.discoveryImpressions,
+      publishedAt: row.publishedAt,
+      domainMetadata: row.domainMetadata,
       similarity: row.similarity,
       compositeScore,
     };

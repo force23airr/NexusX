@@ -14,6 +14,8 @@ import type Redis from "ioredis";
 import { processActivation } from "@nexusx/database";
 
 const SEARCH_VERSION_KEY = "nexusx:search-version";
+const CLAIM_STALE_MS = 5 * 60 * 1000;
+const MAX_RETRY_DELAY_MS = 15 * 60 * 1000;
 
 // ─── Config ──────────────────────────────────────────────────
 
@@ -68,8 +70,18 @@ export class IndexingWorker {
     this.processing = true;
 
     try {
+      const now = new Date();
+      const staleClaimCutoff = new Date(now.getTime() - CLAIM_STALE_MS);
+
       // Fetch pending activation events (oldest first)
       const pending = await this.prisma.pendingActivation.findMany({
+        where: {
+          availableAt: { lte: now },
+          OR: [
+            { claimedAt: null },
+            { claimedAt: { lt: staleClaimCutoff } },
+          ],
+        },
         orderBy: { createdAt: "asc" },
         take: this.config.batchSize,
       });
@@ -79,48 +91,120 @@ export class IndexingWorker {
         return;
       }
 
-      let processed = 0;
+      let indexed = 0;
 
       for (const event of pending) {
         try {
+          const claimTime = new Date();
+          const claimResult = await this.prisma.pendingActivation.updateMany({
+            where: {
+              id: event.id,
+              availableAt: { lte: claimTime },
+              OR: [
+                { claimedAt: null },
+                { claimedAt: { lt: staleClaimCutoff } },
+              ],
+            },
+            data: {
+              claimedAt: claimTime,
+              attemptCount: { increment: 1 },
+              lastError: null,
+            },
+          });
+
+          if (claimResult.count === 0) {
+            continue;
+          }
+
+          const claimedEvent = await this.prisma.pendingActivation.findUnique({
+            where: { id: event.id },
+            select: { id: true, listingId: true, attemptCount: true },
+          });
+
+          if (!claimedEvent) {
+            continue;
+          }
+
           // Verify listing still exists and is ACTIVE
           const listing = await this.prisma.listing.findUnique({
-            where: { id: event.listingId },
+            where: { id: claimedEvent.listingId },
             select: { id: true, slug: true, status: true },
           });
 
           if (!listing) {
-            console.warn(`[IndexingWorker] Listing ${event.listingId} not found, skipping.`);
+            console.warn(`[IndexingWorker] Listing ${claimedEvent.listingId} not found, dropping queue item.`);
+            await this.prisma.pendingActivation.delete({
+              where: { id: claimedEvent.id },
+            });
           } else if (listing.status !== "ACTIVE") {
             console.log(`[IndexingWorker] Listing ${listing.slug} is ${listing.status}, skipping indexing.`);
+            await this.prisma.pendingActivation.delete({
+              where: { id: claimedEvent.id },
+            });
           } else {
-            const result = await processActivation(this.prisma, event.listingId);
-            console.log(
-              `[IndexingWorker] Indexed ${listing.slug}: ` +
-              `syntheticQueries=${result.syntheticQueriesGenerated}, ` +
-              `embedded=${result.embedded}, ` +
-              `version=${result.indexedVersion}` +
-              (result.errors.length > 0 ? `, errors=[${result.errors.join("; ")}]` : ""),
-            );
-            processed++;
-          }
+            const result = await processActivation(this.prisma, claimedEvent.listingId);
+            if (result.success) {
+              console.log(
+                `[IndexingWorker] Indexed ${listing.slug}: ` +
+                `syntheticQueries=${result.syntheticQueriesGenerated}, ` +
+                `embedded=${result.embedded}, ` +
+                `version=${result.indexedVersion}` +
+                (result.errors.length > 0 ? `, warnings=[${result.errors.join("; ")}]` : ""),
+              );
+              indexed++;
+              await this.prisma.pendingActivation.delete({
+                where: { id: claimedEvent.id },
+              });
+            } else {
+              if (!result.retryable) {
+                console.warn(
+                  `[IndexingWorker] Dropping non-retryable indexing failure for ${listing.slug}: ${result.failureReason ?? "unknown failure"}`,
+                );
+                await this.prisma.pendingActivation.delete({
+                  where: { id: claimedEvent.id },
+                });
+                continue;
+              }
 
-          // Remove from queue regardless of outcome
-          await this.prisma.pendingActivation.delete({
-            where: { id: event.id },
-          });
+              const retryDelayMs = Math.min(
+                MAX_RETRY_DELAY_MS,
+                Math.max(30_000, 10_000 * 2 ** Math.min(claimedEvent.attemptCount, 6)),
+              );
+              const nextAttemptAt = new Date(Date.now() + retryDelayMs);
+              const failureSummary =
+                result.failureReason ??
+                (result.errors.join("; ") || "Indexing failed");
+
+              await this.prisma.pendingActivation.update({
+                where: { id: claimedEvent.id },
+                data: {
+                  claimedAt: null,
+                  availableAt: nextAttemptAt,
+                  lastError: failureSummary.slice(0, 1000),
+                },
+              });
+
+              console.warn(
+                `[IndexingWorker] Indexing for ${listing.slug} failed; retrying in ${retryDelayMs}ms: ${failureSummary}`,
+              );
+            }
+          }
         } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
           console.error(`[IndexingWorker] Failed to process event ${event.id}:`, err);
-          // Remove failed event to avoid infinite retry loop
-          // In production, could move to a dead-letter table instead
-          await this.prisma.pendingActivation.delete({
+          await this.prisma.pendingActivation.update({
             where: { id: event.id },
+            data: {
+              claimedAt: null,
+              availableAt: new Date(Date.now() + 60_000),
+              lastError: message.slice(0, 1000),
+            },
           }).catch(() => {});
         }
       }
 
       // Increment search version so consumers detect the change
-      if (processed > 0 && this.redis) {
+      if (indexed > 0 && this.redis) {
         try {
           await this.redis.incr(SEARCH_VERSION_KEY);
         } catch (err) {

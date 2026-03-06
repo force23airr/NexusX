@@ -57,16 +57,19 @@ export async function POST(
       data.publishedAt = new Date();
     }
 
-    const updated = await prisma.listing.update({
-      where: { id: listingId },
-      data,
-    });
+    const updated = await prisma.$transaction(async (tx) => {
+      const nextListing = await tx.listing.update({
+        where: { id: listingId },
+        data,
+      });
 
-    // Enqueue durable activation indexing job
-    await enqueueActivationEvent(prisma, {
-      type: "LISTING_ACTIVATED",
-      listingId,
-      timestamp: new Date(),
+      await enqueueActivationEvent(tx, {
+        type: "LISTING_ACTIVATED",
+        listingId,
+        timestamp: new Date(),
+      });
+
+      return nextListing;
     });
 
     return NextResponse.json({ status: updated.status });

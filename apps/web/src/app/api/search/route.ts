@@ -16,8 +16,13 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { randomUUID } from "crypto";
 import {
+  buildMetadataWhereClause,
+  recordUnmetDemand,
   searchListings,
   type EmbeddingConfig,
+  type MetadataFilters,
+  type PriorityMode,
+  type SemanticSearchResult,
 } from "@nexusx/database";
 
 
@@ -44,6 +49,13 @@ interface ClassifiedIntent {
   entities: ExtractedEntities;
   normalizedQuery: string;
   secondaryCategory?: string;
+}
+
+interface SearchRequestBody {
+  query: string;
+  metadataFilters?: unknown;
+  priorityMode?: unknown;
+  limit?: unknown;
 }
 
 interface IndexedListing {
@@ -370,9 +382,12 @@ function extractEntities(lower: string): ExtractedEntities {
 // LISTING LOADER
 // ─────────────────────────────────────────────────────────────
 
-async function loadListings(): Promise<IndexedListing[]> {
+async function loadListings(metadataFilters?: MetadataFilters): Promise<IndexedListing[]> {
+  const where = metadataFilters
+    ? buildMetadataWhereClause(metadataFilters)
+    : { status: "ACTIVE" as const };
   const dbListings = await prisma.listing.findMany({
-    where: { status: "ACTIVE" },
+    where,
     include: {
       category: true,
       provider: { select: { displayName: true } },
@@ -632,50 +647,281 @@ function generateSuggestions(intent: ClassifiedIntent, matches: RankedMatch[], t
   return suggestions;
 }
 
+function parseStringArray(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const cleaned = value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return cleaned.length > 0 ? cleaned : undefined;
+}
+
+function parseNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function sanitizeMetadataFilters(raw: unknown): MetadataFilters {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return {};
+  }
+
+  const candidate = raw as Record<string, unknown>;
+  const filters: MetadataFilters = {};
+  const availabilityRegion =
+    typeof candidate.availabilityRegion === "string" ? candidate.availabilityRegion.trim().toUpperCase() : undefined;
+
+  if (availabilityRegion) filters.availabilityRegion = availabilityRegion;
+
+  const complianceRequired = parseStringArray(candidate.complianceRequired);
+  if (complianceRequired) filters.complianceRequired = complianceRequired;
+
+  const capabilityRequired = parseStringArray(candidate.capabilityRequired);
+  if (capabilityRequired) filters.capabilityRequired = capabilityRequired;
+
+  const inputModality = parseStringArray(candidate.inputModality);
+  if (inputModality) filters.inputModality = inputModality;
+
+  const outputModality = parseStringArray(candidate.outputModality);
+  if (outputModality) filters.outputModality = outputModality;
+
+  if (typeof candidate.listingType === "string" && candidate.listingType.trim().length > 0) {
+    filters.listingType = candidate.listingType.trim();
+  }
+
+  const maxPriceUsdc = parseNumber(candidate.maxPriceUsdc);
+  if (maxPriceUsdc !== undefined) filters.maxPriceUsdc = maxPriceUsdc;
+
+  const minCapacityRpm = parseNumber(candidate.minCapacityRpm);
+  if (minCapacityRpm !== undefined) filters.minCapacityRpm = minCapacityRpm;
+
+  return filters;
+}
+
+function inferAvailabilityRegion(req: NextRequest): string | undefined {
+  const candidate =
+    req.headers.get("x-nexusx-region") ||
+    req.headers.get("x-vercel-ip-country") ||
+    req.headers.get("cf-ipcountry") ||
+    req.headers.get("cloudfront-viewer-country");
+
+  if (!candidate) return undefined;
+  const normalized = candidate.trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(normalized) ? normalized : undefined;
+}
+
+function buildMetadataFilters(
+  req: NextRequest,
+  intent: ClassifiedIntent,
+  rawFilters: unknown,
+): MetadataFilters {
+  const filters = sanitizeMetadataFilters(rawFilters);
+  const inferredRegion = inferAvailabilityRegion(req);
+
+  if (!filters.availabilityRegion && inferredRegion) {
+    filters.availabilityRegion = inferredRegion;
+  }
+
+  if (!filters.listingType && intent.entities.listingType) {
+    filters.listingType = intent.entities.listingType;
+  }
+
+  if (filters.maxPriceUsdc === undefined && intent.entities.maxPriceUsdc !== undefined) {
+    filters.maxPriceUsdc = intent.entities.maxPriceUsdc;
+  }
+
+  if (filters.minCapacityRpm === undefined && intent.entities.minCapacityRpm !== undefined) {
+    filters.minCapacityRpm = intent.entities.minCapacityRpm;
+  }
+
+  return filters;
+}
+
+function resolvePriorityMode(value: unknown): PriorityMode {
+  return value === "frugal" || value === "balanced" || value === "mission_critical"
+    ? value
+    : "balanced";
+}
+
+function resolveLimit(value: unknown): number {
+  const parsed = parseNumber(value);
+  if (parsed === undefined) return 10;
+  return Math.min(Math.max(Math.floor(parsed), 1), 25);
+}
+
+function buildDemandIntent(intent: ClassifiedIntent): string {
+  const parts = [
+    ...intent.entities.capabilities,
+    ...intent.entities.categories,
+    intent.entities.providerName,
+  ].filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+
+  return parts.length > 0 ? parts.join(" ") : intent.normalizedQuery;
+}
+
+function semanticResultsToMatches(
+  results: SemanticSearchResult[],
+  intent: ClassifiedIntent,
+): RankedMatch[] {
+  if (results.length === 0) return [];
+
+  const maxCalls = Math.max(...results.map((result) => result.totalCalls), 1);
+  const maxLatency = Math.max(...results.map((result) => result.avgLatencyMs), 1);
+  const prices = results.map((result) => result.currentPriceUsdc);
+  const minPrice = Math.min(...prices);
+  const maxPrice = Math.max(...prices);
+
+  return results.map((result) => {
+    const listingTags = new Set(result.tags.map((tag) => tag.toLowerCase()));
+    const listingIntents = new Set(result.intents.map((entry) => entry.toLowerCase()));
+    const categoryMatch = intent.entities.categories.includes(result.categorySlug) ? 1 : 0;
+
+    let capabilityMatch = 0.5;
+    if (intent.entities.capabilities.length > 0) {
+      const matched = intent.entities.capabilities.filter((capability) => {
+        const normalized = capability.toLowerCase();
+        return listingTags.has(normalized) || listingIntents.has(normalized);
+      });
+      capabilityMatch = matched.length / intent.entities.capabilities.length;
+    }
+
+    let priceScore = 0.5;
+    if (intent.entities.maxPriceUsdc !== undefined && intent.entities.maxPriceUsdc > 0) {
+      priceScore = result.currentPriceUsdc <= intent.entities.maxPriceUsdc
+        ? 1 - (result.currentPriceUsdc / intent.entities.maxPriceUsdc) * 0.5
+        : Math.max(0, 1 - result.currentPriceUsdc / intent.entities.maxPriceUsdc);
+    } else if (maxPrice > minPrice) {
+      priceScore = 1 - (result.currentPriceUsdc - minPrice) / (maxPrice - minPrice);
+    }
+
+    const latencyScore = intent.entities.maxLatencyMs && intent.entities.maxLatencyMs > 0
+      ? result.avgLatencyMs <= intent.entities.maxLatencyMs
+        ? 1 - (result.avgLatencyMs / intent.entities.maxLatencyMs) * 0.5
+        : Math.max(0, 1 - result.avgLatencyMs / intent.entities.maxLatencyMs)
+      : 1 - result.avgLatencyMs / maxLatency;
+
+    const popularityScore =
+      maxCalls > 0 ? Math.log(1 + result.totalCalls) / Math.log(1 + maxCalls) : 0;
+
+    const scoreBreakdown: ScoreBreakdown = {
+      textRelevance: clamp01(result.similarity),
+      categoryMatch: clamp01(categoryMatch),
+      priceScore: clamp01(priceScore),
+      qualityScore: clamp01(result.qualityScore),
+      popularityScore: clamp01(popularityScore),
+      latencyScore: clamp01(latencyScore),
+      capabilityMatch: clamp01(capabilityMatch),
+    };
+
+    const matchReasons: string[] = [];
+    if (result.similarity >= 0.75) matchReasons.push("Strong semantic match to your query");
+    if (categoryMatch > 0) matchReasons.push(`Matches category: ${result.categorySlug}`);
+    if (capabilityMatch >= 0.7 && intent.entities.capabilities.length > 0) {
+      matchReasons.push("Matches required capabilities");
+    }
+    if (
+      intent.entities.providerName &&
+      result.providerName.toLowerCase().includes(intent.entities.providerName.toLowerCase())
+    ) {
+      matchReasons.push(`Matches provider: ${result.providerName}`);
+    }
+    if (result.qualityScore >= 0.8) {
+      matchReasons.push(`High quality score: ${(result.qualityScore * 100).toFixed(0)}%`);
+    }
+    if (result.avgLatencyMs > 0 && scoreBreakdown.latencyScore >= 0.8) {
+      matchReasons.push(`Fast: ${result.avgLatencyMs}ms average latency`);
+    }
+    if (matchReasons.length === 0) {
+      matchReasons.push("Matches general search criteria");
+    }
+
+    const listing: IndexedListing = {
+      id: result.listingId,
+      slug: result.slug,
+      name: result.name,
+      description: result.description,
+      listingType: result.listingType,
+      categorySlug: result.categorySlug,
+      tags: result.tags,
+      currentPriceUsdc: result.currentPriceUsdc,
+      floorPriceUsdc: result.floorPriceUsdc,
+      capacityPerMinute: result.capacityPerMinute,
+      totalCalls: result.totalCalls,
+      avgLatencyMs: result.avgLatencyMs,
+      qualityScore: result.qualityScore,
+      uptimePercent: result.uptimePercent,
+      status: "ACTIVE",
+      providerName: result.providerName,
+      providerId: result.providerId,
+    };
+
+    const score = clamp01(
+      scoreBreakdown.textRelevance * 0.55 +
+      scoreBreakdown.qualityScore * 0.15 +
+      scoreBreakdown.categoryMatch * 0.10 +
+      scoreBreakdown.capabilityMatch * 0.10 +
+      scoreBreakdown.priceScore * 0.05 +
+      scoreBreakdown.latencyScore * 0.05,
+    );
+
+    return { listing, score, scoreBreakdown, matchReasons };
+  });
+}
+
 // ─────────────────────────────────────────────────────────────
 // ROUTE HANDLER
 // ─────────────────────────────────────────────────────────────
 
 export async function POST(req: NextRequest) {
   const startTime = performance.now();
-  const body = await req.json();
-  const { query } = body;
+  const body = await req.json() as SearchRequestBody;
+  const query = typeof body.query === "string" ? body.query : "";
 
   if (!query || typeof query !== "string" || query.trim().length === 0) {
     return NextResponse.json({ error: "Query is required" }, { status: 400 });
   }
 
   const queryId = randomUUID();
+  const limit = resolveLimit(body.limit);
+  const priorityMode = resolvePriorityMode(body.priorityMode);
 
   // 1. Classify intent
   const intent = await classifyIntent(query);
+  const metadataFilters = buildMetadataFilters(req, intent, body.metadataFilters);
 
-  // 2. Load active listings
-  const listings = await loadListings();
-
-  // 2b. Semantic scores (replaces TF-IDF when OPENAI_API_KEY is set)
-  let semanticScores: Map<string, number> | undefined;
+  // 2. Shared semantic/hybrid search path
+  let allMatches: RankedMatch[] = [];
   const openaiKey = process.env.OPENAI_API_KEY;
   if (openaiKey) {
     try {
       const embeddingConfig: EmbeddingConfig = { openaiApiKey: openaiKey };
       const semanticResults = await searchListings(prisma, intent.normalizedQuery, embeddingConfig, {
         query: intent.normalizedQuery,
-        limit: 50,
+        limit: Math.max(limit * 3, 25),
         similarityThreshold: 0.2,
+        priorityMode,
+        budgetMaxUsdc: metadataFilters.maxPriceUsdc,
+        metadataFilters,
+        hybrid: true,
       });
-      if (semanticResults.length > 0) {
-        semanticScores = new Map(semanticResults.map((r) => [r.listingId, r.similarity]));
-      }
+      allMatches = semanticResultsToMatches(semanticResults, intent);
     } catch (err) {
-      console.warn("[Search] Semantic search failed, falling back to TF-IDF:", err);
+      console.warn("[Search] Shared semantic search failed, falling back to keyword ranking:", err);
     }
   }
 
-  // 3. Rank
-  const allMatches = rankListings(listings, intent, semanticScores);
+  // 3. Fallback path for environments without embeddings or when semantic search yields nothing.
+  if (allMatches.length === 0) {
+    const listings = await loadListings(metadataFilters);
+    allMatches = rankListings(listings, intent);
+  }
+
   const filteredMatches = allMatches.filter((m) => m.score >= 0.15);
-  const topMatches = filteredMatches.slice(0, 10);
+  const topMatches = filteredMatches.slice(0, limit);
 
   // 4. Suggestions
   const suggestions = generateSuggestions(intent, topMatches, allMatches.length);
@@ -697,6 +943,20 @@ export async function POST(req: NextRequest) {
         routeTimeMs,
       },
     }).catch((err: unknown) => console.error("[Search] Log error:", err));
+  }
+
+  const impressionIds = Array.from(new Set(topMatches.map((match) => match.listing.id))).slice(0, limit);
+  if (impressionIds.length > 0) {
+    prisma.listing.updateMany({
+      where: { id: { in: impressionIds } },
+      data: { discoveryImpressions: { increment: 1 } },
+    }).catch((err: unknown) => console.error("[Search] Impression update error:", err));
+  }
+
+  const topScore = topMatches[0]?.score ?? 0;
+  if (topMatches.length === 0 || topScore < 0.3) {
+    recordUnmetDemand(prisma, query, buildDemandIntent(intent), topScore, topMatches.length)
+      .catch((err: unknown) => console.error("[Search] Demand gap tracking error:", err));
   }
 
   // 6. Transform response to match frontend RouteResult type

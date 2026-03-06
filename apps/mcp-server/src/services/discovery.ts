@@ -9,12 +9,14 @@
 
 import type { PrismaClient } from "@prisma/client";
 import {
+  buildMetadataWhereClause,
   searchListings,
   hasEmbeddings,
   type EmbeddingConfig,
   type SemanticSearchResult,
   type PriorityMode,
   type FallbackReason,
+  type MetadataFilters,
 } from "@nexusx/database";
 import type { DiscoveredListing, CategoryNode, WalletInfo } from "../types";
 
@@ -40,9 +42,12 @@ export class DiscoveryService {
   /**
    * Load all active listings with MCP-relevant metadata.
    */
-  async loadListings(): Promise<DiscoveredListing[]> {
+  async loadListings(metadataFilters?: MetadataFilters): Promise<DiscoveredListing[]> {
+    const where = metadataFilters
+      ? buildMetadataWhereClause(metadataFilters)
+      : { status: "ACTIVE" as const };
     const listings = await this.prisma.listing.findMany({
-      where: { status: "ACTIVE" },
+      where,
       include: {
         category: true,
         provider: true,
@@ -198,6 +203,7 @@ export class DiscoveryService {
     limit?: number;
     budgetMaxUsdc?: number;
     priorityMode?: PriorityMode;
+    metadataFilters?: MetadataFilters;
   }): Promise<DiscoverySearchResult> {
     // Check 1: API key
     if (!this.embeddingConfig) {
@@ -230,6 +236,8 @@ export class DiscoveryService {
         limit: options?.limit ?? 10,
         budgetMaxUsdc: options?.budgetMaxUsdc,
         priorityMode: options?.priorityMode ?? "balanced",
+        metadataFilters: options?.metadataFilters,
+        hybrid: true,
       });
 
       if (results.length === 0) {
@@ -257,12 +265,13 @@ export class DiscoveryService {
   private async keywordSearch(query: string, options?: {
     limit?: number;
     budgetMaxUsdc?: number;
+    metadataFilters?: MetadataFilters;
   }): Promise<DiscoveredListing[]> {
     const q = query.toLowerCase();
     const budgetMax = options?.budgetMaxUsdc ?? null;
     const limit = options?.limit ?? 10;
 
-    const listings = await this.loadListings();
+    const listings = await this.loadListings(options?.metadataFilters);
 
     return listings
       .map((l) => {
@@ -292,7 +301,11 @@ export class DiscoveryService {
 
   private async keywordFallback(
     query: string,
-    options: { limit?: number; budgetMaxUsdc?: number } | undefined,
+    options: {
+      limit?: number;
+      budgetMaxUsdc?: number;
+      metadataFilters?: MetadataFilters;
+    } | undefined,
     reason: FallbackReason,
     err?: unknown,
   ): Promise<DiscoverySearchResult> {

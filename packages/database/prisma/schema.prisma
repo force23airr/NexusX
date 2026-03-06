@@ -883,12 +883,17 @@ model AuditLog {
 /// Durable queue for listing activation events.
 /// The IndexingWorker polls this table and processes each event.
 model PendingActivation {
-  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  listingId String   @map("listing_id") @db.Uuid
-  eventType String   @map("event_type") // "LISTING_ACTIVATED"
-  createdAt DateTime @default(now()) @map("created_at")
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId    String    @map("listing_id") @db.Uuid
+  eventType    String    @map("event_type") // "LISTING_ACTIVATED"
+  attemptCount Int       @default(0) @map("attempt_count")
+  claimedAt    DateTime? @map("claimed_at")
+  availableAt  DateTime  @default(now()) @map("available_at")
+  lastError    String?   @map("last_error")
+  createdAt    DateTime  @default(now()) @map("created_at")
 
   @@index([createdAt])
+  @@index([availableAt, claimedAt, createdAt])
   @@map("pending_activations")
 }
 
