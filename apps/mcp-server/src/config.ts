@@ -11,6 +11,19 @@ const configSchema = z.object({
   apiKey: z.string().optional().default(""),
   transport: z.enum(["stdio", "http"]).default("stdio"),
   httpPort: z.coerce.number().int().positive().default(3400),
+  httpHost: z.string().default("127.0.0.1"),
+  httpAllowedOrigins: z
+    .string()
+    .optional()
+    .transform((value) =>
+      value
+        ? value
+            .split(",")
+            .map((origin) => origin.trim())
+            .filter(Boolean)
+        : [],
+    )
+    .default(""),
   registryRefreshMs: z.coerce.number().int().positive().default(60_000),
   sessionBudgetUsdc: z.coerce.number().min(0).default(0),
   sandbox: z
@@ -38,6 +51,8 @@ export function loadConfig(): McpServerConfig {
     apiKey: process.env.NEXUSX_API_KEY,
     transport: process.env.NEXUSX_TRANSPORT,
     httpPort: process.env.MCP_PORT,
+    httpHost: process.env.MCP_HOST,
+    httpAllowedOrigins: process.env.MCP_ALLOWED_ORIGINS,
     registryRefreshMs: process.env.NEXUSX_REGISTRY_REFRESH_MS,
     sessionBudgetUsdc: process.env.NEXUSX_SESSION_BUDGET_USDC,
     sandbox: process.env.NEXUSX_SANDBOX,

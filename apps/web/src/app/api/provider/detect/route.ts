@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { isPrivateHost } from "@/lib/ssrf";
+import { assertSafeHttpUrl, isPrivateHost, safeFetch } from "@/lib/ssrf";
 import { validateManifest } from "@nexusx/database";
 
 // ─── Category slug suggestion from spec keywords ───
@@ -357,11 +357,10 @@ const PROBE_PATHS = [
 
 async function fetchWithLimits(url: string, signal: AbortSignal): Promise<string | null> {
   try {
-    const res = await fetch(url, {
+    const res = await safeFetch(url, {
       signal,
       headers: { Accept: "application/json, application/yaml, text/yaml, */*" },
-      redirect: "follow",
-    });
+    }, { maxRedirects: 2 });
     if (!res.ok) return null;
     const contentLength = res.headers.get("content-length");
     if (contentLength && parseInt(contentLength) > 5 * 1024 * 1024) return null;
@@ -379,9 +378,10 @@ async function probeHealth(url: string): Promise<{ ok: boolean; latencyMs: numbe
   if (!url) return null;
   const start = Date.now();
   try {
+    await assertSafeHttpUrl(url);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5_000);
-    const res = await fetch(url, { method: "GET", signal: controller.signal, redirect: "follow" });
+    const res = await safeFetch(url, { method: "GET", signal: controller.signal }, { maxRedirects: 2 });
     clearTimeout(timeout);
     return { ok: res.ok, latencyMs: Date.now() - start };
   } catch {
@@ -510,15 +510,15 @@ export async function POST(req: NextRequest) {
   const timeout = setTimeout(() => controller.abort(), 10_000);
 
   try {
+    await assertSafeHttpUrl(url);
     // 1. Fetch URL directly — keep raw text + headers for fallback inference
     let directText: string | null = null;
     let directHeaders: Record<string, string> = {};
     try {
-      const res = await fetch(url, {
+      const res = await safeFetch(url, {
         signal: controller.signal,
         headers: { Accept: "application/json, application/yaml, text/yaml, */*" },
-        redirect: "follow",
-      });
+      }, { maxRedirects: 2 });
       if (res.ok) {
         const contentLength = res.headers.get("content-length");
         if (!contentLength || parseInt(contentLength) <= 5 * 1024 * 1024) {

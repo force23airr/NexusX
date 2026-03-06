@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
+import { extractListingWriteData } from "@/lib/providerListing";
 
 // ─────────────────────────────────────────────────────────────
 // GET /api/provider/listings/[listingId]
@@ -68,6 +69,13 @@ export async function GET(
     tags: listing.tags,
     sampleRequest: listing.sampleRequest,
     sampleResponse: listing.sampleResponse,
+    availabilityRegions: listing.availabilityRegions,
+    restrictedRegions: listing.restrictedRegions,
+    complianceTags: listing.complianceTags,
+    capabilityTags: listing.capabilityTags,
+    inputModalities: listing.inputModalities,
+    outputModalities: listing.outputModalities,
+    domainMetadata: listing.domainMetadata,
     totalCalls: Number(listing.totalCalls),
     totalRevenue: Number(listing.totalRevenue),
     avgRating: Number(listing.avgRating),
@@ -118,34 +126,24 @@ export async function PUT(
     );
   }
 
-  // Build update data from allowed fields
-  const data: Record<string, unknown> = {};
-  const allowedFields = [
-    "name", "description", "baseUrl", "healthCheckUrl", "docsUrl",
-    "sandboxUrl", "authType", "capacityPerMinute", "isUnique", "tags",
-    "sampleRequest", "sampleResponse",
-  ];
+  let data: Record<string, unknown>;
+  try {
+    data = await extractListingWriteData({ ...body, baseUrl: body.baseUrl ?? listing.baseUrl });
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Invalid listing input" },
+      { status: 400 },
+    );
+  }
 
-  for (const field of allowedFields) {
-    if (body[field] !== undefined) {
-      data[field] = body[field];
+  if (body.baseUrl === undefined) {
+    delete data.baseUrl;
+  }
+  if (data.floorPriceUsdc !== undefined) {
+    const nextFloor = Number(data.floorPriceUsdc);
+    if (Number.isFinite(nextFloor) && Number(listing.currentPriceUsdc) < nextFloor) {
+      data.currentPriceUsdc = nextFloor;
     }
-  }
-
-  // Handle pricing fields separately (need Decimal conversion)
-  if (body.floorPriceUsdc !== undefined) {
-    data.floorPriceUsdc = body.floorPriceUsdc;
-  }
-  if (body.ceilingPriceUsdc !== undefined) {
-    data.ceilingPriceUsdc = body.ceilingPriceUsdc;
-  }
-  if (body.categoryId !== undefined) {
-    data.categoryId = body.categoryId;
-  }
-
-  // Handle videoUrl → schemaSpec
-  if (body.videoUrl !== undefined) {
-    data.schemaSpec = body.videoUrl ? { videoUrl: body.videoUrl } : undefined;
   }
 
   const updated = await prisma.listing.update({

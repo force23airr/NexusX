@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
-import { isPrivateHost } from "@/lib/ssrf";
+import { extractListingWriteData } from "@/lib/providerListing";
 
 
 export async function GET(req: NextRequest) {
@@ -61,6 +62,13 @@ export async function GET(req: NextRequest) {
       qualityScore: quality ? Number(quality.compositeScore) : 0,
       avgLatencyMs: quality ? Number(quality.medianLatencyMs) : 0,
       uptimePercent: quality ? Number(quality.uptimePercent) : 100,
+      availabilityRegions: l.availabilityRegions,
+      restrictedRegions: l.restrictedRegions,
+      complianceTags: l.complianceTags,
+      capabilityTags: l.capabilityTags,
+      inputModalities: l.inputModalities,
+      outputModalities: l.outputModalities,
+      domainMetadata: l.domainMetadata,
       publishedAt: l.publishedAt?.toISOString() ?? null,
       createdAt: l.createdAt.toISOString(),
     };
@@ -94,17 +102,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
 
-  // Validate baseUrl — block private/internal addresses (SSRF prevention)
+  let writeData: Record<string, unknown>;
   try {
-    const parsed = new URL(body.baseUrl);
-    if (!["http:", "https:"].includes(parsed.protocol)) {
-      return NextResponse.json({ error: "baseUrl must use HTTP or HTTPS" }, { status: 400 });
-    }
-    if (isPrivateHost(parsed.hostname)) {
-      return NextResponse.json({ error: "baseUrl cannot point to private/internal addresses" }, { status: 400 });
-    }
-  } catch {
-    return NextResponse.json({ error: "baseUrl is not a valid URL" }, { status: 400 });
+    writeData = await extractListingWriteData(body as Record<string, unknown>);
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Invalid listing input" },
+      { status: 400 },
+    );
   }
 
   // Resolve category — accept categoryId or categorySlug
@@ -136,40 +141,50 @@ export async function POST(req: NextRequest) {
   }
 
   // Store videoUrl in schemaSpec JSON
-  const schemaSpec = body.videoUrl ? { videoUrl: body.videoUrl } : undefined;
-
   // Merge user tags with sector tags (sector:value convention for filtering)
-  const tags: string[] = body.tags || [];
+  const tags: string[] = Array.isArray(writeData.tags) ? [...(writeData.tags as string[])] : [];
   const sectors: string[] = body.sectors || [];
   for (const s of sectors) {
-    tags.push(`sector:${s}`);
+    const tag = `sector:${String(s).trim()}`;
+    if (!tags.includes(tag)) {
+      tags.push(tag);
+    }
   }
 
+  const createData: Prisma.ListingUncheckedCreateInput = {
+    providerId: result.user.id,
+    categoryId,
+    slug,
+    name: (writeData.name as string | undefined) ?? body.name,
+    description: (writeData.description as string | undefined) ?? (body.description || ""),
+    listingType: ((writeData.listingType as string | undefined) ?? (body.listingType || "REST_API")) as any,
+    status: "DRAFT",
+    baseUrl: writeData.baseUrl as string,
+    healthCheckUrl: (writeData.healthCheckUrl as string | null | undefined) ?? null,
+    docsUrl: (writeData.docsUrl as string | null | undefined) ?? null,
+    sandboxUrl: (writeData.sandboxUrl as string | null | undefined) ?? null,
+    authType: (writeData.authType as string | undefined) || "api_key",
+    floorPriceUsdc: Number(writeData.floorPriceUsdc ?? body.floorPriceUsdc),
+    ceilingPriceUsdc: (writeData.ceilingPriceUsdc as number | null | undefined) ?? null,
+    currentPriceUsdc: Number(writeData.floorPriceUsdc ?? body.floorPriceUsdc),
+    capacityPerMinute: Number((writeData.capacityPerMinute ?? body.capacityPerMinute) || 60),
+    isUnique: Boolean((writeData.isUnique ?? body.isUnique) || false),
+    tags,
+    intents: (writeData.intents as string[] | undefined) ?? [],
+    sampleRequest: (writeData.sampleRequest as Prisma.InputJsonValue | undefined) ?? undefined,
+    sampleResponse: (writeData.sampleResponse as Prisma.InputJsonValue | undefined) ?? undefined,
+    schemaSpec: (writeData.schemaSpec as Prisma.InputJsonValue | undefined) ?? undefined,
+    availabilityRegions: (writeData.availabilityRegions as string[] | undefined) ?? [],
+    restrictedRegions: (writeData.restrictedRegions as string[] | undefined) ?? [],
+    complianceTags: (writeData.complianceTags as string[] | undefined) ?? [],
+    capabilityTags: (writeData.capabilityTags as string[] | undefined) ?? [],
+    inputModalities: (writeData.inputModalities as string[] | undefined) ?? [],
+    outputModalities: (writeData.outputModalities as string[] | undefined) ?? [],
+    domainMetadata: (writeData.domainMetadata as Prisma.InputJsonValue | null | undefined) ?? undefined,
+  };
+
   const listing = await prisma.listing.create({
-    data: {
-      providerId: result.user.id,
-      categoryId,
-      slug,
-      name: body.name,
-      description: body.description || "",
-      listingType: body.listingType || "REST_API",
-      status: "DRAFT",
-      baseUrl: body.baseUrl,
-      healthCheckUrl: body.healthCheckUrl || null,
-      docsUrl: body.docsUrl || null,
-      sandboxUrl: body.sandboxUrl || null,
-      authType: body.authType || "api_key",
-      floorPriceUsdc: body.floorPriceUsdc,
-      ceilingPriceUsdc: body.ceilingPriceUsdc || null,
-      currentPriceUsdc: body.floorPriceUsdc,
-      capacityPerMinute: body.capacityPerMinute || 60,
-      isUnique: body.isUnique || false,
-      tags,
-      intents: Array.isArray(body.intents) ? body.intents : [],
-      sampleRequest: body.sampleRequest || undefined,
-      sampleResponse: body.sampleResponse || undefined,
-      schemaSpec: schemaSpec || undefined,
-    },
+    data: createData,
   });
 
   // Return full DeployResult shape expected by the CLI

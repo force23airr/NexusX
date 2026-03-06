@@ -58,6 +58,31 @@ export interface X402PaymentContext {
   receivedAt: number;
 }
 
+export type X402ExecutionStatus =
+  | "SETTLEMENT_PENDING"
+  | "SETTLED"
+  | "UPSTREAM_FAILED"
+  | "ABANDONED";
+
+export interface X402ExecutionRecord {
+  requestId: string;
+  listingId: string;
+  listingSlug: string;
+  payerAddress: string;
+  paymentHeaderHash: string;
+  paymentHeader?: string | null;
+  paymentRequirement: unknown;
+  status: X402ExecutionStatus;
+  quotedPriceUsdc: number;
+  platformFeeUsdc: number;
+  providerAmountUsdc: number;
+  upstreamStatus?: number | null;
+  responseTimeMs?: number | null;
+  bytesTransferred?: number | null;
+  txHash?: string | null;
+  lastError?: string | null;
+}
+
 /** Resolved listing details for proxying. */
 export interface ListingRoute {
   listingId: string;

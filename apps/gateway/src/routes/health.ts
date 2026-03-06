@@ -84,18 +84,12 @@ export function createHealthRoutes(config: HealthRouteConfig): Router {
   // ─── Gateway status (admin) ───
   router.get("/status", (_req: Request, res: Response) => {
     const uptimeSeconds = Math.round((Date.now() - startedAt) / 1000);
-    const memUsage = process.memoryUsage();
 
     res.status(200).json({
       service: "nexusx-gateway",
       version: "1.0.0",
       uptime: uptimeSeconds,
-      cache: routeResolver.stats(),
-      memory: {
-        rss: `${Math.round(memUsage.rss / 1024 / 1024)}MB`,
-        heapUsed: `${Math.round(memUsage.heapUsed / 1024 / 1024)}MB`,
-        heapTotal: `${Math.round(memUsage.heapTotal / 1024 / 1024)}MB`,
-      },
+      status: "ok",
     });
   });
 

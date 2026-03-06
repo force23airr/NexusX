@@ -9,6 +9,8 @@ export interface McpServerConfig {
   apiKey: string;
   transport: "stdio" | "http";
   httpPort: number;
+  httpHost: string;
+  httpAllowedOrigins: string[];
   registryRefreshMs: number;
   sessionBudgetUsdc: number;
   sandbox: boolean;

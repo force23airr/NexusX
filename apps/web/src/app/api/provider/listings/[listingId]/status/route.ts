@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
-import { enqueueActivationEvent } from "@nexusx/database";
+import { bumpControlPlaneVersion, enqueueActivationEvent } from "@nexusx/database";
+import { validateActivationReadiness } from "@/lib/providerListing";
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/provider/listings/[listingId]/status
@@ -51,6 +52,27 @@ export async function POST(
       );
     }
 
+    const readinessErrors = await validateActivationReadiness({
+      baseUrl: listing.baseUrl,
+      healthCheckUrl: listing.healthCheckUrl,
+      sandboxUrl: listing.sandboxUrl,
+      docsUrl: listing.docsUrl,
+      description: listing.description,
+      tags: listing.tags,
+      intents: listing.intents,
+      capabilityTags: listing.capabilityTags,
+    });
+
+    if (readinessErrors.length > 0) {
+      return NextResponse.json(
+        {
+          error: "Listing is not ready for activation",
+          details: readinessErrors,
+        },
+        { status: 422 },
+      );
+    }
+
     const data: Record<string, unknown> = { status: "ACTIVE" };
     // Set publishedAt on first activation
     if (!listing.publishedAt) {
@@ -69,6 +91,8 @@ export async function POST(
         timestamp: new Date(),
       });
 
+      await bumpControlPlaneVersion(tx);
+
       return nextListing;
     });
 
@@ -83,9 +107,13 @@ export async function POST(
       );
     }
 
-    const updated = await prisma.listing.update({
-      where: { id: listingId },
-      data: { status: "PAUSED" },
+    const updated = await prisma.$transaction(async (tx) => {
+      const nextListing = await tx.listing.update({
+        where: { id: listingId },
+        data: { status: "PAUSED" },
+      });
+      await bumpControlPlaneVersion(tx);
+      return nextListing;
     });
 
     return NextResponse.json({ status: updated.status });
@@ -99,12 +127,16 @@ export async function POST(
       );
     }
 
-    const updated = await prisma.listing.update({
-      where: { id: listingId },
-      data: {
-        status: "DEPRECATED",
-        deprecatedAt: new Date(),
-      },
+    const updated = await prisma.$transaction(async (tx) => {
+      const nextListing = await tx.listing.update({
+        where: { id: listingId },
+        data: {
+          status: "DEPRECATED",
+          deprecatedAt: new Date(),
+        },
+      });
+      await bumpControlPlaneVersion(tx);
+      return nextListing;
     });
 
     return NextResponse.json({ status: updated.status });

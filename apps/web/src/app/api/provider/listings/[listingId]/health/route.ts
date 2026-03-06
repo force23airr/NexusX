@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
+import { assertSafeHttpUrl, safeFetch } from "@/lib/ssrf";
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/provider/listings/[listingId]/health
@@ -35,13 +36,14 @@ export async function POST(
 
   const start = Date.now();
   try {
+    await assertSafeHttpUrl(healthUrl);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5000);
 
-    const res = await fetch(healthUrl, {
+    const res = await safeFetch(healthUrl, {
       method: "GET",
       signal: controller.signal,
-    });
+    }, { maxRedirects: 2 });
     clearTimeout(timeout);
 
     const latencyMs = Date.now() - start;

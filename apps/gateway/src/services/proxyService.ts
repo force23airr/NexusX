@@ -10,6 +10,7 @@
 import type { IncomingHttpHeaders } from "http";
 import type { ListingRoute, ProxyResult } from "../types";
 import type { UpstreamCredential } from "./credentialService";
+import { safeFetch } from "../utils/ssrf";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -47,7 +48,19 @@ export const DEFAULT_PROXY_CONFIG: ProxyConfig = {
   stripRequestHeaders: [
     "host",
     "authorization",
+    "cookie",
+    "origin",
+    "referer",
+    "x-payment",
     "x-nexusx-key",
+    "x-nexusx-bundle-session-id",
+    "x-nexusx-bundle-step-index",
+    "x-nexusx-sandbox",
+    "x-nexusx-request-id",
+    "x-nexusx-payment",
+    "x-nexusx-price-usdc",
+    "x-nexusx-fee-usdc",
+    "x-nexusx-txhash",
     "x-forwarded-for",
     "x-forwarded-proto",
     "x-forwarded-host",
@@ -59,6 +72,9 @@ export const DEFAULT_PROXY_CONFIG: ProxyConfig = {
     "transfer-encoding",
     "connection",
     "keep-alive",
+    "set-cookie",
+    "server",
+    "x-powered-by",
   ],
   injectHeaders: {
     "X-Forwarded-By": "NexusX-Gateway/1.0",
@@ -102,7 +118,7 @@ export class ProxyService {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.config.timeoutMs);
 
-      const response = await fetch(upstreamUrl, {
+      const response = await safeFetch(upstreamUrl, {
         method: request.method,
         headers,
         body: request.method !== "GET" && request.method !== "HEAD"
@@ -198,7 +214,8 @@ export class ProxyService {
     const stripped = new Set(this.config.stripRequestHeaders.map((h) => h.toLowerCase()));
 
     for (const [key, value] of Object.entries(incomingHeaders)) {
-      if (stripped.has(key.toLowerCase())) continue;
+      const lowerKey = key.toLowerCase();
+      if (stripped.has(lowerKey) || lowerKey.startsWith("x-nexusx-")) continue;
       if (value === undefined) continue;
       headers[key] = Array.isArray(value) ? value.join(", ") : value;
     }
@@ -249,7 +266,8 @@ export class ProxyService {
     const stripped = new Set(this.config.stripResponseHeaders.map((h) => h.toLowerCase()));
 
     headers.forEach((value, key) => {
-      if (!stripped.has(key.toLowerCase())) {
+      const lowerKey = key.toLowerCase();
+      if (!stripped.has(lowerKey) && !lowerKey.startsWith("x-nexusx-")) {
         result[key] = value;
       }
     });

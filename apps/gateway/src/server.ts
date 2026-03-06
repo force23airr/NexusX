@@ -27,10 +27,12 @@ import { createHealthRoutes } from "./routes/health";
 import { createPriceHistoryRoutes } from "./routes/price-history";
 import { QualityMonitorWorker, loadQualityMonitorConfig } from "./workers/qualityMonitor";
 import { IndexingWorker, loadIndexingWorkerConfig } from "./workers/indexingWorker";
+import { X402SettlementWorker, loadX402SettlementWorkerConfig } from "./workers/x402SettlementWorker";
 import type {
   GatewayConfig,
   DemandSignalEvent,
   TransactionRecord,
+  X402ExecutionRecord,
   BundleSessionRegistrationInput,
   BundleSessionRecord,
   BundleSessionFinalizeResult,
@@ -58,6 +60,10 @@ export interface GatewayDependencies {
   lookupListingById: ListingByIdFn;
   /** Database: Persist a transaction record. */
   persistTransaction: TransactionPersistFn;
+  /** Database: Persist x402 execution settlement state (optional). */
+  persistX402Execution?: (record: X402ExecutionRecord) => Promise<void>;
+  /** Shared control plane: current route config version (optional). */
+  loadRouteVersion?: () => Promise<number | null>;
   /** Database: Register a pre-execution bundle session. */
   registerBundleSession?: (
     input: BundleSessionRegistrationInput
@@ -119,7 +125,8 @@ export function createGatewayApp(
   const routeResolver = new RouteResolver(
     deps.lookupListingBySlug,
     deps.lookupListingById,
-    cfg.routeCacheTtlMs
+    cfg.routeCacheTtlMs,
+    deps.loadRouteVersion,
   );
   const billingService = new BillingService(
     deps.persistTransaction,
@@ -185,6 +192,7 @@ export function createGatewayApp(
     credentialService,
     gatewayConfig: cfg,
     persistTransaction: deps.persistTransaction,
+    persistX402Execution: deps.persistX402Execution,
   });
 
   // Proxy routes: /v1/:listingSlug/*
@@ -258,6 +266,7 @@ export function startGateway(
   const { app, cleanup, config: cfg, reliabilityAggregator } = createGatewayApp(deps, config);
   let qualityMonitor: QualityMonitorWorker | undefined;
   let indexingWorker: IndexingWorker | undefined;
+  let x402SettlementWorker: X402SettlementWorker | undefined;
 
   const server = app.listen(cfg.port, async () => {
     console.log(`[Gateway] NexusX API Gateway listening on port ${cfg.port}`);
@@ -294,6 +303,12 @@ export function startGateway(
       indexingWorker = new IndexingWorker(deps.prisma, deps.redis, indexingConfig);
       indexingWorker.start();
     }
+
+    if (deps.prisma && cfg.x402Enabled) {
+      const x402WorkerConfig = loadX402SettlementWorkerConfig();
+      x402SettlementWorker = new X402SettlementWorker(deps.prisma, cfg, x402WorkerConfig);
+      x402SettlementWorker.start();
+    }
   });
 
   // Graceful shutdown.
@@ -305,6 +320,9 @@ export function startGateway(
     }
     if (indexingWorker) {
       indexingWorker.stop();
+    }
+    if (x402SettlementWorker) {
+      x402SettlementWorker.stop();
     }
 
     if (priceWs) {

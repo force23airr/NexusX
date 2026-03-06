@@ -327,8 +327,10 @@ describe("Health Routes", () => {
     const res = await request(app).get("/status");
     expect(res.status).toBe(200);
     expect(res.body.service).toBe("nexusx-gateway");
-    expect(res.body.memory).toBeDefined();
-    expect(res.body.cache).toBeDefined();
+    expect(res.body.status).toBe("ok");
+    expect(typeof res.body.uptime).toBe("number");
+    expect(res.body.memory).toBeUndefined();
+    expect(res.body.cache).toBeUndefined();
   });
 
   it("GET /pricing/:slug returns pricing info", async () => {

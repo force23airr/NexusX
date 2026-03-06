@@ -1386,28 +1386,24 @@ describe("Web Auth Module Source Code Audit", () => {
 // =================================================================
 
 describe("Status Endpoint Information Exposure", () => {
-  it("should expose memory usage on /status without authentication", async () => {
+  it("should not expose memory usage on /status without authentication", async () => {
     const { deps } = createMockDeps();
     const { app, cleanup } = createGatewayApp(deps);
 
     const res = await request(app).get("/status");
     expect(res.status).toBe(200);
-    expect(res.body.memory).toBeDefined();
-    // FINDING: Memory stats (heapUsed, rss) are exposed without auth.
-    // This could help attackers plan memory exhaustion attacks.
-    expect(res.body.memory.heapUsed).toBeDefined();
+    expect(res.body.memory).toBeUndefined();
     cleanup();
   });
 
-  it("should expose cache stats on /status without authentication", async () => {
+  it("should not expose cache stats on /status without authentication", async () => {
     const { deps } = createMockDeps();
     const { app, cleanup } = createGatewayApp(deps);
 
     const res = await request(app).get("/status");
     expect(res.status).toBe(200);
-    expect(res.body.cache).toBeDefined();
-    // FINDING: Cache size and TTL are exposed. This reveals
-    // architecture details useful for cache poisoning attacks.
+    expect(res.body.cache).toBeUndefined();
+    expect(res.body.status).toBe("ok");
     cleanup();
   });
 });

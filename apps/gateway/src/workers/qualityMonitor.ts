@@ -10,7 +10,7 @@
 
 import type { PrismaClient } from "@prisma/client";
 import type { ReliabilityAggregator, ReliabilityScore } from "../services/reliability-aggregator";
-import { isPrivateHost } from "../utils/ssrf";
+import { assertSafeHttpUrl, safeFetch } from "../utils/ssrf";
 
 // ─────────────────────────────────────────────────────────────
 // CONFIG
@@ -158,12 +158,8 @@ export class QualityMonitorWorker {
 
     const url = listing.healthCheckUrl || `${listing.baseUrl}/health`;
 
-    // SSRF protection
     try {
-      const parsed = new URL(url);
-      if (isPrivateHost(parsed.hostname)) {
-        return null;
-      }
+      await assertSafeHttpUrl(url);
     } catch {
       return null;
     }
@@ -175,10 +171,10 @@ export class QualityMonitorWorker {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), this.config.probeTimeoutMs);
 
-      const res = await fetch(url, {
+      const res = await safeFetch(url, {
         method: "GET",
         signal: controller.signal,
-      });
+      }, { maxRedirects: 2 });
       clearTimeout(timeout);
 
       const latencyMs = Date.now() - start;

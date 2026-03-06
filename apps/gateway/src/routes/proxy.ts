@@ -9,6 +9,7 @@
 // Example:     /v1/openai-gpt4/chat/completions
 // ═══════════════════════════════════════════════════════════════
 
+import { createHash } from "crypto";
 import { Router, type Request, type Response } from "express";
 import type {
   RequestContext,
@@ -16,6 +17,7 @@ import type {
   DemandSignalEvent,
   BundleSessionRecord,
   TransactionRecord,
+  X402ExecutionRecord,
   GatewayConfig,
 } from "../types";
 import type { RouteResolver } from "../services/routeResolver";
@@ -45,6 +47,8 @@ export interface ProxyRouteConfig {
   gatewayConfig?: GatewayConfig;
   /** Persist transaction records (for x402 deferred settlement). */
   persistTransaction?: TransactionPersistFn;
+  /** Persist x402 execution settlement state for reconciliation. */
+  persistX402Execution?: (record: X402ExecutionRecord) => Promise<void>;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -228,11 +232,15 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       credential
     );
 
+    let x402SettlementStatus: "settled" | "pending_reconciliation" | "upstream_failed" | undefined;
+
     // ─── 6b. Settle deferred x402 payment (pay-on-success) ───
     // If the middleware verified an x402 payment but deferred settlement,
     // settle now only if the upstream returned a non-5xx status.
     if (ctx.x402DeferredPayment && proxyResult.statusCode < 500) {
       const deferred = ctx.x402DeferredPayment;
+      const paymentHeaderHash = createHash("sha256").update(deferred.paymentHeader).digest("hex");
+      const split = billingService.computeSplit(deferred.currentPriceUsdc);
       const adapter = new X402Adapter({
         facilitatorUrl: config.gatewayConfig?.x402FacilitatorUrl || "",
         network: config.gatewayConfig?.x402Network || "",
@@ -246,6 +254,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       );
 
       if (settleResult.success) {
+        x402SettlementStatus = "settled";
         // Build x402 context now that settlement is complete.
         const paymentContext = adapter.buildPaymentContext(
           deferred.payerAddress,
@@ -256,32 +265,91 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
         );
         ctx.x402 = paymentContext;
 
-        // Persist transaction record.
-        if (config.persistTransaction) {
-          const txRecordX402: TransactionRecord = {
+        if (config.persistX402Execution) {
+          const settledRecord: X402ExecutionRecord = {
             requestId: ctx.requestId,
             listingId: route.listingId,
-            buyerId: deferred.payerAddress,
-            priceUsdc: deferred.currentPriceUsdc,
+            listingSlug: deferred.listingSlug,
+            payerAddress: deferred.payerAddress,
+            paymentHeaderHash,
+            paymentHeader: null,
+            paymentRequirement: deferred.paymentRequirement,
+            status: "SETTLED",
+            quotedPriceUsdc: deferred.currentPriceUsdc,
             platformFeeUsdc: paymentContext.platformFeeUsdc,
             providerAmountUsdc: paymentContext.providerAmountUsdc,
-            feeRateApplied: config.gatewayConfig?.platformFeeRate || 0.12,
+            upstreamStatus: proxyResult.statusCode,
             responseTimeMs: proxyResult.latencyMs,
-            httpStatus: proxyResult.statusCode,
             bytesTransferred: proxyResult.bytesTransferred,
+            txHash: settleResult.txHash || null,
           };
-          config.persistTransaction(txRecordX402).catch((err) =>
-            console.error("[Proxy] x402 transaction persist error:", err, { requestId: ctx.requestId })
-          );
+          try {
+            await config.persistX402Execution(settledRecord);
+          } catch (err) {
+            console.error("[Proxy] x402 settlement ledger persist error:", err, { requestId: ctx.requestId });
+          }
         }
 
         console.log(`[Proxy] x402 settled after success: ${settleResult.txHash} (${deferred.listingSlug})`);
       } else {
+        x402SettlementStatus = "pending_reconciliation";
+        if (config.persistX402Execution) {
+          const pendingRecord: X402ExecutionRecord = {
+            requestId: ctx.requestId,
+            listingId: route.listingId,
+            listingSlug: deferred.listingSlug,
+            payerAddress: deferred.payerAddress,
+            paymentHeaderHash,
+            paymentHeader: deferred.paymentHeader,
+            paymentRequirement: deferred.paymentRequirement,
+            status: "SETTLEMENT_PENDING",
+            quotedPriceUsdc: split.price,
+            platformFeeUsdc: split.platformFee,
+            providerAmountUsdc: split.providerAmount,
+            upstreamStatus: proxyResult.statusCode,
+            responseTimeMs: proxyResult.latencyMs,
+            bytesTransferred: proxyResult.bytesTransferred,
+            lastError: settleResult.error || "Settlement failed",
+          };
+          try {
+            await config.persistX402Execution(pendingRecord);
+          } catch (err) {
+            console.error("[Proxy] x402 reconciliation persist error:", err, { requestId: ctx.requestId });
+          }
+        }
         console.error(`[Proxy] x402 post-success settlement failed: ${settleResult.error}`, { requestId: ctx.requestId });
-        // Upstream succeeded but payment settlement failed — still return the response
-        // but log for manual reconciliation. The buyer got their response.
+        // Upstream succeeded but payment settlement failed — return the response
+        // with a truthful settlement status header so callers know reconciliation is pending.
       }
     } else if (ctx.x402DeferredPayment && proxyResult.statusCode >= 500) {
+      x402SettlementStatus = "upstream_failed";
+      if (config.persistX402Execution) {
+        const deferred = ctx.x402DeferredPayment;
+        const paymentHeaderHash = createHash("sha256").update(deferred.paymentHeader).digest("hex");
+        const split = billingService.computeSplit(deferred.currentPriceUsdc);
+        const upstreamFailedRecord: X402ExecutionRecord = {
+          requestId: ctx.requestId,
+          listingId: route.listingId,
+          listingSlug: deferred.listingSlug,
+          payerAddress: deferred.payerAddress,
+          paymentHeaderHash,
+          paymentHeader: null,
+          paymentRequirement: deferred.paymentRequirement,
+          status: "UPSTREAM_FAILED",
+          quotedPriceUsdc: split.price,
+          platformFeeUsdc: split.platformFee,
+          providerAmountUsdc: split.providerAmount,
+          upstreamStatus: proxyResult.statusCode,
+          responseTimeMs: proxyResult.latencyMs,
+          bytesTransferred: proxyResult.bytesTransferred,
+          lastError: `Upstream returned ${proxyResult.statusCode}`,
+        };
+        try {
+          await config.persistX402Execution(upstreamFailedRecord);
+        } catch (err) {
+          console.error("[Proxy] x402 upstream-failure ledger persist error:", err, { requestId: ctx.requestId });
+        }
+      }
       // Upstream failed — do NOT settle. Buyer keeps their USDC.
       console.log(`[Proxy] x402 NOT settled — upstream returned ${proxyResult.statusCode} (${ctx.x402DeferredPayment.listingSlug})`);
     }
@@ -333,6 +401,10 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       res.setHeader("X-NexusX-Fee-USDC", ctx.x402.platformFeeUsdc.toFixed(6));
       res.setHeader("X-NexusX-Payment", "x402");
       res.setHeader("X-NexusX-TxHash", ctx.x402.txHash);
+      res.setHeader("X-NexusX-Settlement-Status", "settled");
+    } else if (ctx.authMode === "x402" && x402SettlementStatus) {
+      res.setHeader("X-NexusX-Payment", "x402");
+      res.setHeader("X-NexusX-Settlement-Status", x402SettlementStatus);
     } else if (txRecord?.billingMode === "BUNDLE_STEP") {
       res.setHeader("X-NexusX-Price-USDC", "0.000000");
       res.setHeader("X-NexusX-Fee-USDC", "0.000000");

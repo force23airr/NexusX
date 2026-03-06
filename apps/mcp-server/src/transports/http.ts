@@ -21,14 +21,31 @@ interface SessionEntry {
 const SESSION_IDLE_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const startedAt = Date.now();
 
+interface HttpTransportOptions {
+  port: number;
+  host: string;
+  allowedOrigins: string[];
+}
+
+function isLoopbackHost(host: string): boolean {
+  return host === "127.0.0.1" || host === "::1" || host === "localhost";
+}
+
+function allowedOrigin(origin: string | undefined, allowedOrigins: string[]): string | null {
+  if (!origin) return null;
+  if (allowedOrigins.includes("*")) return "*";
+  return allowedOrigins.includes(origin) ? origin : null;
+}
+
 /**
  * Start the MCP server on an Express HTTP server.
  * Handles session management and multi-tenant API keys.
  */
 export async function startHttpTransport(
   server: McpServer,
-  port: number,
+  options: HttpTransportOptions,
 ): Promise<void> {
+  const { port, host, allowedOrigins } = options;
   const app = express();
   app.disable("x-powered-by");
   const sessions = new Map<string, SessionEntry>();
@@ -37,22 +54,37 @@ export async function startHttpTransport(
   app.use(express.json());
 
   // ─── CORS ───
-  app.use((_req: Request, res: Response, next: NextFunction) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Mcp-Session-Id");
-    res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
-    if (_req.method === "OPTIONS") { res.status(204).end(); return; }
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const origin = allowedOrigin(req.headers.origin, allowedOrigins);
+    if (origin) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+      res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, Mcp-Session-Id");
+      res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
+    }
+    if (req.method === "OPTIONS") { res.status(204).end(); return; }
     next();
   });
 
-  // ─── Optional Bearer Token Auth ───
+  // ─── Bearer Token Auth ───
   const authToken = process.env.MCP_AUTH_TOKEN;
+  const requiresAuth = !isLoopbackHost(host);
+  if (requiresAuth && !authToken) {
+    throw new Error("[MCP HTTP] MCP_AUTH_TOKEN is required when binding a non-loopback host.");
+  }
   if (authToken) {
     app.use("/mcp", (req: Request, res: Response, next: NextFunction) => {
       if (req.method === "OPTIONS") return next();
       const bearer = req.headers.authorization?.replace("Bearer ", "");
-      if (!bearer || !timingSafeEqual(Buffer.from(bearer), Buffer.from(authToken))) {
+      if (!bearer) {
+        res.status(401).json({ error: "Invalid or missing auth token" });
+        return;
+      }
+
+      const provided = Buffer.from(bearer);
+      const expected = Buffer.from(authToken);
+      if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
         res.status(401).json({ error: "Invalid or missing auth token" });
         return;
       }
@@ -119,7 +151,7 @@ export async function startHttpTransport(
       activeSessions: sessions.size,
       authEnabled: !!authToken,
       uptimeSeconds: Math.floor((Date.now() - startedAt) / 1000),
-      endpoint: `http://localhost:${port}/mcp`,
+      endpoint: `http://${host}:${port}/mcp`,
       timestamp: new Date().toISOString(),
     });
   });
@@ -137,9 +169,9 @@ export async function startHttpTransport(
   }, 60_000);
 
   // ─── Start ───
-  app.listen(port, "0.0.0.0", () => {
-    console.error(`[MCP] HTTP transport listening on 0.0.0.0:${port}`);
-    console.error(`[MCP] Endpoint: http://localhost:${port}/mcp`);
-    console.error(`[MCP] Health:   http://localhost:${port}/health`);
+  app.listen(port, host, () => {
+    console.error(`[MCP] HTTP transport listening on ${host}:${port}`);
+    console.error(`[MCP] Endpoint: http://${host}:${port}/mcp`);
+    console.error(`[MCP] Health:   http://${host}:${port}/health`);
   });
 }

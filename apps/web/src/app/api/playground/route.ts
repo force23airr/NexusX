@@ -1,11 +1,28 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { assertSafeHttpUrl, safeFetch } from "@/lib/ssrf";
 
 
 // Simple in-memory rate limiter
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 const RATE_LIMIT = 20;
 const RATE_WINDOW_MS = 60_000;
+const STRIPPED_REQUEST_HEADERS = new Set([
+  "authorization",
+  "cookie",
+  "host",
+  "x-payment",
+  "x-nexusx-sandbox",
+  "x-nexusx-key",
+  "x-nexusx-request-id",
+  "x-nexusx-bundle-session-id",
+  "x-nexusx-bundle-step-index",
+]);
+const STRIPPED_RESPONSE_HEADERS = new Set([
+  "set-cookie",
+  "server",
+  "x-powered-by",
+]);
 
 function checkRateLimit(ip: string): boolean {
   const now = Date.now();
@@ -51,6 +68,15 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid URL" }, { status: 400 });
   }
 
+  try {
+    await assertSafeHttpUrl(parsedUrl.toString());
+  } catch (error) {
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : "Unsafe URL" },
+      { status: 400 },
+    );
+  }
+
   const origin = parsedUrl.origin;
   const matchingListing = await prisma.listing.findFirst({
     where: {
@@ -73,22 +99,27 @@ export async function POST(req: NextRequest) {
   // Proxy the request
   const startTime = Date.now();
   try {
+    const sanitizedHeaders = Object.fromEntries(
+      Object.entries(headers || {}).filter(([key]) => !STRIPPED_REQUEST_HEADERS.has(key.toLowerCase())),
+    );
     const fetchOptions: RequestInit = {
       method: method.toUpperCase(),
-      headers: headers || {},
+      headers: sanitizedHeaders,
     };
 
     if (requestBody && !["GET", "HEAD"].includes(method.toUpperCase())) {
       fetchOptions.body = requestBody;
     }
 
-    const response = await fetch(url, fetchOptions);
+    const response = await safeFetch(url, fetchOptions, { maxRedirects: 2 });
     const responseTimeMs = Date.now() - startTime;
     const responseBody = await response.text();
 
     const responseHeaders: Record<string, string> = {};
     response.headers.forEach((value, key) => {
-      responseHeaders[key] = value;
+      if (!STRIPPED_RESPONSE_HEADERS.has(key.toLowerCase())) {
+        responseHeaders[key] = value;
+      }
     });
 
     return NextResponse.json({

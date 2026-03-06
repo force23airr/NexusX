@@ -24,6 +24,9 @@ export type ListingLookupFn = (slug: string) => Promise<ListingRoute | null>;
 /** Database query function to resolve a listing by ID. */
 export type ListingByIdFn = (id: string) => Promise<ListingRoute | null>;
 
+/** Shared control-plane version loader for cross-instance cache invalidation. */
+export type RouteVersionLoaderFn = () => Promise<number | null>;
+
 // ─────────────────────────────────────────────────────────────
 // SERVICE
 // ─────────────────────────────────────────────────────────────
@@ -34,16 +37,24 @@ export class RouteResolver {
   private cacheTtlMs: number;
   private lookupBySlug: ListingLookupFn;
   private lookupById: ListingByIdFn;
+  private versionLoader?: RouteVersionLoaderFn;
+  private versionCheckIntervalMs: number;
+  private lastVersionCheckAt = 0;
+  private lastSeenVersion: number | null = null;
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor(
     lookupBySlug: ListingLookupFn,
     lookupById: ListingByIdFn,
-    cacheTtlMs: number = 60_000
+    cacheTtlMs: number = 60_000,
+    versionLoader?: RouteVersionLoaderFn,
+    versionCheckIntervalMs: number = 5_000,
   ) {
     this.lookupBySlug = lookupBySlug;
     this.lookupById = lookupById;
     this.cacheTtlMs = cacheTtlMs;
+    this.versionLoader = versionLoader;
+    this.versionCheckIntervalMs = versionCheckIntervalMs;
 
     // Periodic cache cleanup.
     this.cleanupTimer = setInterval(() => this.evictExpired(), this.cacheTtlMs * 2);
@@ -54,6 +65,8 @@ export class RouteResolver {
    * Returns null if the listing doesn't exist or isn't active.
    */
   async resolveBySlug(slug: string): Promise<ListingRoute | null> {
+    await this.syncVersionIfNeeded();
+
     // Check cache.
     const cached = this.cache.get(slug);
     if (cached && cached.expiresAt > Date.now()) {
@@ -80,6 +93,8 @@ export class RouteResolver {
    * Resolve a listing by ID. Used for demand signal routing.
    */
   async resolveById(id: string): Promise<ListingRoute | null> {
+    await this.syncVersionIfNeeded();
+
     // Check if we have the slug cached via ID mapping.
     const slug = this.idToSlug.get(id);
     if (slug) {
@@ -121,6 +136,33 @@ export class RouteResolver {
    */
   stats(): { size: number; ttlMs: number } {
     return { size: this.cache.size, ttlMs: this.cacheTtlMs };
+  }
+
+  private async syncVersionIfNeeded(): Promise<void> {
+    if (!this.versionLoader) {
+      return;
+    }
+
+    const now = Date.now();
+    if (now - this.lastVersionCheckAt < this.versionCheckIntervalMs) {
+      return;
+    }
+    this.lastVersionCheckAt = now;
+
+    try {
+      const version = await this.versionLoader();
+      if (version === null || version === undefined) {
+        return;
+      }
+
+      if (this.lastSeenVersion !== null && version !== this.lastSeenVersion) {
+        this.invalidateAll();
+      }
+
+      this.lastSeenVersion = version;
+    } catch (err) {
+      console.warn("[RouteResolver] Failed to load shared route version:", err);
+    }
   }
 
   /** Remove expired entries. */

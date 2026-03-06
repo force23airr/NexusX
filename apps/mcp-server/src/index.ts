@@ -38,7 +38,11 @@ async function main(): Promise<void> {
   if (config.transport === "stdio") {
     await startStdioTransport(server);
   } else {
-    await startHttpTransport(server, config.httpPort);
+    await startHttpTransport(server, {
+      port: config.httpPort,
+      host: config.httpHost,
+      allowedOrigins: config.httpAllowedOrigins,
+    });
   }
 
   // ─── Graceful Shutdown ───

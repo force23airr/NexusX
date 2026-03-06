@@ -7,10 +7,12 @@
 
 import { Prisma, PrismaClient } from "@prisma/client";
 import Redis from "ioredis";
+import { GATEWAY_ROUTE_VERSION_KEY } from "@nexusx/database";
 import { startGateway } from "./server";
 import type { GatewayDependencies } from "./server";
 import type { BundleSessionFinalizeResult, BundleSessionRecord } from "./types";
 import { PriceWebSocketServer } from "./services/priceWebSocket";
+import { persistX402ExecutionRecord } from "./services/x402ExecutionLedger";
 
 const prisma = new PrismaClient();
 
@@ -124,6 +126,22 @@ const deps: GatewayDependencies = {
         bytesTransferred: record.bytesTransferred,
       },
     });
+  },
+
+  persistX402Execution: async (record) => {
+    await persistX402ExecutionRecord(prisma, record);
+  },
+
+  loadRouteVersion: async () => {
+    const row = await prisma.platformConfig.findUnique({
+      where: { key: GATEWAY_ROUTE_VERSION_KEY },
+      select: { value: true },
+    });
+    if (!row || typeof row.value !== "object" || Array.isArray(row.value) || row.value === null) {
+      return 0;
+    }
+    const version = (row.value as Record<string, unknown>).version;
+    return typeof version === "number" && Number.isFinite(version) ? Math.trunc(version) : 0;
   },
 
   registerBundleSession: async (input) => {

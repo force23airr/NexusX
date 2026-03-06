@@ -74,6 +74,13 @@ export {
   checkDemandGapMatch,
 } from "./demand-gap-tracker";
 
+// ─── Control Plane ───
+export {
+  GATEWAY_ROUTE_VERSION_KEY,
+  getControlPlaneVersion,
+  bumpControlPlaneVersion,
+} from "./control-plane";
+
 // ─── Manifest (.well-known/nexusx.json) ───
 export {
   validateManifest,

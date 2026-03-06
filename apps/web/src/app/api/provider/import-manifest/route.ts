@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
-import { isPrivateHost } from "@/lib/ssrf";
+import { assertSafeHttpUrl, safeFetch } from "@/lib/ssrf";
+import { extractListingWriteData } from "@/lib/providerListing";
 import { validateManifest } from "@nexusx/database";
-import type { ListingType } from "@prisma/client";
+import { Prisma, type ListingType } from "@prisma/client";
 
 /**
  * POST /api/provider/import-manifest
@@ -31,22 +32,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Domain is required" }, { status: 400 });
   }
 
-  // SSRF check
-  if (isPrivateHost(domain)) {
-    return NextResponse.json({ error: "Private/reserved addresses are not allowed" }, { status: 400 });
-  }
-
   // Fetch manifest
   const manifestUrl = `https://${domain}/.well-known/nexusx.json`;
   let manifestData: unknown;
 
   try {
+    await assertSafeHttpUrl(manifestUrl);
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10_000);
-    const res = await fetch(manifestUrl, {
+    const res = await safeFetch(manifestUrl, {
       signal: controller.signal,
       headers: { Accept: "application/json" },
-    });
+    }, { maxRedirects: 2 });
     clearTimeout(timeout);
 
     if (!res.ok) {
@@ -109,29 +106,42 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const listing = await prisma.listing.create({
-        data: {
-          providerId: result.user.id,
-          categoryId,
-          slug,
-          name: cap.name,
-          description: cap.description,
-          listingType: (cap.listingType || "REST_API") as ListingType,
-          status: "DRAFT",
-          baseUrl: cap.baseUrl,
-          healthCheckUrl: cap.healthCheckUrl || null,
-          docsUrl: cap.docsUrl || null,
-          authType: cap.authType || "api_key",
-          floorPriceUsdc: cap.pricing.floorUsdc,
-          ceilingPriceUsdc: cap.pricing.ceilingUsdc || null,
-          currentPriceUsdc: cap.pricing.floorUsdc,
-          capacityPerMinute: cap.capacityPerMinute || 60,
-          isUnique: false,
-          tags: cap.tags || [],
-          intents: cap.intents,
-          sampleRequest: cap.sampleRequest ? JSON.parse(JSON.stringify(cap.sampleRequest)) : undefined,
-          sampleResponse: cap.sampleResponse ? JSON.parse(JSON.stringify(cap.sampleResponse)) : undefined,
+      const capabilityTags = Array.from(new Set([...(cap.tags || []), ...cap.intents]));
+      const listingData = await extractListingWriteData({
+        name: cap.name,
+        description: cap.description,
+        listingType: (cap.listingType || "REST_API") as ListingType,
+        baseUrl: cap.baseUrl,
+        healthCheckUrl: cap.healthCheckUrl || null,
+        docsUrl: cap.docsUrl || null,
+        authType: cap.authType || "api_key",
+        floorPriceUsdc: cap.pricing.floorUsdc,
+        ceilingPriceUsdc: cap.pricing.ceilingUsdc || null,
+        capacityPerMinute: cap.capacityPerMinute || 60,
+        tags: cap.tags || [],
+        intents: cap.intents,
+        capabilityTags,
+        domainMetadata: {
+          manifestProvider: manifest.provider.name,
+          manifestVersion: manifest.version,
+          endpoint: cap.endpoint ?? null,
         },
+        sampleRequest: cap.sampleRequest ? JSON.parse(JSON.stringify(cap.sampleRequest)) : undefined,
+        sampleResponse: cap.sampleResponse ? JSON.parse(JSON.stringify(cap.sampleResponse)) : undefined,
+      });
+
+      const createData: Prisma.ListingUncheckedCreateInput = {
+        providerId: result.user.id,
+        categoryId,
+        slug,
+        status: "DRAFT",
+        currentPriceUsdc: Number(listingData.floorPriceUsdc ?? cap.pricing.floorUsdc),
+        isUnique: false,
+        ...listingData,
+      } as Prisma.ListingUncheckedCreateInput;
+
+      const listing = await prisma.listing.create({
+        data: createData,
       });
 
       imported.push({ id: listing.id, slug: listing.slug, name: listing.name });

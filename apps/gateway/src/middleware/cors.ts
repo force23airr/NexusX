@@ -34,6 +34,7 @@ const EXPOSED_HEADERS = [
   "X-NexusX-Price-USDC",
   "X-NexusX-Fee-USDC",
   "X-NexusX-Payment",
+  "X-NexusX-Settlement-Status",
   "X-NexusX-TxHash",
   "X-NexusX-Bundle-Quoted-Price-USDC",
   "X-NexusX-Bundle-Session-Id",
