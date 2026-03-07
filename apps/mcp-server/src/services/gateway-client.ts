@@ -73,6 +73,7 @@ export class GatewayClient {
     path: string;
     body?: unknown;
     query?: Record<string, string>;
+    queryId?: string;
     headers?: Record<string, string>;
     bundleSessionId?: string;
     bundleStepIndex?: number;
@@ -85,6 +86,7 @@ export class GatewayClient {
       path,
       body,
       query,
+      queryId,
       headers: extraHeaders,
       bundleSessionId,
       bundleStepIndex,
@@ -118,6 +120,9 @@ export class GatewayClient {
 
     if (this.sandbox) {
       headers["X-NexusX-Sandbox"] = "true";
+    }
+    if (queryId) {
+      headers["X-NexusX-Query-Id"] = queryId;
     }
     if (bundleSessionId) {
       headers["X-NexusX-Bundle-Session-Id"] = bundleSessionId;

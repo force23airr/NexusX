@@ -340,7 +340,8 @@ model Listing {
   ratings                   Rating[]
   watchlistItems            WatchlistItem[]
   subscriptions             Subscription[]
-  queryLogs                 QueryLog[]
+  matchedQueryLogs          QueryLog[]                  @relation("MatchedQueryLogListing")
+  selectedQueryLogs         QueryLog[]                  @relation("SelectedQueryLogListing")
   providerMetrics           ProviderMetricRaw[]
   bundleProviderSettlements BundleProviderSettlement[]
   x402Settlements           X402SettlementRecord[]
@@ -865,20 +866,25 @@ model QueryLog {
   normalizedQuery  String?  @map("normalized_query")
   intentClassified String?  @map("intent_classified")
   matchedListingId String?  @map("matched_listing_id") @db.Uuid
+  selectedListingId String? @map("selected_listing_id") @db.Uuid
   confidenceScore  Decimal? @map("confidence_score") @db.Decimal(5, 4)
   alternativeIds   String[] @default([]) @map("alternative_ids")
   routeTimeMs      Int?     @map("route_time_ms")
   wasAccepted      Boolean? @map("was_accepted")
+  selectedAt       DateTime? @map("selected_at")
   createdAt        DateTime @default(now()) @map("created_at")
 
   // Relations
-  buyer          User     @relation(fields: [buyerId], references: [id])
-  matchedListing Listing? @relation(fields: [matchedListingId], references: [id])
+  buyer           User     @relation(fields: [buyerId], references: [id])
+  matchedListing  Listing? @relation("MatchedQueryLogListing", fields: [matchedListingId], references: [id])
+  selectedListing Listing? @relation("SelectedQueryLogListing", fields: [selectedListingId], references: [id])
 
   @@index([buyerId, createdAt])
   @@index([matchedListingId])
+  @@index([selectedListingId])
   @@index([intentClassified])
   @@index([createdAt])
+  @@index([selectedAt])
   @@map("query_logs")
 }
 

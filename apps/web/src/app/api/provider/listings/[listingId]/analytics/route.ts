@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
-
+import { getCurrentProvider } from "@/lib/auth";
+import { getProviderObservabilitySnapshot } from "@nexusx/database";
 
 export async function GET(
   req: NextRequest,
@@ -9,6 +10,23 @@ export async function GET(
   const { listingId } = await params;
   const { searchParams } = new URL(req.url);
   const period = searchParams.get("period") || "7d";
+  const provider = await getCurrentProvider(req);
+
+  if (!provider) {
+    return NextResponse.json({ error: "Authentication required" }, { status: 401 });
+  }
+
+  const listing = await prisma.listing.findFirst({
+    where: {
+      id: listingId,
+      providerId: provider.user.id,
+    },
+    select: { id: true },
+  });
+
+  if (!listing) {
+    return NextResponse.json({ error: "Listing not found" }, { status: 404 });
+  }
 
   // Determine time window
   const now = new Date();
@@ -81,6 +99,19 @@ export async function GET(
     callBuckets.set(day, (callBuckets.get(day) || 0) + 1);
   }
 
+  const periodHours: Record<string, number> = {
+    "1h": 1,
+    "24h": 24,
+    "7d": 24 * 7,
+    "30d": 24 * 30,
+    all: 24 * 365,
+  };
+  const observability = await getProviderObservabilitySnapshot(prisma, {
+    providerId: provider.user.id,
+    listingId,
+    windowHours: periodHours[period] ?? 24 * 7,
+  });
+
   return NextResponse.json({
     period,
     totalCalls,
@@ -101,5 +132,6 @@ export async function GET(
       timestamp: day,
       calls,
     })),
+    observability: observability.discovery,
   });
 }

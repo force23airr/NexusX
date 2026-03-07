@@ -7,7 +7,7 @@
 
 import { Prisma, PrismaClient } from "@prisma/client";
 import Redis from "ioredis";
-import { GATEWAY_ROUTE_VERSION_KEY } from "@nexusx/database";
+import { GATEWAY_ROUTE_VERSION_KEY, markQueryLogSelected } from "@nexusx/database";
 import { startGateway } from "./server";
 import type { GatewayDependencies } from "./server";
 import type { BundleSessionFinalizeResult, BundleSessionRecord } from "./types";
@@ -130,6 +130,10 @@ const deps: GatewayDependencies = {
 
   persistX402Execution: async (record) => {
     await persistX402ExecutionRecord(prisma, record);
+  },
+
+  markQuerySelection: async (input) => {
+    return markQueryLogSelected(prisma, input);
   },
 
   loadRouteVersion: async () => {

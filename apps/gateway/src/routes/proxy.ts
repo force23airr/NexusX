@@ -49,6 +49,12 @@ export interface ProxyRouteConfig {
   persistTransaction?: TransactionPersistFn;
   /** Persist x402 execution settlement state for reconciliation. */
   persistX402Execution?: (record: X402ExecutionRecord) => Promise<void>;
+  /** Mark a discovery query as converted once execution reaches the provider. */
+  markQuerySelection?: (input: {
+    queryLogId: string;
+    listingId: string;
+    buyerId?: string;
+  }) => Promise<boolean>;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -78,6 +84,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       return;
     }
 
+    const discoveryQueryId = parseQueryIdHeader(req.headers["x-nexusx-query-id"]);
     const listingSlug = req.params.listingSlug as string;
 
     // ─── 1. Resolve listing route ───
@@ -384,6 +391,19 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       timestamp: Date.now(),
     }).catch(() => {});
 
+    if (discoveryQueryId && proxyResult.statusCode < 500 && config.markQuerySelection) {
+      config.markQuerySelection({
+        queryLogId: discoveryQueryId,
+        listingId: route.listingId,
+        buyerId: ctx.authMode === "api_key" ? ctx.buyerId : undefined,
+      }).catch((err) => {
+        console.error("[Proxy] Failed to mark discovery conversion:", err, {
+          requestId: ctx.requestId,
+          queryId: discoveryQueryId,
+        });
+      });
+    }
+
     // ─── 8. Send response to buyer ───
     // Set upstream response headers.
     for (const [key, value] of Object.entries(proxyResult.headers)) {
@@ -450,6 +470,14 @@ function getHeaderValue(header: string | string[] | undefined): string | undefin
   }
   const trimmed = header.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parseQueryIdHeader(header: string | string[] | undefined): string | undefined {
+  const value = getHeaderValue(header);
+  if (!value) return undefined;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+    ? value
+    : undefined;
 }
 
 function parseStepIndex(raw: string | undefined): number | undefined {

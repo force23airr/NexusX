@@ -32,6 +32,7 @@ export interface DiscoveredListing {
   slug: string;
   name: string;
   description: string;
+  queryId?: string | null;
   listingType: string;
   categorySlug: string;
   tags: string[];

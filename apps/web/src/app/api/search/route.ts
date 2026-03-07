@@ -14,6 +14,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
+import { getUserFromApiKey } from "@/lib/apiKeyAuth";
 import { randomUUID } from "crypto";
 import {
   buildMetadataWhereClause,
@@ -929,10 +930,11 @@ export async function POST(req: NextRequest) {
   const routeTimeMs = Math.round(performance.now() - startTime);
 
   // 5. Log query (fire-and-forget)
-  const buyer = await getCurrentUser();
+  const buyer = await getUserFromApiKey(req) ?? await getCurrentUser();
   if (buyer) {
     prisma.queryLog.create({
       data: {
+        id: queryId,
         buyerId: buyer.id,
         rawQuery: query,
         normalizedQuery: intent.normalizedQuery,

@@ -18,6 +18,7 @@ import type {
   WalletSettings,
   ProviderProfile,
   ProviderAnalytics,
+  ProviderObservability,
   MarketActivity,
   ActivityEntry,
   DetectResponse,
@@ -283,6 +284,17 @@ export const provider = {
     if (params?.listingId) qs.set("listingId", params.listingId);
     if (params?.limit) qs.set("limit", String(params.limit));
     return apiFetch(`/api/provider/activity?${qs}`);
+  },
+
+  /** Get provider-scoped operational observability snapshot. */
+  async getObservability(params?: {
+    listingId?: string;
+    windowHours?: number;
+  }): Promise<ProviderObservability> {
+    const qs = new URLSearchParams();
+    if (params?.listingId) qs.set("listingId", params.listingId);
+    if (params?.windowHours) qs.set("windowHours", String(params.windowHours));
+    return apiFetch(`/api/provider/observability?${qs}`);
   },
 
   /** Get provider payout history. */

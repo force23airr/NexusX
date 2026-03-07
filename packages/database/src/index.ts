@@ -81,6 +81,17 @@ export {
   bumpControlPlaneVersion,
 } from "./control-plane";
 
+// ─── Operational Observability ───
+export {
+  markQueryLogSelected,
+  getPlatformObservabilitySnapshot,
+  getProviderObservabilitySnapshot,
+  type PlatformObservabilitySnapshot,
+  type ProviderObservabilitySnapshot,
+  type PipelineHealthSnapshot,
+  type DiscoveryConversionSnapshot,
+} from "./observability";
+
 // ─── Manifest (.well-known/nexusx.json) ───
 export {
   validateManifest,

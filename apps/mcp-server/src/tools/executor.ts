@@ -85,6 +85,7 @@ export class ToolExecutor {
       path: path || "/",
       body,
       query,
+      queryId: listing.queryId ?? undefined,
       headers,
     });
 

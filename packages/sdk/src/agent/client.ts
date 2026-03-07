@@ -23,6 +23,10 @@ import type {
   BudgetState,
 } from "./types";
 
+function readOptionalString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 // ─────────────────────────────────────────────────────────────
 // CLIENT
 // ─────────────────────────────────────────────────────────────
@@ -142,7 +146,10 @@ export class NexusXAgent {
 
     const response = await fetch(`${this.webUrl}/api/search`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(this.apiKey ? { Authorization: `Bearer ${this.apiKey}` } : {}),
+      },
       body: JSON.stringify({
         query,
         limit: options?.limit,
@@ -154,12 +161,14 @@ export class NexusXAgent {
 
     const data = await response.json() as Record<string, unknown>;
     const rawMatches = Array.isArray(data.matches) ? data.matches : [];
+    const queryId = readOptionalString(data.queryId);
 
     const matches: SearchMatch[] = rawMatches.map((m: Record<string, unknown>) => ({
       slug: String((m.listing as Record<string, unknown>)?.slug ?? ""),
       name: String((m.listing as Record<string, unknown>)?.name ?? ""),
       description: String((m.listing as Record<string, unknown>)?.description ?? ""),
       categorySlug: String((m.listing as Record<string, unknown>)?.categorySlug ?? ""),
+      queryId,
       currentPriceUsdc: Number((m.listing as Record<string, unknown>)?.currentPriceUsdc ?? 0),
       qualityScore: Number((m.listing as Record<string, unknown>)?.qualityScore ?? 0),
       score: Number(m.score ?? 0),
@@ -167,7 +176,7 @@ export class NexusXAgent {
     }));
 
     return {
-      queryId: String(data.queryId ?? ""),
+      queryId,
       matches,
       totalEvaluated: Number(data.totalEvaluated ?? 0),
       routeTimeMs: Number(data.routeTimeMs ?? 0),
@@ -277,6 +286,9 @@ export class NexusXAgent {
 
     if (this.sandbox) {
       headers["X-NexusX-Sandbox"] = "true";
+    }
+    if (params.queryId) {
+      headers["X-NexusX-Query-Id"] = params.queryId;
     }
 
     const init: RequestInit = { method, headers, signal: AbortSignal.timeout(this.timeoutMs) };

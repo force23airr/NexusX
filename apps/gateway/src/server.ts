@@ -62,6 +62,12 @@ export interface GatewayDependencies {
   persistTransaction: TransactionPersistFn;
   /** Database: Persist x402 execution settlement state (optional). */
   persistX402Execution?: (record: X402ExecutionRecord) => Promise<void>;
+  /** Observability: mark a discovery query as having converted into execution. */
+  markQuerySelection?: (input: {
+    queryLogId: string;
+    listingId: string;
+    buyerId?: string;
+  }) => Promise<boolean>;
   /** Shared control plane: current route config version (optional). */
   loadRouteVersion?: () => Promise<number | null>;
   /** Database: Register a pre-execution bundle session. */
@@ -193,6 +199,7 @@ export function createGatewayApp(
     gatewayConfig: cfg,
     persistTransaction: deps.persistTransaction,
     persistX402Execution: deps.persistX402Execution,
+    markQuerySelection: deps.markQuerySelection,
   });
 
   // Proxy routes: /v1/:listingSlug/*

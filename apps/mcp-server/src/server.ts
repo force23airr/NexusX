@@ -7,6 +7,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { createHash, timingSafeEqual } from "crypto";
 import { z } from "zod";
 import type { McpServerConfig } from "./types";
 import { ToolRegistry } from "./tools/registry";
@@ -65,7 +66,8 @@ export async function createMcpServer(
   // ─── Services ───
   const x402Mode = !!cdpWallet;
   const gateway = new GatewayClient(config.gatewayUrl, config.apiKey, config.sandbox, x402Mode);
-  const discovery = new DiscoveryService(prisma);
+  const searchBuyerId = await resolveBuyerIdFromApiKey(prisma, config.apiKey);
+  const discovery = new DiscoveryService(prisma, searchBuyerId);
   const bundleEngine = new BundleEngine(prisma);
   const budget = new BudgetTracker(config.sessionBudgetUsdc);
   const priceSubscriber = new PriceSubscriber(config.redisUrl, config.gatewayUrl);
@@ -315,4 +317,33 @@ export async function createMcpServer(
   }
 
   return { server, registry, priceSubscriber, cleanup };
+}
+
+async function resolveBuyerIdFromApiKey(
+  prisma: PrismaClient,
+  rawApiKey: string,
+): Promise<string | null> {
+  if (!rawApiKey.startsWith("nxs_") || rawApiKey.length < 12) {
+    return null;
+  }
+
+  const prefix = rawApiKey.slice(4, 12);
+  const key = await prisma.apiKey.findFirst({
+    where: { keyPrefix: prefix, status: "ACTIVE" },
+    select: {
+      userId: true,
+      keyHash: true,
+      expiresAt: true,
+    },
+  });
+
+  if (!key) return null;
+  if (key.expiresAt && key.expiresAt.getTime() < Date.now()) return null;
+
+  const providedHash = createHash("sha256").update(rawApiKey).digest("hex");
+  if (!timingSafeEqual(Buffer.from(providedHash), Buffer.from(key.keyHash))) {
+    return null;
+  }
+
+  return key.userId;
 }

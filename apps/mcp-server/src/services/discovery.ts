@@ -8,6 +8,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import type { PrismaClient } from "@prisma/client";
+import { randomUUID } from "crypto";
 import {
   buildMetadataWhereClause,
   searchListings,
@@ -24,6 +25,7 @@ export interface DiscoverySearchResult {
   listings: DiscoveredListing[];
   source: "semantic" | "keyword";
   fallbackReason?: FallbackReason;
+  queryId?: string | null;
 }
 
 export class DiscoveryService {
@@ -32,7 +34,10 @@ export class DiscoveryService {
   private embeddingsAvailable: boolean | null = null;
   private embeddingsCheckedAtMs: number | null = null;
 
-  constructor(private prisma: PrismaClient) {
+  constructor(
+    private prisma: PrismaClient,
+    private searchBuyerId?: string | null,
+  ) {
     const openaiKey = process.env.OPENAI_API_KEY;
     if (openaiKey) {
       this.embeddingConfig = { openaiApiKey: openaiKey };
@@ -242,12 +247,16 @@ export class DiscoveryService {
 
       if (results.length === 0) {
         // No semantic match is a valid outcome; do not force keyword fallback.
-        return { listings: [], source: "semantic" };
+        const queryId = await this.logDiscoveryQuery(query, []);
+        return { listings: [], source: "semantic", queryId };
       }
 
+      const listings = results.map((r) => this.semanticToDiscovered(r));
+      const queryId = await this.logDiscoveryQuery(query, listings);
       return {
-        listings: results.map((r) => this.semanticToDiscovered(r)),
+        listings: this.attachQueryId(listings, queryId),
         source: "semantic",
+        queryId,
       };
     } catch (err) {
       const reason: FallbackReason =
@@ -315,11 +324,52 @@ export class DiscoveryService {
       console.error(`[Discovery] Semantic search unavailable, reason: ${reason}`);
     }
 
+    const listings = await this.keywordSearch(query, options);
+    const queryId = await this.logDiscoveryQuery(query, listings);
+
     return {
-      listings: await this.keywordSearch(query, options),
+      listings: this.attachQueryId(listings, queryId),
       source: "keyword",
       fallbackReason: reason,
+      queryId,
     };
+  }
+
+  private attachQueryId(
+    listings: DiscoveredListing[],
+    queryId: string | null,
+  ): DiscoveredListing[] {
+    if (!queryId) return listings;
+    return listings.map((listing) => ({ ...listing, queryId }));
+  }
+
+  private async logDiscoveryQuery(
+    query: string,
+    listings: DiscoveredListing[],
+  ): Promise<string | null> {
+    if (!this.searchBuyerId) {
+      return null;
+    }
+
+    const queryId = randomUUID();
+    try {
+      await this.prisma.queryLog.create({
+        data: {
+          id: queryId,
+          buyerId: this.searchBuyerId,
+          rawQuery: query,
+          normalizedQuery: query.trim().toLowerCase(),
+          intentClassified: "MCP_DISCOVERY",
+          matchedListingId: listings[0]?.id ?? null,
+          alternativeIds: listings.slice(1, 6).map((listing) => listing.id),
+          confidenceScore: listings.length > 0 ? 0.75 : 0,
+        },
+      });
+      return queryId;
+    } catch (err) {
+      console.error("[Discovery] Failed to log MCP discovery query:", err);
+      return null;
+    }
   }
 
   /**

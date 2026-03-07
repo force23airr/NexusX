@@ -180,6 +180,42 @@ export interface ProviderAnalytics {
   qualityScore: number;
   priceHistory: { timestamp: string; price: number }[];
   callVolume: { timestamp: string; calls: number }[];
+  observability?: DiscoveryObservability;
+}
+
+export interface DiscoveryObservability {
+  loggedQueries: number;
+  acceptedQueries: number;
+  conversionRate: number;
+  apiKeyExecutions: number;
+  x402SettledExecutions: number;
+  x402PendingExecutions: number;
+  lastAcceptedAt: string | null;
+}
+
+export interface PipelineHealth {
+  status: "ok" | "warn" | "critical";
+  pendingCount: number;
+  retryBacklogCount: number;
+  staleClaimCount: number;
+  oldestPendingAgeMs: number | null;
+  oldestRetryAgeMs: number | null;
+  lastError: string | null;
+}
+
+export interface PlatformObservability {
+  windowHours: number;
+  indexing: PipelineHealth;
+  settlement: PipelineHealth;
+  discovery: DiscoveryObservability;
+}
+
+export interface ProviderObservability {
+  windowHours: number;
+  provider: {
+    windowHours: number;
+    discovery: DiscoveryObservability;
+  };
 }
 
 // ─── Dashboard Stats ───

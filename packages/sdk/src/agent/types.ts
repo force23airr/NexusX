@@ -72,6 +72,8 @@ export interface CallParams {
   body?: unknown;
   /** Query string parameters. */
   query?: Record<string, string>;
+  /** Search query ID to correlate discovery-to-execution conversion. */
+  queryId?: string;
   /** Extra headers. */
   headers?: Record<string, string>;
 }
@@ -132,6 +134,7 @@ export interface SearchMatch {
   name: string;
   description: string;
   categorySlug: string;
+  queryId?: string;
   currentPriceUsdc: number;
   qualityScore: number;
   score: number;
@@ -156,7 +159,7 @@ export interface SearchOptions {
 }
 
 export interface SearchResult {
-  queryId: string;
+  queryId?: string;
   matches: SearchMatch[];
   totalEvaluated: number;
   routeTimeMs: number;
