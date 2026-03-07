@@ -25,6 +25,7 @@ import type { ProxyService } from "../services/proxyService";
 import type { BillingService, TransactionPersistFn } from "../services/billingService";
 import type { ReliabilityAggregator } from "../services/reliability-aggregator";
 import type { CredentialService } from "../services/credentialService";
+import type { CircuitBreakerService } from "../services/circuitBreaker";
 import { X402Adapter, type PaymentRequirement } from "../services/x402Adapter";
 
 // ─────────────────────────────────────────────────────────────
@@ -43,6 +44,8 @@ export interface ProxyRouteConfig {
   reliabilityAggregator?: ReliabilityAggregator;
   /** Injects upstream provider credentials per listing slug. */
   credentialService?: CredentialService;
+  /** Fails fast when an upstream is repeatedly returning 5xx responses. */
+  circuitBreaker?: CircuitBreakerService;
   /** Gateway config for x402 deferred settlement. */
   gatewayConfig?: GatewayConfig;
   /** Persist transaction records (for x402 deferred settlement). */
@@ -116,6 +119,19 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
         error: "LISTING_UNAVAILABLE",
         message: `Listing "${listingSlug}" is currently ${route.status.toLowerCase()}.`,
         requestId: ctx.requestId,
+      });
+      return;
+    }
+
+    const circuitState = config.circuitBreaker?.beforeRequest(listingSlug);
+    if (circuitState && circuitState.state === "open") {
+      const retryAfterSeconds = Math.max(1, Math.ceil(circuitState.retryAfterMs / 1000));
+      res.setHeader("Retry-After", retryAfterSeconds.toString());
+      res.status(503).json({
+        error: "UPSTREAM_TEMPORARILY_UNAVAILABLE",
+        message: "This provider is temporarily failing. Retry after the cooldown window.",
+        requestId: ctx.requestId,
+        retryAfterSeconds,
       });
       return;
     }
@@ -238,6 +254,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       ctx.requestId,
       credential
     );
+    config.circuitBreaker?.recordResult(listingSlug, proxyResult.statusCode);
 
     let x402SettlementStatus: "settled" | "pending_reconciliation" | "upstream_failed" | undefined;
 

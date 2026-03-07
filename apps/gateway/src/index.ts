@@ -563,6 +563,9 @@ startGateway(deps, {
   x402FacilitatorUrl: process.env.X402_FACILITATOR_URL || "https://x402.org/facilitator",
   x402Network: process.env.X402_NETWORK || "eip155:84532",
   x402PlatformAddress: process.env.X402_PLATFORM_ADDRESS || "",
+  circuitBreakerEnabled: process.env.CIRCUIT_BREAKER_ENABLED !== "false",
+  circuitBreakerFailureThreshold: parseInt(process.env.CIRCUIT_BREAKER_FAILURE_THRESHOLD || "5", 10),
+  circuitBreakerCooldownMs: parseInt(process.env.CIRCUIT_BREAKER_COOLDOWN_MS || "30000", 10),
 }, priceWs);
 
 async function loadFinalizedResult(

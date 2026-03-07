@@ -15,6 +15,7 @@ import { generateApiKey, type ApiKeyRecord } from "../src/middleware/auth";
 import { RateLimiter } from "../src/middleware/rateLimiter";
 import { BillingService } from "../src/services/billingService";
 import { RouteResolver } from "../src/services/routeResolver";
+import { CircuitBreakerService } from "../src/services/circuitBreaker";
 import type {
   ListingRoute,
   DemandSignalEvent,
@@ -317,6 +318,33 @@ describe("RouteResolver", () => {
     const stats = resolver.stats();
     expect(stats.ttlMs).toBe(5000);
     expect(stats.size).toBe(0);
+  });
+});
+
+describe("CircuitBreakerService", () => {
+  it("opens after repeated upstream failures and blocks until cooldown elapses", () => {
+    vi.useFakeTimers();
+    const breaker = new CircuitBreakerService({
+      enabled: true,
+      failureThreshold: 2,
+      cooldownMs: 30_000,
+    });
+
+    expect(breaker.beforeRequest("test-api").state).toBe("closed");
+    breaker.recordResult("test-api", 502);
+    expect(breaker.beforeRequest("test-api").state).toBe("closed");
+
+    breaker.recordResult("test-api", 504);
+    const openState = breaker.beforeRequest("test-api");
+    expect(openState.state).toBe("open");
+    expect(openState.retryAfterMs).toBeGreaterThan(0);
+
+    vi.advanceTimersByTime(30_000);
+    expect(breaker.beforeRequest("test-api").state).toBe("half_open");
+
+    breaker.recordResult("test-api", 200);
+    expect(breaker.beforeRequest("test-api").state).toBe("closed");
+    vi.useRealTimers();
   });
 });
 

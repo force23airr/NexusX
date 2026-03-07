@@ -242,6 +242,12 @@ export interface GatewayConfig {
   bundlePlatformFeeRate: number;
   /** Time-to-live for bundle execution sessions before expiry. */
   bundleSessionTtlMs: number;
+  /** Whether to fail fast on repeatedly failing upstreams. */
+  circuitBreakerEnabled: boolean;
+  /** Number of consecutive upstream 5xx responses before opening the circuit. */
+  circuitBreakerFailureThreshold: number;
+  /** Cooldown period before allowing a half-open probe request. */
+  circuitBreakerCooldownMs: number;
 }
 
 export const DEFAULT_GATEWAY_CONFIG: GatewayConfig = {
@@ -259,4 +265,7 @@ export const DEFAULT_GATEWAY_CONFIG: GatewayConfig = {
   x402PlatformAddress: "",         // Must be set when x402Enabled=true
   bundlePlatformFeeRate: 0.15,
   bundleSessionTtlMs: 30 * 60 * 1000,
+  circuitBreakerEnabled: true,
+  circuitBreakerFailureThreshold: 5,
+  circuitBreakerCooldownMs: 30_000,
 };

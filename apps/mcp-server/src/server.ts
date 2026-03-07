@@ -7,9 +7,9 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { createHash, timingSafeEqual } from "crypto";
 import { z } from "zod";
 import type { McpServerConfig } from "./types";
+import { resolveUserIdFromRawApiKey } from "@nexusx/database";
 import { ToolRegistry } from "./tools/registry";
 import { ToolExecutor } from "./tools/executor";
 import { DiscoveryService } from "./services/discovery";
@@ -323,27 +323,5 @@ async function resolveBuyerIdFromApiKey(
   prisma: PrismaClient,
   rawApiKey: string,
 ): Promise<string | null> {
-  if (!rawApiKey.startsWith("nxs_") || rawApiKey.length < 12) {
-    return null;
-  }
-
-  const prefix = rawApiKey.slice(4, 12);
-  const key = await prisma.apiKey.findFirst({
-    where: { keyPrefix: prefix, status: "ACTIVE" },
-    select: {
-      userId: true,
-      keyHash: true,
-      expiresAt: true,
-    },
-  });
-
-  if (!key) return null;
-  if (key.expiresAt && key.expiresAt.getTime() < Date.now()) return null;
-
-  const providedHash = createHash("sha256").update(rawApiKey).digest("hex");
-  if (!timingSafeEqual(Buffer.from(providedHash), Buffer.from(key.keyHash))) {
-    return null;
-  }
-
-  return key.userId;
+  return resolveUserIdFromRawApiKey(prisma, rawApiKey);
 }

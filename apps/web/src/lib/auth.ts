@@ -104,6 +104,17 @@ export async function requireUser(): Promise<User> {
 }
 
 /**
+ * Require an authenticated admin user.
+ */
+export async function requireAdminUser(): Promise<User> {
+  const user = await requireUser();
+  if (!user.roles.includes("ADMIN")) {
+    throw new Error("Admin privileges required");
+  }
+  return user;
+}
+
+/**
  * Require an authenticated provider — throws if not signed in.
  */
 export async function requireProvider(): Promise<{

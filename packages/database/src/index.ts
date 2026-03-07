@@ -81,6 +81,16 @@ export {
   bumpControlPlaneVersion,
 } from "./control-plane";
 
+export {
+  extractApiKeyPrefix,
+  extractBearerApiKey,
+  hashApiKey,
+  isValidApiKeyFormat,
+  resolveUserFromRawApiKey,
+  resolveUserIdFromRawApiKey,
+  verifyApiKeyHash,
+} from "./api-key-utils";
+
 // ─── Operational Observability ───
 export {
   markQueryLogSelected,

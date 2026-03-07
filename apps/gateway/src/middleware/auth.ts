@@ -7,8 +7,9 @@
 // On success, attaches a RequestContext for downstream handlers.
 // ═══════════════════════════════════════════════════════════════
 
-import { createHash, randomUUID, timingSafeEqual, randomBytes } from "crypto";
+import { randomUUID, randomBytes } from "crypto";
 import type { Request, Response, NextFunction } from "express";
+import { extractApiKeyPrefix, hashApiKey, isValidApiKeyFormat, verifyApiKeyHash } from "@nexusx/database";
 import type { RequestContext } from "../types";
 
 // ─────────────────────────────────────────────────────────────
@@ -78,7 +79,7 @@ export function createAuthMiddleware(
     }
 
     // ─── Extract prefix (first 8 chars) for lookup ───
-    if (rawKey.length < 12) {
+    if (!isValidApiKeyFormat(rawKey)) {
       res.status(401).json({
         error: "INVALID_KEY",
         message: "Malformed API key.",
@@ -87,7 +88,15 @@ export function createAuthMiddleware(
       return;
     }
 
-    const prefix = rawKey.slice(4, 12);
+    const prefix = extractApiKeyPrefix(rawKey);
+    if (!prefix) {
+      res.status(401).json({
+        error: "INVALID_KEY",
+        message: "Malformed API key.",
+        requestId,
+      });
+      return;
+    }
 
     // ─── Lookup by prefix ───
     let record: ApiKeyRecord | null;
@@ -113,8 +122,7 @@ export function createAuthMiddleware(
     }
 
     // ─── Verify full hash (timing-safe) ───
-    const hash = createHash("sha256").update(rawKey).digest("hex");
-    if (!timingSafeEqual(Buffer.from(hash), Buffer.from(record.keyHash))) {
+    if (!verifyApiKeyHash(rawKey, record.keyHash)) {
       res.status(401).json({
         error: "INVALID_KEY",
         message: "API key not recognized.",
@@ -188,7 +196,7 @@ export function generateApiKey(): { rawKey: string; keyHash: string; keyPrefix: 
   const prefix = randomChars(8);
   const body = randomChars(28);
   const rawKey = `nxs_${prefix}_${body}`;
-  const keyHash = createHash("sha256").update(rawKey).digest("hex");
+  const keyHash = hashApiKey(rawKey);
   return { rawKey, keyHash, keyPrefix: prefix };
 }
 

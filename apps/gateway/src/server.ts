@@ -21,6 +21,7 @@ import { BillingService } from "./services/billingService";
 import { CredentialService } from "./services/credentialService";
 import { PriceWebSocketServer } from "./services/priceWebSocket";
 import { ReliabilityAggregator } from "./services/reliability-aggregator";
+import { CircuitBreakerService } from "./services/circuitBreaker";
 import { createProxyRoute, extractListingSlug } from "./routes/proxy";
 import { createBundleSessionRoutes } from "./routes/bundle-sessions";
 import { createHealthRoutes } from "./routes/health";
@@ -148,6 +149,11 @@ export function createGatewayApp(
     ? new ReliabilityAggregator(deps.redis)
     : undefined;
   const credentialService = new CredentialService();
+  const circuitBreaker = new CircuitBreakerService({
+    enabled: cfg.circuitBreakerEnabled,
+    failureThreshold: cfg.circuitBreakerFailureThreshold,
+    cooldownMs: cfg.circuitBreakerCooldownMs,
+  });
 
   // ─── Public routes (no auth) ───
   app.use(
@@ -216,6 +222,7 @@ export function createGatewayApp(
     x402Enabled: cfg.x402Enabled,
     reliabilityAggregator,
     credentialService,
+    circuitBreaker,
     gatewayConfig: cfg,
     persistTransaction: deps.persistTransaction,
     persistX402Execution: deps.persistX402Execution,
@@ -302,6 +309,10 @@ export function startGateway(
     console.log(`[Gateway] Upstream timeout: ${cfg.upstreamTimeoutMs}ms`);
     console.log(`[Gateway] Route cache TTL: ${cfg.routeCacheTtlMs}ms`);
     console.log(`[Gateway] x402 enabled: ${cfg.x402Enabled}`);
+    console.log(
+      `[Gateway] Circuit breaker: ${cfg.circuitBreakerEnabled ? "enabled" : "disabled"} ` +
+      `(threshold=${cfg.circuitBreakerFailureThreshold}, cooldown=${cfg.circuitBreakerCooldownMs}ms)`,
+    );
     if (cfg.x402Enabled) {
       console.log(`[Gateway] x402 facilitator: ${cfg.x402FacilitatorUrl}`);
       console.log(`[Gateway] x402 network: ${cfg.x402Network}`);

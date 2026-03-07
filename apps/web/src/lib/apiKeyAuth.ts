@@ -9,32 +9,18 @@
 // Key format: nxs_{8-char-prefix}_{28-char-random}
 // ═══════════════════════════════════════════════════════════════
 
-import { createHash, timingSafeEqual } from "crypto";
 import { prisma } from "@/lib/prisma";
+import {
+  extractBearerApiKey,
+  resolveUserFromRawApiKey,
+} from "@nexusx/database";
 import type { NextRequest } from "next/server";
 import type { User, ProviderProfile } from "@prisma/client";
 
 async function lookupUserByApiKey(req: NextRequest): Promise<User | null> {
-  const authHeader = req.headers.get("authorization");
-  if (!authHeader?.startsWith("Bearer nxs_")) return null;
-
-  const rawKey = authHeader.slice(7);
-  if (rawKey.length < 12) return null;
-
-  const prefix = rawKey.slice(4, 12);
-  const key = await prisma.apiKey.findFirst({
-    where: { keyPrefix: prefix },
-    include: { user: true },
-  });
-
-  if (!key) return null;
-
-  const hash = createHash("sha256").update(rawKey).digest("hex");
-  if (!timingSafeEqual(Buffer.from(hash), Buffer.from(key.keyHash))) return null;
-  if (key.status !== "ACTIVE") return null;
-  if (key.expiresAt && key.expiresAt.getTime() < Date.now()) return null;
-
-  return key.user;
+  const rawKey = extractBearerApiKey(req.headers.get("authorization"));
+  if (!rawKey) return null;
+  return resolveUserFromRawApiKey(prisma, rawKey);
 }
 
 export async function getUserFromApiKey(req: NextRequest): Promise<User | null> {
