@@ -55,6 +55,8 @@ export interface SemanticSearchResult {
   discoveryImpressions: number;
   publishedAt: Date | null;
   domainMetadata: Prisma.JsonValue | null;
+  trustScore: number;
+  trustState: "trusted" | "degraded" | "high_risk" | "unproven";
   similarity: number;
   compositeScore: number;
   fallbackReason?: FallbackReason;
@@ -96,12 +98,13 @@ const RERANK_WEIGHTS: Record<PriorityMode, {
   similarity: number;
   price: number;
   quality: number;
+  trust: number;
   nameTagOverlap: number;
   popularity: number;
 }> = {
-  frugal:           { similarity: 0.30, price: 0.35, quality: 0.10, nameTagOverlap: 0.15, popularity: 0.10 },
-  balanced:         { similarity: 0.40, price: 0.15, quality: 0.20, nameTagOverlap: 0.15, popularity: 0.10 },
-  mission_critical: { similarity: 0.50, price: 0.05, quality: 0.30, nameTagOverlap: 0.10, popularity: 0.05 },
+  frugal:           { similarity: 0.28, price: 0.30, quality: 0.10, trust: 0.12, nameTagOverlap: 0.13, popularity: 0.07 },
+  balanced:         { similarity: 0.34, price: 0.14, quality: 0.16, trust: 0.14, nameTagOverlap: 0.12, popularity: 0.06 },
+  mission_critical: { similarity: 0.38, price: 0.05, quality: 0.18, trust: 0.22, nameTagOverlap: 0.10, popularity: 0.04 },
 };
 
 // ─── Embedding Text Builder ──────────────────────────────────
@@ -300,6 +303,8 @@ interface VectorSearchRow {
   discoveryImpressions: number;
   publishedAt: Date | null;
   domainMetadata: Prisma.JsonValue | null;
+  trustScore?: number;
+  trustState?: "trusted" | "degraded" | "high_risk" | "unproven";
   similarity: number;
 }
 
@@ -436,6 +441,7 @@ function rerank(
 
     // Quality score (already 0-1)
     const qualScore = row.qualityScore;
+    const trustScore = row.trustScore ?? 0.82;
 
     // Name/tag keyword overlap
     const nameTokens = new Set(row.name.toLowerCase().split(/\s+/));
@@ -478,6 +484,7 @@ function rerank(
       simScore * weights.similarity +
       priceScore * weights.price +
       qualScore * weights.quality +
+      trustScore * weights.trust +
       nameTagOverlap * weights.nameTagOverlap +
       popScore * weights.popularity +
       intentBoost + providerBoost + tagBoost;
@@ -504,6 +511,8 @@ function rerank(
       discoveryImpressions: row.discoveryImpressions,
       publishedAt: row.publishedAt,
       domainMetadata: row.domainMetadata,
+      trustScore,
+      trustState: row.trustState ?? "unproven",
       similarity: row.similarity,
       compositeScore,
     };
@@ -619,16 +628,33 @@ export async function searchListings(
   // 3. Category diversity filter
   const diverse = applyDiversityFilter(rawResults);
 
+  // 3.5 Trust snapshots for stable final ordering.
+  const { getListingTrustSnapshots } = await import("./observability");
+  const trustSnapshots = await getListingTrustSnapshots(prisma, {
+    listingIds: diverse.map((row) => row.listingId),
+  });
+  const trustByListingId = new Map(
+    trustSnapshots.map((snapshot) => [snapshot.listingId, snapshot]),
+  );
+  const enriched = diverse.map((row) => {
+    const trust = trustByListingId.get(row.listingId);
+    return {
+      ...row,
+      trustScore: trust?.score ?? 0.82,
+      trustState: trust?.state ?? "unproven",
+    };
+  });
+
   // 4. Rerank — use deterministic ranker in hybrid mode, weighted-sum otherwise
   let reranked: SemanticSearchResult[];
   if (options?.hybrid) {
     const { deterministicRank } = await import("./deterministic-ranker");
     // First do standard rerank to get SemanticSearchResult with hybrid boosts
-    const withBoosts = rerank(diverse, query, priorityMode);
+    const withBoosts = rerank(enriched, query, priorityMode);
     // Then apply deterministic tier-based sorting
     reranked = deterministicRank(withBoosts, query, priorityMode);
   } else {
-    reranked = rerank(diverse, query, priorityMode);
+    reranked = rerank(enriched, query, priorityMode);
   }
 
   // 5. Return top-N

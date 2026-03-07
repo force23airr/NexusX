@@ -5,6 +5,10 @@ const INDEXING_CRITICAL_LAG_MS = 5 * 60_000;
 const SETTLEMENT_WARN_LAG_MS = 5 * 60_000;
 const SETTLEMENT_CRITICAL_LAG_MS = 30 * 60_000;
 const CLAIM_STALE_MS = 5 * 60_000;
+const DEFAULT_TRUST_WINDOW_HOURS = 24 * 7;
+const TRUST_NEUTRAL_SCORE = 0.82;
+const TRUST_SUCCESS_PRIOR_SUCCESS = 4.6;
+const TRUST_SUCCESS_PRIOR_TOTAL = 5;
 
 export interface PipelineHealthSnapshot {
   status: "ok" | "warn" | "critical";
@@ -38,9 +42,253 @@ export interface ProviderObservabilitySnapshot {
   discovery: DiscoveryConversionSnapshot;
 }
 
+export interface TrustPenaltyBreakdown {
+  successPenalty: number;
+  upstreamFailurePenalty: number;
+  breakerPenalty: number;
+  settlementPenalty: number;
+  disputePenalty: number;
+  latencyPenalty: number;
+}
+
+export interface ListingTrustSnapshot {
+  listingId: string;
+  windowHours: number;
+  score: number;
+  state: "trusted" | "degraded" | "high_risk" | "unproven";
+  totalExecutions: number;
+  successRate: number;
+  upstreamFailureRate: number;
+  breakerOpenRate: number;
+  settlementPendingRate: number;
+  disputeRate: number;
+  refundRate: number;
+  p50LatencyMs: number | null;
+  p99LatencyMs: number | null;
+  latencyStability: number | null;
+  penalties: TrustPenaltyBreakdown;
+  penaltyTotal: number;
+  reasons: string[];
+}
+
+export interface ProviderTrustSnapshot {
+  providerId: string;
+  windowHours: number;
+  score: number;
+  state: "trusted" | "degraded" | "high_risk" | "unproven";
+  listingCount: number;
+  ratedListingCount: number;
+  averageListingTrust: number;
+  highRiskListingCount: number;
+  totalExecutions: number;
+  reasons: string[];
+}
+
 function ageMs(value: Date | null | undefined): number | null {
   if (!value) return null;
   return Math.max(0, Date.now() - value.getTime());
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function mapGroupCount<T extends { listingId: string | null; _count: { _all: number } }>(
+  rows: T[],
+): Map<string, number> {
+  return new Map(
+    rows
+      .filter((row): row is T & { listingId: string } => typeof row.listingId === "string")
+      .map((row) => [row.listingId, row._count._all]),
+  );
+}
+
+function deriveTrustState(
+  score: number,
+  totalExecutions: number,
+): "trusted" | "degraded" | "high_risk" | "unproven" {
+  if (totalExecutions === 0) return "unproven";
+  if (score >= 0.85) return "trusted";
+  if (score >= 0.65) return "degraded";
+  return "high_risk";
+}
+
+function buildTrustReasons(
+  penalties: TrustPenaltyBreakdown,
+  rates: {
+    successRate: number;
+    upstreamFailureRate: number;
+    breakerOpenRate: number;
+    settlementPendingRate: number;
+    disputeRate: number;
+    refundRate: number;
+    latencyStability: number | null;
+    p99LatencyMs: number | null;
+  },
+): string[] {
+  const reasons: string[] = [];
+
+  if (penalties.successPenalty >= 0.1) {
+    reasons.push(`Recent success rate is ${(rates.successRate * 100).toFixed(1)}%.`);
+  }
+  if (penalties.upstreamFailurePenalty >= 0.05) {
+    reasons.push(`Recent upstream failure rate is ${(rates.upstreamFailureRate * 100).toFixed(1)}%.`);
+  }
+  if (penalties.breakerPenalty >= 0.04) {
+    reasons.push(`Breaker-open responses reached ${(rates.breakerOpenRate * 100).toFixed(1)}% of attempts.`);
+  }
+  if (penalties.settlementPenalty >= 0.03) {
+    reasons.push(
+      `Settlement reconciliation is pending on ${(rates.settlementPendingRate * 100).toFixed(1)}% of paid calls.`,
+    );
+  }
+  if (penalties.disputePenalty >= 0.03) {
+    reasons.push(
+      `Refund/dispute rate is ${((rates.disputeRate + rates.refundRate) * 100).toFixed(1)}% of billed calls.`,
+    );
+  }
+  if (
+    penalties.latencyPenalty >= 0.03 &&
+    rates.latencyStability !== null &&
+    rates.p99LatencyMs !== null
+  ) {
+    reasons.push(
+      `Latency is unstable (p99 ${Math.round(rates.p99LatencyMs)}ms, spread ${rates.latencyStability.toFixed(2)}x).`,
+    );
+  }
+
+  if (reasons.length === 0) {
+    reasons.push("Recent execution behavior is stable.");
+  }
+
+  return reasons;
+}
+
+function buildListingTrustSnapshot(input: {
+  listingId: string;
+  windowHours: number;
+  totalExecutions: number;
+  successCount: number;
+  upstreamFailureCount: number;
+  breakerOpenCount: number;
+  pendingSettlementCount: number;
+  abandonedSettlementCount: number;
+  billedTransactionCount: number;
+  disputedCount: number;
+  refundedCount: number;
+  p50LatencyMs: number | null;
+  p99LatencyMs: number | null;
+}): ListingTrustSnapshot {
+  const {
+    listingId,
+    windowHours,
+    totalExecutions,
+    successCount,
+    upstreamFailureCount,
+    breakerOpenCount,
+    pendingSettlementCount,
+    abandonedSettlementCount,
+    billedTransactionCount,
+    disputedCount,
+    refundedCount,
+    p50LatencyMs,
+    p99LatencyMs,
+  } = input;
+
+  if (totalExecutions === 0 && billedTransactionCount === 0 && p50LatencyMs === null && p99LatencyMs === null) {
+    return {
+      listingId,
+      windowHours,
+      score: TRUST_NEUTRAL_SCORE,
+      state: "unproven",
+      totalExecutions,
+      successRate: 0,
+      upstreamFailureRate: 0,
+      breakerOpenRate: 0,
+      settlementPendingRate: 0,
+      disputeRate: 0,
+      refundRate: 0,
+      p50LatencyMs,
+      p99LatencyMs,
+      latencyStability: null,
+      penalties: {
+        successPenalty: 0,
+        upstreamFailurePenalty: 0,
+        breakerPenalty: 0,
+        settlementPenalty: 0,
+        disputePenalty: 0,
+        latencyPenalty: 0,
+      },
+      penaltyTotal: 1 - TRUST_NEUTRAL_SCORE,
+      reasons: ["Not enough execution history yet. Using a neutral trust prior."],
+    };
+  }
+
+  const blendedSuccessRate =
+    (successCount + TRUST_SUCCESS_PRIOR_SUCCESS) / (totalExecutions + TRUST_SUCCESS_PRIOR_TOTAL);
+  const upstreamFailureRate = totalExecutions > 0 ? upstreamFailureCount / totalExecutions : 0;
+  const breakerOpenRate = totalExecutions > 0 ? breakerOpenCount / totalExecutions : 0;
+  const x402ExecutionCount = successCount + upstreamFailureCount + pendingSettlementCount + abandonedSettlementCount;
+  const settlementPendingRate = x402ExecutionCount > 0
+    ? (pendingSettlementCount + abandonedSettlementCount) / x402ExecutionCount
+    : 0;
+  const disputeRate = billedTransactionCount > 0 ? disputedCount / billedTransactionCount : 0;
+  const refundRate = billedTransactionCount > 0 ? refundedCount / billedTransactionCount : 0;
+  const latencyStability =
+    p50LatencyMs && p50LatencyMs > 0 && p99LatencyMs && p99LatencyMs > 0
+      ? p99LatencyMs / p50LatencyMs
+      : null;
+
+  const successPenalty = clamp01((0.97 - blendedSuccessRate) / 0.32) * 0.34;
+  const upstreamFailurePenalty = clamp01(upstreamFailureRate / 0.2) * 0.18;
+  const breakerPenalty = clamp01(breakerOpenRate / 0.15) * 0.16;
+  const settlementPenalty = clamp01(settlementPendingRate / 0.18) * 0.12;
+  const disputePenalty = clamp01((disputeRate + refundRate) / 0.08) * 0.14;
+  const latencyPenalty = latencyStability === null
+    ? 0.02
+    : clamp01((latencyStability - 3) / 5) * 0.07 +
+      clamp01(((p99LatencyMs ?? 0) - 2500) / 5500) * 0.05;
+
+  const penalties: TrustPenaltyBreakdown = {
+    successPenalty,
+    upstreamFailurePenalty,
+    breakerPenalty,
+    settlementPenalty,
+    disputePenalty,
+    latencyPenalty,
+  };
+
+  const penaltyTotal = Object.values(penalties).reduce((sum, penalty) => sum + penalty, 0);
+  const score = clamp01(1 - penaltyTotal);
+
+  return {
+    listingId,
+    windowHours,
+    score,
+    state: deriveTrustState(score, totalExecutions),
+    totalExecutions,
+    successRate: blendedSuccessRate,
+    upstreamFailureRate,
+    breakerOpenRate,
+    settlementPendingRate,
+    disputeRate,
+    refundRate,
+    p50LatencyMs,
+    p99LatencyMs,
+    latencyStability,
+    penalties,
+    penaltyTotal,
+    reasons: buildTrustReasons(penalties, {
+      successRate: blendedSuccessRate,
+      upstreamFailureRate,
+      breakerOpenRate,
+      settlementPendingRate,
+      disputeRate,
+      refundRate,
+      latencyStability,
+      p99LatencyMs,
+    }),
+  };
 }
 
 function derivePipelineStatus(
@@ -371,5 +619,237 @@ export async function getProviderObservabilitySnapshot(
       x402PendingExecutions,
       lastAcceptedAt: lastAccepted?.selectedAt?.toISOString() ?? null,
     },
+  };
+}
+
+export async function getListingTrustSnapshots(
+  prisma: PrismaClient,
+  input: {
+    listingIds: string[];
+    windowHours?: number;
+  },
+): Promise<ListingTrustSnapshot[]> {
+  const listingIds = Array.from(new Set(input.listingIds.filter(Boolean)));
+  if (listingIds.length === 0) return [];
+
+  const windowHours = input.windowHours ?? DEFAULT_TRUST_WINDOW_HOURS;
+  const since = new Date(Date.now() - windowHours * 60 * 60 * 1000);
+
+  const executionWhere: Prisma.ExecutionReceiptWhereInput = {
+    listingId: { in: listingIds },
+    createdAt: { gte: since },
+    sandbox: false,
+    outcome: { in: ["SUCCESS", "FAILED"] },
+  };
+
+  const [
+    totalExecutions,
+    successfulExecutions,
+    upstreamFailures,
+    breakerOpenCounts,
+    pendingSettlements,
+    abandonedSettlements,
+    billedTransactions,
+    disputedTransactions,
+    refundedTransactions,
+    qualitySnapshots,
+  ] = await Promise.all([
+    prisma.executionReceipt.groupBy({
+      by: ["listingId"],
+      where: executionWhere,
+      _count: { _all: true },
+    }),
+    prisma.executionReceipt.groupBy({
+      by: ["listingId"],
+      where: {
+        ...executionWhere,
+        outcome: "SUCCESS",
+      },
+      _count: { _all: true },
+    }),
+    prisma.executionReceipt.groupBy({
+      by: ["listingId"],
+      where: {
+        ...executionWhere,
+        httpStatus: { gte: 500 },
+      },
+      _count: { _all: true },
+    }),
+    prisma.executionReceipt.groupBy({
+      by: ["listingId"],
+      where: {
+        listingId: { in: listingIds },
+        createdAt: { gte: since },
+        sandbox: false,
+        circuitState: "open",
+      },
+      _count: { _all: true },
+    }),
+    prisma.executionReceipt.groupBy({
+      by: ["listingId"],
+      where: {
+        listingId: { in: listingIds },
+        createdAt: { gte: since },
+        sandbox: false,
+        settlementStatus: "PENDING_RECONCILIATION",
+      },
+      _count: { _all: true },
+    }),
+    prisma.executionReceipt.groupBy({
+      by: ["listingId"],
+      where: {
+        listingId: { in: listingIds },
+        createdAt: { gte: since },
+        sandbox: false,
+        settlementStatus: "ABANDONED",
+      },
+      _count: { _all: true },
+    }),
+    prisma.transaction.groupBy({
+      by: ["listingId"],
+      where: {
+        listingId: { in: listingIds },
+        createdAt: { gte: since },
+      },
+      _count: { _all: true },
+    }),
+    prisma.transaction.groupBy({
+      by: ["listingId"],
+      where: {
+        listingId: { in: listingIds },
+        createdAt: { gte: since },
+        status: "DISPUTED",
+      },
+      _count: { _all: true },
+    }),
+    prisma.transaction.groupBy({
+      by: ["listingId"],
+      where: {
+        listingId: { in: listingIds },
+        createdAt: { gte: since },
+        status: "REFUNDED",
+      },
+      _count: { _all: true },
+    }),
+    prisma.qualitySnapshot.findMany({
+      where: {
+        listingId: { in: listingIds },
+        computedAt: { gte: since },
+      },
+      orderBy: [{ listingId: "asc" }, { computedAt: "desc" }],
+      select: {
+        listingId: true,
+        medianLatencyMs: true,
+        p99LatencyMs: true,
+      },
+    }),
+  ]);
+
+  const totalMap = mapGroupCount(totalExecutions);
+  const successMap = mapGroupCount(successfulExecutions);
+  const upstreamFailureMap = mapGroupCount(upstreamFailures);
+  const breakerMap = mapGroupCount(breakerOpenCounts);
+  const pendingSettlementMap = mapGroupCount(pendingSettlements);
+  const abandonedSettlementMap = mapGroupCount(abandonedSettlements);
+  const billedTransactionMap = mapGroupCount(billedTransactions);
+  const disputedMap = mapGroupCount(disputedTransactions);
+  const refundedMap = mapGroupCount(refundedTransactions);
+  const qualityMap = new Map<string, { p50LatencyMs: number | null; p99LatencyMs: number | null }>();
+
+  for (const snapshot of qualitySnapshots) {
+    if (qualityMap.has(snapshot.listingId)) continue;
+    qualityMap.set(snapshot.listingId, {
+      p50LatencyMs: Number(snapshot.medianLatencyMs),
+      p99LatencyMs: Number(snapshot.p99LatencyMs),
+    });
+  }
+
+  return listingIds.map((listingId) =>
+    buildListingTrustSnapshot({
+      listingId,
+      windowHours,
+      totalExecutions: totalMap.get(listingId) ?? 0,
+      successCount: successMap.get(listingId) ?? 0,
+      upstreamFailureCount: upstreamFailureMap.get(listingId) ?? 0,
+      breakerOpenCount: breakerMap.get(listingId) ?? 0,
+      pendingSettlementCount: pendingSettlementMap.get(listingId) ?? 0,
+      abandonedSettlementCount: abandonedSettlementMap.get(listingId) ?? 0,
+      billedTransactionCount: billedTransactionMap.get(listingId) ?? 0,
+      disputedCount: disputedMap.get(listingId) ?? 0,
+      refundedCount: refundedMap.get(listingId) ?? 0,
+      p50LatencyMs: qualityMap.get(listingId)?.p50LatencyMs ?? null,
+      p99LatencyMs: qualityMap.get(listingId)?.p99LatencyMs ?? null,
+    }),
+  );
+}
+
+export async function getProviderTrustSnapshot(
+  prisma: PrismaClient,
+  input: {
+    providerId: string;
+    windowHours?: number;
+  },
+): Promise<ProviderTrustSnapshot> {
+  const windowHours = input.windowHours ?? DEFAULT_TRUST_WINDOW_HOURS;
+  const listings = await prisma.listing.findMany({
+    where: { providerId: input.providerId },
+    select: { id: true },
+  });
+  const listingIds = listings.map((listing) => listing.id);
+
+  if (listingIds.length === 0) {
+    return {
+      providerId: input.providerId,
+      windowHours,
+      score: TRUST_NEUTRAL_SCORE,
+      state: "unproven",
+      listingCount: 0,
+      ratedListingCount: 0,
+      averageListingTrust: TRUST_NEUTRAL_SCORE,
+      highRiskListingCount: 0,
+      totalExecutions: 0,
+      reasons: ["No listings published yet."],
+    };
+  }
+
+  const trustSnapshots = await getListingTrustSnapshots(prisma, {
+    listingIds,
+    windowHours,
+  });
+
+  const ratedListingCount = trustSnapshots.filter((snapshot) => snapshot.totalExecutions > 0).length;
+  const totalExecutions = trustSnapshots.reduce((sum, snapshot) => sum + snapshot.totalExecutions, 0);
+  const weightedTrust = trustSnapshots.reduce((sum, snapshot) => {
+    const weight = Math.max(snapshot.totalExecutions, 1);
+    return sum + snapshot.score * weight;
+  }, 0);
+  const totalWeight = trustSnapshots.reduce((sum, snapshot) => sum + Math.max(snapshot.totalExecutions, 1), 0);
+  const averageListingTrust =
+    trustSnapshots.reduce((sum, snapshot) => sum + snapshot.score, 0) / Math.max(trustSnapshots.length, 1);
+  const score = totalWeight > 0 ? weightedTrust / totalWeight : TRUST_NEUTRAL_SCORE;
+  const highRiskListingCount = trustSnapshots.filter((snapshot) => snapshot.state === "high_risk").length;
+
+  const reasons: string[] = [];
+  if (highRiskListingCount > 0) {
+    reasons.push(`${highRiskListingCount} listing(s) are currently high risk.`);
+  }
+  if (ratedListingCount === 0) {
+    reasons.push("Execution history is still sparse across this provider.");
+  }
+  if (reasons.length === 0) {
+    reasons.push("Provider trust is stable across recent listing executions.");
+  }
+
+  return {
+    providerId: input.providerId,
+    windowHours,
+    score,
+    state: deriveTrustState(score, totalExecutions),
+    listingCount: listingIds.length,
+    ratedListingCount,
+    averageListingTrust,
+    highRiskListingCount,
+    totalExecutions,
+    reasons,
   };
 }

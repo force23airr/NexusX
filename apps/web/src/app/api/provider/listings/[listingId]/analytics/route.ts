@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
-import { getProviderObservabilitySnapshot } from "@nexusx/database";
+import {
+  getListingTrustSnapshots,
+  getProviderObservabilitySnapshot,
+  getProviderTrustSnapshot,
+} from "@nexusx/database";
 
 export async function GET(
   req: NextRequest,
@@ -106,10 +110,19 @@ export async function GET(
     "30d": 24 * 30,
     all: 24 * 365,
   };
+  const windowHours = periodHours[period] ?? 24 * 7;
   const observability = await getProviderObservabilitySnapshot(prisma, {
     providerId: provider.user.id,
     listingId,
-    windowHours: periodHours[period] ?? 24 * 7,
+    windowHours,
+  });
+  const [listingTrust] = await getListingTrustSnapshots(prisma, {
+    listingIds: [listingId],
+    windowHours,
+  });
+  const providerTrust = await getProviderTrustSnapshot(prisma, {
+    providerId: provider.user.id,
+    windowHours,
   });
 
   return NextResponse.json({
@@ -133,5 +146,9 @@ export async function GET(
       calls,
     })),
     observability: observability.discovery,
+    trust: {
+      listing: listingTrust,
+      provider: providerTrust,
+    },
   });
 }

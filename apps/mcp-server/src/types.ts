@@ -109,6 +109,9 @@ export interface ToolExecutionResult {
   quotedPriceUsdc?: number;
   bundleSessionId?: string;
   bundleStepIndex?: number;
+  failureClass?: string;
+  retryable?: boolean;
+  billingDecision?: "not_charged" | "charged" | "charged_pending_settlement" | "deferred_bundle";
   /** Populated when statusCode is 402 — contains payment requirements from the gateway. */
   paymentRequired?: X402PaymentRequirements[];
   /** Canonical gateway execution receipt summary. */
@@ -124,6 +127,9 @@ export interface ExecutionReceiptSummary {
   billingMode: "individual" | "bundle_step";
   outcome: "success" | "failed" | "rejected";
   settlementStatus: "none" | "settled" | "pending_reconciliation" | "upstream_failed" | "deferred_bundle" | "abandoned";
+  failureClass?: string;
+  retryable?: boolean;
+  billingDecision?: "not_charged" | "charged" | "charged_pending_settlement" | "deferred_bundle";
   priceUsdc: number;
   quotedPriceUsdc: number;
   platformFeeUsdc: number;

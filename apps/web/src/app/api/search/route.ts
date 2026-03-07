@@ -73,6 +73,8 @@ interface IndexedListing {
   totalCalls: number;
   avgLatencyMs: number;
   qualityScore: number;
+  trustScore: number;
+  trustState: "trusted" | "degraded" | "high_risk" | "unproven";
   uptimePercent: number;
   status: string;
   providerName: string;
@@ -84,6 +86,7 @@ interface ScoreBreakdown {
   categoryMatch: number;
   priceScore: number;
   qualityScore: number;
+  trustScore: number;
   popularityScore: number;
   latencyScore: number;
   capabilityMatch: number;
@@ -97,27 +100,28 @@ interface RankedMatch {
 }
 
 const DEFAULT_WEIGHTS = {
-  textRelevance: 0.30,
-  categoryMatch: 0.20,
-  priceScore: 0.15,
-  qualityScore: 0.15,
-  popularityScore: 0.10,
+  textRelevance: 0.28,
+  categoryMatch: 0.18,
+  priceScore: 0.12,
+  qualityScore: 0.12,
+  trustScore: 0.15,
+  popularityScore: 0.08,
   latencyScore: 0.05,
-  capabilityMatch: 0.05,
+  capabilityMatch: 0.02,
 };
 
 const INTENT_WEIGHTS: Record<string, typeof DEFAULT_WEIGHTS> = {
   PRICE_COMPARISON: {
-    textRelevance: 0.15, categoryMatch: 0.15, priceScore: 0.40,
-    qualityScore: 0.10, popularityScore: 0.10, latencyScore: 0.05, capabilityMatch: 0.05,
+    textRelevance: 0.12, categoryMatch: 0.12, priceScore: 0.35,
+    qualityScore: 0.08, trustScore: 0.12, popularityScore: 0.10, latencyScore: 0.06, capabilityMatch: 0.05,
   },
   CAPABILITY_SEARCH: {
-    textRelevance: 0.20, categoryMatch: 0.15, priceScore: 0.05,
-    qualityScore: 0.15, popularityScore: 0.10, latencyScore: 0.05, capabilityMatch: 0.30,
+    textRelevance: 0.18, categoryMatch: 0.14, priceScore: 0.05,
+    qualityScore: 0.12, trustScore: 0.16, popularityScore: 0.08, latencyScore: 0.05, capabilityMatch: 0.22,
   },
   MODEL_INFERENCE: {
-    textRelevance: 0.25, categoryMatch: 0.20, priceScore: 0.10,
-    qualityScore: 0.20, popularityScore: 0.10, latencyScore: 0.10, capabilityMatch: 0.05,
+    textRelevance: 0.22, categoryMatch: 0.18, priceScore: 0.08,
+    qualityScore: 0.16, trustScore: 0.16, popularityScore: 0.08, latencyScore: 0.08, capabilityMatch: 0.04,
   },
 };
 
@@ -412,6 +416,8 @@ async function loadListings(metadataFilters?: MetadataFilters): Promise<IndexedL
       totalCalls: Number(l.totalCalls),
       avgLatencyMs: quality ? Number(quality.medianLatencyMs) : 200,
       qualityScore: quality ? Number(quality.compositeScore) / 100 : 0.5,
+      trustScore: quality ? Number(quality.compositeScore) / 100 : 0.82,
+      trustState: "unproven",
       uptimePercent: quality ? Number(quality.uptimePercent) : 99,
       status: l.status,
       providerName: l.provider.displayName,
@@ -554,6 +560,7 @@ function rankListings(
     }
 
     const qualityScore = listing.qualityScore;
+    const trustScore = listing.trustScore;
     const popularityScore = maxCalls > 0 ? Math.log(1 + listing.totalCalls) / Math.log(1 + maxCalls) : 0;
 
     let latencyScore: number;
@@ -577,6 +584,7 @@ function rankListings(
       categoryMatch: clamp01(categoryMatch),
       priceScore: clamp01(priceScore),
       qualityScore: clamp01(qualityScore),
+      trustScore: clamp01(trustScore),
       popularityScore: clamp01(popularityScore),
       latencyScore: clamp01(latencyScore),
       capabilityMatch: clamp01(capabilityMatch),
@@ -587,6 +595,7 @@ function rankListings(
       breakdown.categoryMatch * weights.categoryMatch +
       breakdown.priceScore * weights.priceScore +
       breakdown.qualityScore * weights.qualityScore +
+      breakdown.trustScore * weights.trustScore +
       breakdown.popularityScore * weights.popularityScore +
       breakdown.latencyScore * weights.latencyScore +
       breakdown.capabilityMatch * weights.capabilityMatch
@@ -598,6 +607,7 @@ function rankListings(
     if (breakdown.categoryMatch > 0.5) reasons.push(`Matches category: ${listing.categorySlug}`);
     if (breakdown.priceScore > 0.7 && intent.entities.maxPriceUsdc) reasons.push(`Within budget at $${listing.currentPriceUsdc.toFixed(6)}/call`);
     if (breakdown.qualityScore > 0.8) reasons.push(`High quality score: ${(listing.qualityScore * 100).toFixed(0)}%`);
+    if (breakdown.trustScore > 0.85) reasons.push(`Stable execution trust: ${(listing.trustScore * 100).toFixed(0)}%`);
     if (breakdown.popularityScore > 0.7) reasons.push(`Popular: ${listing.totalCalls.toLocaleString()} total calls`);
     if (breakdown.latencyScore > 0.8) reasons.push(`Fast: ${listing.avgLatencyMs}ms average latency`);
     if (breakdown.capabilityMatch > 0.7 && intent.entities.capabilities.length > 0) reasons.push("Matches required capabilities");
@@ -813,6 +823,7 @@ function semanticResultsToMatches(
       categoryMatch: clamp01(categoryMatch),
       priceScore: clamp01(priceScore),
       qualityScore: clamp01(result.qualityScore),
+      trustScore: clamp01(result.trustScore),
       popularityScore: clamp01(popularityScore),
       latencyScore: clamp01(latencyScore),
       capabilityMatch: clamp01(capabilityMatch),
@@ -832,6 +843,9 @@ function semanticResultsToMatches(
     }
     if (result.qualityScore >= 0.8) {
       matchReasons.push(`High quality score: ${(result.qualityScore * 100).toFixed(0)}%`);
+    }
+    if (result.trustScore >= 0.85) {
+      matchReasons.push(`Stable execution trust: ${(result.trustScore * 100).toFixed(0)}%`);
     }
     if (result.avgLatencyMs > 0 && scoreBreakdown.latencyScore >= 0.8) {
       matchReasons.push(`Fast: ${result.avgLatencyMs}ms average latency`);
@@ -854,6 +868,8 @@ function semanticResultsToMatches(
       totalCalls: result.totalCalls,
       avgLatencyMs: result.avgLatencyMs,
       qualityScore: result.qualityScore,
+      trustScore: result.trustScore,
+      trustState: result.trustState,
       uptimePercent: result.uptimePercent,
       status: "ACTIVE",
       providerName: result.providerName,
@@ -862,7 +878,8 @@ function semanticResultsToMatches(
 
     const score = clamp01(
       scoreBreakdown.textRelevance * 0.55 +
-      scoreBreakdown.qualityScore * 0.15 +
+      scoreBreakdown.qualityScore * 0.10 +
+      scoreBreakdown.trustScore * 0.15 +
       scoreBreakdown.categoryMatch * 0.10 +
       scoreBreakdown.capabilityMatch * 0.10 +
       scoreBreakdown.priceScore * 0.05 +
@@ -993,6 +1010,8 @@ export async function POST(req: NextRequest) {
         avgRating: 0,
         ratingCount: 0,
         qualityScore: m.listing.qualityScore,
+        trustScore: m.listing.trustScore,
+        trustState: m.listing.trustState,
         avgLatencyMs: m.listing.avgLatencyMs,
         uptimePercent: m.listing.uptimePercent,
         publishedAt: null,

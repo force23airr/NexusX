@@ -103,6 +103,12 @@ export interface CallResult {
   billingMode: "individual" | "bundle_step";
   /** Settlement status reported by the gateway. */
   settlementStatus: "none" | "settled" | "pending_reconciliation" | "upstream_failed" | "deferred_bundle" | "abandoned";
+  /** Normalized failure class for degraded/error responses. */
+  failureClass?: string;
+  /** Whether the gateway considers this result retryable. */
+  retryable?: boolean;
+  /** Billing decision applied by the gateway for this execution. */
+  billingDecision?: "not_charged" | "charged" | "charged_pending_settlement" | "deferred_bundle";
   /** True when the gateway executed in validated sandbox mode. */
   isSandbox: boolean;
   /** Typed execution receipt summary returned by the gateway. */
@@ -118,6 +124,9 @@ export interface ExecutionReceiptSummary {
   billingMode: "individual" | "bundle_step";
   outcome: "success" | "failed" | "rejected";
   settlementStatus: "none" | "settled" | "pending_reconciliation" | "upstream_failed" | "deferred_bundle" | "abandoned";
+  failureClass?: string;
+  retryable?: boolean;
+  billingDecision?: "not_charged" | "charged" | "charged_pending_settlement" | "deferred_bundle";
   priceUsdc: number;
   quotedPriceUsdc: number;
   platformFeeUsdc: number;
@@ -173,6 +182,8 @@ export interface SearchMatch {
   queryId?: string;
   currentPriceUsdc: number;
   qualityScore: number;
+  trustScore?: number;
+  trustState?: "trusted" | "degraded" | "high_risk" | "unproven";
   score: number;
   matchReasons: string[];
 }

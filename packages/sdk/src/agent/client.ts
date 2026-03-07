@@ -38,6 +38,12 @@ function parseIntegerHeader(value: string | null, fallback = 0): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function parseBooleanHeader(value: string | null): boolean | undefined {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
+}
+
 // ─────────────────────────────────────────────────────────────
 // CLIENT
 // ─────────────────────────────────────────────────────────────
@@ -182,6 +188,9 @@ export class NexusXAgent {
       queryId,
       currentPriceUsdc: Number((m.listing as Record<string, unknown>)?.currentPriceUsdc ?? 0),
       qualityScore: Number((m.listing as Record<string, unknown>)?.qualityScore ?? 0),
+      trustScore: Number((m.listing as Record<string, unknown>)?.trustScore ?? 0),
+      trustState: readOptionalString((m.listing as Record<string, unknown>)?.trustState) as
+        "trusted" | "degraded" | "high_risk" | "unproven" | undefined,
       score: Number(m.score ?? 0),
       matchReasons: Array.isArray(m.matchReasons) ? m.matchReasons.map(String) : [],
     }));
@@ -343,6 +352,16 @@ export class NexusXAgent {
         settlementHeader === "abandoned"
           ? settlementHeader
           : "none";
+      const failureClass = readOptionalString(response.headers.get("x-nexusx-failure-class"));
+      const retryable = parseBooleanHeader(response.headers.get("x-nexusx-retryable"));
+      const billingDecisionHeader = response.headers.get("x-nexusx-billing-decision");
+      const billingDecision =
+        billingDecisionHeader === "charged" ||
+        billingDecisionHeader === "charged_pending_settlement" ||
+        billingDecisionHeader === "deferred_bundle" ||
+        billingDecisionHeader === "not_charged"
+          ? billingDecisionHeader
+          : undefined;
       const txHash = response.headers.get("x-nexusx-txhash") || undefined;
       const bundleSessionId = response.headers.get("x-nexusx-bundle-session-id") || undefined;
       const bundleStepIndexRaw = response.headers.get("x-nexusx-bundle-step-index");
@@ -359,6 +378,9 @@ export class NexusXAgent {
             billingMode,
             outcome,
             settlementStatus,
+            failureClass,
+            retryable,
+            billingDecision,
             priceUsdc,
             quotedPriceUsdc,
             platformFeeUsdc,
@@ -397,6 +419,9 @@ export class NexusXAgent {
         requestId,
         billingMode,
         settlementStatus,
+        failureClass,
+        retryable,
+        billingDecision,
         isSandbox: this.sandbox,
         receipt,
       };
@@ -415,6 +440,9 @@ export class NexusXAgent {
         requestId: "",
         billingMode: "individual",
         settlementStatus: "none",
+        failureClass: isTimeout ? "upstream_timeout" : "connection_error",
+        retryable: true,
+        billingDecision: "not_charged",
         isSandbox: this.sandbox,
         receipt: null,
       };

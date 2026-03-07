@@ -70,17 +70,32 @@ function tiebreakerScore(
   maxLatency: number,
 ): number {
   const qualityNorm = result.qualityScore;
+  const trustNorm = result.trustScore;
   const priceNorm = maxPrice > 0 ? 1 - result.currentPriceUsdc / maxPrice : 0.5;
   const latencyNorm = maxLatency > 0 ? 1 - result.avgLatencyMs / maxLatency : 0.5;
 
   switch (priorityMode) {
     case "frugal":
-      return priceNorm * 0.45 + qualityNorm * 0.35 + latencyNorm * 0.20;
+      return priceNorm * 0.4 + qualityNorm * 0.2 + trustNorm * 0.25 + latencyNorm * 0.15;
     case "mission_critical":
-      return qualityNorm * 0.5 + latencyNorm * 0.35 + priceNorm * 0.15;
+      return qualityNorm * 0.3 + trustNorm * 0.4 + latencyNorm * 0.2 + priceNorm * 0.1;
     case "balanced":
     default:
-      return qualityNorm * 0.4 + latencyNorm * 0.3 + priceNorm * 0.3;
+      return qualityNorm * 0.25 + trustNorm * 0.35 + latencyNorm * 0.2 + priceNorm * 0.2;
+  }
+}
+
+function trustBand(result: SemanticSearchResult): number {
+  switch (result.trustState) {
+    case "trusted":
+      return 3;
+    case "unproven":
+      return 2;
+    case "degraded":
+      return 1;
+    case "high_risk":
+    default:
+      return 0;
   }
 }
 
@@ -145,6 +160,7 @@ export function deterministicRank(
     const tier = classifyCapabilityTier(result, queryTokens);
     const tierRank = tier === "HIGH" ? 2 : tier === "MEDIUM" ? 1 : 0;
     const providerMatch = isProviderMatch(result, normalizedQuery, queryTokens) ? 1 : 0;
+    const trustRank = trustBand(result);
     const tiebreaker = tiebreakerScore(result, priorityMode, maxPrice, maxLatency);
     const explorationBonus = computeExplorationBonus(
       {
@@ -157,22 +173,25 @@ export function deterministicRank(
     const demandGapBoost = activeDemandGapBoost(result);
     const withinTierScore = tiebreaker + explorationBonus + demandGapBoost;
 
-    return { result, tierRank, providerMatch, withinTierScore };
+    return { result, tierRank, providerMatch, trustRank, withinTierScore };
   });
 
-  // Lexicographic sort: tier (desc) → provider match (desc) → tiebreaker (desc)
+  // Lexicographic sort: tier → provider match → trust band → trust score → tiebreaker
   scored.sort((a, b) => {
     if (a.tierRank !== b.tierRank) return b.tierRank - a.tierRank;
     if (a.providerMatch !== b.providerMatch) return b.providerMatch - a.providerMatch;
+    if (a.trustRank !== b.trustRank) return b.trustRank - a.trustRank;
+    if (a.result.trustScore !== b.result.trustScore) return b.result.trustScore - a.result.trustScore;
     return b.withinTierScore - a.withinTierScore;
   });
 
   // Update composite scores to reflect the deterministic ranking
-  return scored.map(({ result, tierRank, providerMatch, withinTierScore }, index) => ({
+  return scored.map(({ result, tierRank, providerMatch, trustRank, withinTierScore }, index) => ({
     ...result,
     compositeScore:
       tierRank * 100 +
       providerMatch * 10 +
+      trustRank * 2 +
       withinTierScore +
       (scored.length - index) * 0.0001,
   }));

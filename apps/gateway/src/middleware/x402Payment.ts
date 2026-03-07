@@ -59,6 +59,22 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
     res: Response,
     next: NextFunction
   ): Promise<void> {
+    function setGatewayFailureHeaders(input: {
+      requestId: string;
+      listingSlug?: string;
+      failureClass: string;
+      retryable: boolean;
+      billingDecision?: "not_charged";
+    }): void {
+      res.setHeader("X-NexusX-Request-Id", input.requestId);
+      res.setHeader("X-NexusX-Failure-Class", input.failureClass);
+      res.setHeader("X-NexusX-Retryable", input.retryable ? "true" : "false");
+      res.setHeader("X-NexusX-Billing-Decision", input.billingDecision ?? "not_charged");
+      if (input.listingSlug) {
+        res.setHeader("X-NexusX-Listing", input.listingSlug);
+      }
+    }
+
     const requestId = randomUUID();
 
     // ─── Skip if x402 is disabled ───
@@ -95,6 +111,11 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
     const pathSegments = req.path.split("/").filter(Boolean);
     const listingSlug = pathSegments[0];
     if (!listingSlug) {
+      setGatewayFailureHeaders({
+        requestId,
+        failureClass: "bad_request",
+        retryable: false,
+      });
       res.status(400).json({
         error: "BAD_REQUEST",
         message: "Missing listing slug in URL path.",
@@ -109,6 +130,12 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
       route = await routeResolver.resolveBySlug(listingSlug);
     } catch (err) {
       console.error("[x402] Route resolution error:", err);
+      setGatewayFailureHeaders({
+        requestId,
+        listingSlug,
+        failureClass: "internal_error",
+        retryable: true,
+      });
       res.status(500).json({
         error: "INTERNAL_ERROR",
         message: "Failed to resolve listing.",
@@ -118,6 +145,12 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
     }
 
     if (!route) {
+      setGatewayFailureHeaders({
+        requestId,
+        listingSlug,
+        failureClass: "listing_not_found",
+        retryable: false,
+      });
       res.status(404).json({
         error: "LISTING_NOT_FOUND",
         message: `No active listing found for slug: ${listingSlug}`,
@@ -127,6 +160,19 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
     }
 
     if (route.status !== "ACTIVE") {
+      setGatewayFailureHeaders({
+        requestId,
+        listingSlug,
+        failureClass:
+          route.status === "SUSPENDED"
+            ? "provider_suspended"
+            : route.status === "PAUSED"
+              ? "listing_paused"
+              : route.status === "DEPRECATED"
+                ? "listing_deprecated"
+                : "listing_unavailable",
+        retryable: false,
+      });
       res.status(503).json({
         error: "LISTING_UNAVAILABLE",
         message: `Listing "${listingSlug}" is currently ${route.status.toLowerCase()}.`,
@@ -146,6 +192,12 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
       // Emit VIEW demand signal (interest without purchase).
       emitSignal(adapter.buildViewSignal(route, requestId));
 
+      setGatewayFailureHeaders({
+        requestId,
+        listingSlug,
+        failureClass: "payment_required",
+        retryable: true,
+      });
       res.status(402).json({
         error: "PAYMENT_REQUIRED",
         message: "This API endpoint requires payment via x402 protocol.",
@@ -170,6 +222,12 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
         const dedupKey = `nexusx:x402:seen:${paymentHash}`;
         const wasNew = await redis.set(dedupKey, requestId, "EX", 300, "NX");
         if (!wasNew) {
+          setGatewayFailureHeaders({
+            requestId,
+            listingSlug,
+            failureClass: "payment_replay",
+            retryable: false,
+          });
           res.status(409).json({
             error: "PAYMENT_REPLAY",
             message: "This payment proof has already been used.",
@@ -188,6 +246,12 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
     const verifyResult = await adapter.verifyPayment(paymentHeader, requirement);
 
     if (!verifyResult.valid) {
+      setGatewayFailureHeaders({
+        requestId,
+        listingSlug,
+        failureClass: "payment_invalid",
+        retryable: true,
+      });
       res.status(402).json({
         error: "PAYMENT_INVALID",
         message: verifyResult.invalidReason || "Payment verification failed.",

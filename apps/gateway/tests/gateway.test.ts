@@ -796,6 +796,9 @@ describe("Proxy Bundle Billing", () => {
     expect(res.headers["x-nexusx-receipt-id"]).toBe("rcpt_1");
     expect(res.headers["x-nexusx-quoted-price-usdc"]).toBe("0.005000");
     expect(res.headers["x-nexusx-receipt-outcome"]).toBe("success");
+    expect(res.headers["x-nexusx-failure-class"]).toBe("none");
+    expect(res.headers["x-nexusx-retryable"]).toBe("false");
+    expect(res.headers["x-nexusx-billing-decision"]).toBe("deferred_bundle");
 
     cleanup();
   });
@@ -850,9 +853,15 @@ describe("Proxy Bundle Billing", () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe("INVALID_BUNDLE_CONTEXT");
     expect(res.body.receiptId).toBe("rcpt_1");
+    expect(res.body.failureClass).toBe("invalid_bundle_context");
+    expect(res.body.retryable).toBe(false);
+    expect(res.body.billingDecision).toBe("not_charged");
     expect(res.headers["x-nexusx-receipt-id"]).toBe("rcpt_1");
     expect(res.headers["x-nexusx-receipt-outcome"]).toBe("rejected");
     expect(res.headers["x-nexusx-billing-mode"]).toBe("bundle_step");
+    expect(res.headers["x-nexusx-failure-class"]).toBe("invalid_bundle_context");
+    expect(res.headers["x-nexusx-retryable"]).toBe("false");
+    expect(res.headers["x-nexusx-billing-decision"]).toBe("not_charged");
     expect(receipts).toHaveLength(1);
     expect(receipts[0].outcome).toBe("REJECTED");
     expect(receipts[0].billingMode).toBe("BUNDLE_STEP");

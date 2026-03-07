@@ -65,6 +65,33 @@ export interface ProxyRouteConfig {
   }) => Promise<boolean>;
 }
 
+type FailureClass =
+  | "none"
+  | "internal_error"
+  | "listing_not_found"
+  | "listing_paused"
+  | "provider_suspended"
+  | "listing_deprecated"
+  | "listing_unavailable"
+  | "breaker_open"
+  | "invalid_bundle_context"
+  | "bundle_settlement_unavailable"
+  | "bundle_session_not_found"
+  | "bundle_session_forbidden"
+  | "bundle_session_expired"
+  | "bundle_session_closed"
+  | "bundle_step_mismatch"
+  | "upstream_unreachable"
+  | "upstream_client_error"
+  | "upstream_timeout"
+  | "upstream_server_error";
+
+type BillingDecision =
+  | "not_charged"
+  | "charged"
+  | "charged_pending_settlement"
+  | "deferred_bundle";
+
 // ─────────────────────────────────────────────────────────────
 // ROUTE FACTORY
 // ─────────────────────────────────────────────────────────────
@@ -123,6 +150,9 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       bundleSessionId?: string;
       bundleStepIndex?: number;
       circuitState?: string | null;
+      failureClass: FailureClass;
+      retryable: boolean;
+      billingDecision: BillingDecision;
     },
   ): void {
     if (input.receiptId) {
@@ -163,6 +193,83 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     if (input.circuitState) {
       res.setHeader("X-NexusX-Circuit-State", input.circuitState);
     }
+    res.setHeader("X-NexusX-Failure-Class", input.failureClass);
+    res.setHeader("X-NexusX-Retryable", input.retryable ? "true" : "false");
+    res.setHeader("X-NexusX-Billing-Decision", input.billingDecision);
+  }
+
+  function listingUnavailableFailureClass(status: string): FailureClass {
+    switch (status) {
+      case "PAUSED":
+        return "listing_paused";
+      case "SUSPENDED":
+        return "provider_suspended";
+      case "DEPRECATED":
+        return "listing_deprecated";
+      default:
+        return "listing_unavailable";
+    }
+  }
+
+  function deriveBillingDecision(
+    statusCode: number,
+    billingMode: "INDIVIDUAL" | "BUNDLE_STEP",
+    settlementStatus:
+      | "NONE"
+      | "SETTLED"
+      | "PENDING_RECONCILIATION"
+      | "UPSTREAM_FAILED"
+      | "DEFERRED_BUNDLE"
+      | "ABANDONED",
+  ): BillingDecision {
+    if (billingMode === "BUNDLE_STEP" || settlementStatus === "DEFERRED_BUNDLE") {
+      return "deferred_bundle";
+    }
+    if (settlementStatus === "PENDING_RECONCILIATION") {
+      return "charged_pending_settlement";
+    }
+    if (settlementStatus === "SETTLED" || statusCode < 500) {
+      return "charged";
+    }
+    return "not_charged";
+  }
+
+  function deriveProxyFailureContract(input: {
+    statusCode: number;
+    billingMode: "INDIVIDUAL" | "BUNDLE_STEP";
+    settlementStatus:
+      | "NONE"
+      | "SETTLED"
+      | "PENDING_RECONCILIATION"
+      | "UPSTREAM_FAILED"
+      | "DEFERRED_BUNDLE"
+      | "ABANDONED";
+  }): {
+    failureClass: FailureClass;
+    retryable: boolean;
+    billingDecision: BillingDecision;
+  } {
+    const billingDecision = deriveBillingDecision(
+      input.statusCode,
+      input.billingMode,
+      input.settlementStatus,
+    );
+
+    if (input.statusCode >= 200 && input.statusCode < 400) {
+      return { failureClass: "none", retryable: false, billingDecision };
+    }
+    if (input.statusCode === 504) {
+      return { failureClass: "upstream_timeout", retryable: true, billingDecision };
+    }
+    if (input.statusCode >= 500) {
+      return { failureClass: "upstream_server_error", retryable: true, billingDecision };
+    }
+
+    return {
+      failureClass: "upstream_client_error",
+      retryable: false,
+      billingDecision,
+    };
   }
 
   function buildBaseReceipt(
@@ -210,9 +317,15 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       circuitState?: string | null;
       errorCode?: string;
       errorMessage?: string;
+      failureClass?: FailureClass;
+      retryable?: boolean;
+      billingDecision?: BillingDecision;
       metadata?: Record<string, unknown>;
     },
   ): Promise<void> {
+    const failureClass = input.failureClass ?? (input.outcome === "SUCCESS" ? "none" : "internal_error");
+    const retryable = input.retryable ?? false;
+    const billingDecision = input.billingDecision ?? "not_charged";
     const receipt = await persistReceipt({
       ...buildBaseReceipt(input.ctx, input.listingSlug, input.queryLogId),
       listingId: input.listingId ?? null,
@@ -233,7 +346,12 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       circuitState: input.circuitState ?? null,
       errorCode: input.errorCode ?? null,
       errorMessage: input.errorMessage ?? null,
-      metadata: input.metadata ?? {},
+      metadata: {
+        ...(input.metadata ?? {}),
+        failureClass,
+        retryable,
+        billingDecision,
+      },
     });
 
     setExecutionHeaders(res, {
@@ -256,10 +374,16 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       bundleSessionId: input.bundleSessionId,
       bundleStepIndex: input.bundleStepIndex,
       circuitState: input.circuitState ?? null,
+      failureClass,
+      retryable,
+      billingDecision,
     });
 
     res.status(input.statusCode).json({
       ...input.body,
+      failureClass,
+      retryable,
+      billingDecision,
       receiptId: receipt?.id ?? undefined,
     });
   }
@@ -293,6 +417,8 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
         outcome: "FAILED",
         errorCode: "INTERNAL_ERROR",
         errorMessage: "Failed to resolve listing.",
+        failureClass: "internal_error",
+        retryable: true,
       });
       return;
     }
@@ -311,6 +437,8 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
         outcome: "REJECTED",
         errorCode: "LISTING_NOT_FOUND",
         errorMessage: `No active listing found for slug: ${listingSlug}`,
+        failureClass: "listing_not_found",
+        retryable: false,
       });
       return;
     }
@@ -331,6 +459,8 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
         outcome: "REJECTED",
         errorCode: "LISTING_UNAVAILABLE",
         errorMessage: `Listing "${listingSlug}" is currently ${route.status.toLowerCase()}.`,
+        failureClass: listingUnavailableFailureClass(route.status),
+        retryable: false,
       });
       return;
     }
@@ -358,6 +488,8 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
         circuitState: circuitStateLabel,
         errorCode: "UPSTREAM_TEMPORARILY_UNAVAILABLE",
         errorMessage: "This provider is temporarily failing. Retry after the cooldown window.",
+        failureClass: "breaker_open",
+        retryable: true,
         metadata: { retryAfterSeconds },
       });
       return;
@@ -395,6 +527,8 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
           circuitState: circuitStateLabel,
           errorCode: "INVALID_BUNDLE_CONTEXT",
           errorMessage: "Bundle session billing is only supported for API key authenticated calls.",
+          failureClass: "invalid_bundle_context",
+          retryable: false,
         });
         return;
       }
@@ -416,6 +550,8 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
           circuitState: circuitStateLabel,
           errorCode: "BUNDLE_SETTLEMENT_UNAVAILABLE",
           errorMessage: "Bundle settlement is not configured on this gateway.",
+          failureClass: "bundle_settlement_unavailable",
+          retryable: false,
         });
         return;
       }
@@ -438,6 +574,8 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
           circuitState: circuitStateLabel,
           errorCode: "INVALID_BUNDLE_CONTEXT",
           errorMessage: "Missing or invalid X-NexusX-Bundle-Step-Index header.",
+          failureClass: "invalid_bundle_context",
+          retryable: false,
         });
         return;
       }
@@ -460,6 +598,8 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
           circuitState: circuitStateLabel,
           errorCode: "BUNDLE_SESSION_NOT_FOUND",
           errorMessage: "Bundle session was not found.",
+          failureClass: "bundle_session_not_found",
+          retryable: false,
           bundleSessionId,
         });
         return;
@@ -482,6 +622,8 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
           circuitState: circuitStateLabel,
           errorCode: "BUNDLE_SESSION_FORBIDDEN",
           errorMessage: "Bundle session does not belong to this buyer.",
+          failureClass: "bundle_session_forbidden",
+          retryable: false,
           bundleSessionId,
         });
         return;
@@ -504,6 +646,8 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
           circuitState: circuitStateLabel,
           errorCode: "BUNDLE_SESSION_EXPIRED",
           errorMessage: "Bundle session has expired.",
+          failureClass: "bundle_session_expired",
+          retryable: false,
           bundleSessionId,
           bundleStepIndex,
         });
@@ -527,6 +671,8 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
           circuitState: circuitStateLabel,
           errorCode: "BUNDLE_SESSION_CLOSED",
           errorMessage: `Bundle session is ${session.status.toLowerCase()} and cannot accept step calls.`,
+          failureClass: "bundle_session_closed",
+          retryable: false,
           bundleSessionId,
           bundleStepIndex,
         });
@@ -551,6 +697,8 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
           circuitState: circuitStateLabel,
           errorCode: "BUNDLE_STEP_MISMATCH",
           errorMessage: `Bundle step ${bundleStepIndex} expected slug "${expectedSlug ?? "n/a"}" but received "${listingSlug}".`,
+          failureClass: "bundle_step_mismatch",
+          retryable: false,
           bundleSessionId,
           bundleStepIndex,
         });
@@ -607,6 +755,8 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
         circuitState: circuitStateLabel,
         errorCode: "UPSTREAM_PROXY_FAILED",
         errorMessage: message,
+        failureClass: "upstream_unreachable",
+        retryable: true,
         latencyMs: Math.max(0, Date.now() - ctx.receivedAt),
         metadata: {
           method: req.method,
@@ -818,6 +968,11 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
             : 0))
         : (txRecord?.providerAmountUsdc ?? 0);
     const receiptOutcome = proxyResult.statusCode >= 200 && proxyResult.statusCode < 400 ? "SUCCESS" : "FAILED";
+    const failureContract = deriveProxyFailureContract({
+      statusCode: proxyResult.statusCode,
+      billingMode,
+      settlementStatus,
+    });
     const receipt = await persistReceipt({
       ...buildBaseReceipt(ctx, listingSlug, discoveryQueryId),
       listingId: route.listingId,
@@ -844,6 +999,9 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       metadata: {
         method: req.method,
         upstreamPath,
+        failureClass: failureContract.failureClass,
+        retryable: failureContract.retryable,
+        billingDecision: failureContract.billingDecision,
       },
     });
 
@@ -873,6 +1031,9 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       bundleSessionId,
       bundleStepIndex,
       circuitState: circuitStateLabel,
+      failureClass: failureContract.failureClass,
+      retryable: failureContract.retryable,
+      billingDecision: failureContract.billingDecision,
     });
 
     res.status(proxyResult.statusCode).send(proxyResult.body);

@@ -160,6 +160,9 @@ export class GatewayClient {
           isSandbox: this.sandbox,
           billingMode: "individual",
           quotedPriceUsdc: 0,
+          failureClass: "payment_required",
+          retryable: true,
+          billingDecision: "not_charged",
           receipt: null,
         };
       }
@@ -198,6 +201,16 @@ export class GatewayClient {
         settlementHeader === "abandoned"
           ? settlementHeader
           : "none";
+      const failureClass = readOptionalString(response.headers.get("x-nexusx-failure-class"));
+      const retryable = parseBooleanHeader(response.headers.get("x-nexusx-retryable"));
+      const billingDecisionHeader = response.headers.get("x-nexusx-billing-decision");
+      const billingDecision =
+        billingDecisionHeader === "not_charged" ||
+        billingDecisionHeader === "charged" ||
+        billingDecisionHeader === "charged_pending_settlement" ||
+        billingDecisionHeader === "deferred_bundle"
+          ? billingDecisionHeader
+          : undefined;
       const responseBundleSessionId =
         response.headers.get("x-nexusx-bundle-session-id") || undefined;
       const responseBundleStepIndexRaw =
@@ -220,6 +233,9 @@ export class GatewayClient {
             billingMode,
             outcome: receiptOutcome,
             settlementStatus,
+            failureClass,
+            retryable,
+            billingDecision,
             priceUsdc,
             quotedPriceUsdc,
             platformFeeUsdc,
@@ -248,6 +264,9 @@ export class GatewayClient {
         isSandbox: this.sandbox,
         billingMode,
         quotedPriceUsdc,
+        failureClass,
+        retryable,
+        billingDecision,
         receipt,
         bundleSessionId: responseBundleSessionId,
         bundleStepIndex:
@@ -268,6 +287,9 @@ export class GatewayClient {
           isSandbox: this.sandbox,
           billingMode: "individual",
           quotedPriceUsdc: 0,
+          failureClass: "upstream_timeout",
+          retryable: true,
+          billingDecision: "not_charged",
           receipt: null,
         };
       }
@@ -286,6 +308,9 @@ export class GatewayClient {
         isSandbox: this.sandbox,
         billingMode: "individual",
         quotedPriceUsdc: 0,
+        failureClass: "connection_error",
+        retryable: true,
+        billingDecision: "not_charged",
         receipt: null,
       };
     }
@@ -449,6 +474,16 @@ function parseNumberHeader(value: string | null, fallback = 0): number {
 function parseIntegerHeader(value: string | null, fallback = 0): number {
   const parsed = Number.parseInt(value ?? "", 10);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseBooleanHeader(value: string | null): boolean | undefined {
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return undefined;
+}
+
+function readOptionalString(value: string | null): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
 /**

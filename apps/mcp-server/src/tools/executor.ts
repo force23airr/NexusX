@@ -101,12 +101,16 @@ export class ToolExecutor {
             `\nReceipt ID: ${result.receipt.id}`,
             `\nReceipt Outcome: ${result.receipt.outcome}`,
             `\nSettlement: ${result.receipt.settlementStatus}`,
+            result.receipt.failureClass ? `\nFailure Class: ${result.receipt.failureClass}` : "",
+            typeof result.receipt.retryable === "boolean" ? `\nRetryable: ${result.receipt.retryable}` : "",
           ]
         : [];
       return this.errorResult(
         `API call failed (HTTP ${result.statusCode}):\n${result.body}\n\n` +
         `Request ID: ${result.requestId}` +
         (result.priceUsdc > 0 ? `\nCharged: $${result.priceUsdc.toFixed(6)} USDC` : "") +
+        (result.failureClass ? `\nFailure Class: ${result.failureClass}` : "") +
+        (typeof result.retryable === "boolean" ? `\nRetryable: ${result.retryable}` : "") +
         receiptLines.join(""),
       );
     }
@@ -120,6 +124,9 @@ export class ToolExecutor {
       `Quoted Price: $${(result.receipt?.quotedPriceUsdc ?? result.quotedPriceUsdc ?? result.priceUsdc).toFixed(6)} USDC`,
       `Latency: ${result.latencyMs}ms`,
       `Settlement: ${result.receipt?.settlementStatus ?? "none"}`,
+      result.receipt?.failureClass ? `Failure Class: ${result.receipt.failureClass}` : undefined,
+      typeof result.receipt?.retryable === "boolean" ? `Retryable: ${result.receipt.retryable}` : undefined,
+      result.receipt?.billingDecision ? `Billing Decision: ${result.receipt.billingDecision}` : undefined,
       result.isSandbox ? `Mode: Sandbox (no billing)` : `Fee: $${result.platformFeeUsdc.toFixed(6)} USDC`,
       result.receipt?.txHash ? `Tx Hash: ${result.receipt.txHash}` : undefined,
       result.receipt?.circuitState ? `Circuit State: ${result.receipt.circuitState}` : undefined,

@@ -119,10 +119,15 @@ export {
   markQueryLogSelected,
   getPlatformObservabilitySnapshot,
   getProviderObservabilitySnapshot,
+  getListingTrustSnapshots,
+  getProviderTrustSnapshot,
   type PlatformObservabilitySnapshot,
   type ProviderObservabilitySnapshot,
   type PipelineHealthSnapshot,
   type DiscoveryConversionSnapshot,
+  type TrustPenaltyBreakdown,
+  type ListingTrustSnapshot,
+  type ProviderTrustSnapshot,
 } from "./observability";
 
 // ─── Manifest (.well-known/nexusx.json) ───

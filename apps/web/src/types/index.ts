@@ -79,6 +79,8 @@ export interface Listing extends ListingDiscoveryMetadata {
   avgRating: number;
   ratingCount: number;
   qualityScore: number;
+  trustScore?: number;
+  trustState?: "trusted" | "degraded" | "high_risk" | "unproven";
   avgLatencyMs: number;
   uptimePercent: number;
   publishedAt: string | null;
@@ -95,6 +97,7 @@ export interface RouteMatch {
     categoryMatch: number;
     priceScore: number;
     qualityScore: number;
+    trustScore?: number;
     popularityScore: number;
     latencyScore: number;
     capabilityMatch: number;
@@ -181,6 +184,52 @@ export interface ProviderAnalytics {
   priceHistory: { timestamp: string; price: number }[];
   callVolume: { timestamp: string; calls: number }[];
   observability?: DiscoveryObservability;
+  trust?: {
+    listing: ListingTrustSnapshot;
+    provider: ProviderTrustSnapshot;
+  };
+}
+
+export interface TrustPenaltyBreakdown {
+  successPenalty: number;
+  upstreamFailurePenalty: number;
+  breakerPenalty: number;
+  settlementPenalty: number;
+  disputePenalty: number;
+  latencyPenalty: number;
+}
+
+export interface ListingTrustSnapshot {
+  listingId: string;
+  windowHours: number;
+  score: number;
+  state: "trusted" | "degraded" | "high_risk" | "unproven";
+  totalExecutions: number;
+  successRate: number;
+  upstreamFailureRate: number;
+  breakerOpenRate: number;
+  settlementPendingRate: number;
+  disputeRate: number;
+  refundRate: number;
+  p50LatencyMs: number | null;
+  p99LatencyMs: number | null;
+  latencyStability: number | null;
+  penalties: TrustPenaltyBreakdown;
+  penaltyTotal: number;
+  reasons: string[];
+}
+
+export interface ProviderTrustSnapshot {
+  providerId: string;
+  windowHours: number;
+  score: number;
+  state: "trusted" | "degraded" | "high_risk" | "unproven";
+  listingCount: number;
+  ratedListingCount: number;
+  averageListingTrust: number;
+  highRiskListingCount: number;
+  totalExecutions: number;
+  reasons: string[];
 }
 
 export interface DiscoveryObservability {
