@@ -7,7 +7,12 @@
 
 import { Prisma, PrismaClient } from "@prisma/client";
 import Redis from "ioredis";
-import { GATEWAY_ROUTE_VERSION_KEY, markQueryLogSelected } from "@nexusx/database";
+import {
+  GATEWAY_LISTING_DEGRADATION_VERSION_KEY,
+  GATEWAY_ROUTE_VERSION_KEY,
+  bumpControlPlaneVersion,
+  markQueryLogSelected,
+} from "@nexusx/database";
 import { startGateway } from "./server";
 import type { GatewayDependencies } from "./server";
 import type { BundleSessionFinalizeResult, BundleSessionRecord } from "./types";
@@ -163,6 +168,10 @@ const deps: GatewayDependencies = {
     }
     const version = (row.value as Record<string, unknown>).version;
     return typeof version === "number" && Number.isFinite(version) ? Math.trunc(version) : 0;
+  },
+
+  bumpListingDegradationVersion: async () => {
+    return bumpControlPlaneVersion(prisma, GATEWAY_LISTING_DEGRADATION_VERSION_KEY);
   },
 
   registerBundleSession: async (input) => {

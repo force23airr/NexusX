@@ -77,6 +77,7 @@ export {
 // ─── Control Plane ───
 export {
   GATEWAY_ROUTE_VERSION_KEY,
+  GATEWAY_LISTING_DEGRADATION_VERSION_KEY,
   getControlPlaneVersion,
   bumpControlPlaneVersion,
 } from "./control-plane";
@@ -90,6 +91,20 @@ export {
   resolveUserIdFromRawApiKey,
   verifyApiKeyHash,
 } from "./api-key-utils";
+
+export {
+  CIRCUIT_BREAKER_STATE_HASH_KEY,
+  CIRCUIT_BREAKER_PROBE_PREFIX,
+  getCircuitProbeKey,
+  inspectSharedCircuitState,
+  isSharedCircuitStateExpired,
+  parseSharedCircuitState,
+  serializeSharedCircuitState,
+  summarizeSharedCircuitStates,
+  type CircuitInspectionSnapshot,
+  type CircuitInspectionSummary,
+  type SharedCircuitState,
+} from "./circuit-breaker-state";
 
 // ─── Operational Observability ───
 export {

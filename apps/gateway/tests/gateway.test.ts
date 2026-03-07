@@ -93,6 +93,59 @@ function createMockDeps(overrides?: Partial<GatewayDependencies>): {
   return { deps, signals, transactions };
 }
 
+function createCircuitBreakerRedisMock() {
+  const hashStore = new Map<string, Map<string, string>>();
+  const stringStore = new Map<string, { value: string; expiresAt: number }>();
+
+  const cleanupExpired = () => {
+    const now = Date.now();
+    for (const [key, entry] of stringStore.entries()) {
+      if (entry.expiresAt <= now) {
+        stringStore.delete(key);
+      }
+    }
+  };
+
+  return {
+    async hget(key: string, field: string) {
+      return hashStore.get(key)?.get(field) ?? null;
+    },
+    async hset(key: string, field: string, value: string) {
+      const bucket = hashStore.get(key) ?? new Map<string, string>();
+      bucket.set(field, value);
+      hashStore.set(key, bucket);
+      return 1;
+    },
+    async hdel(key: string, field: string) {
+      const bucket = hashStore.get(key);
+      if (!bucket) return 0;
+      const existed = bucket.delete(field);
+      return existed ? 1 : 0;
+    },
+    async hgetall(key: string) {
+      const bucket = hashStore.get(key);
+      if (!bucket) return {};
+      return Object.fromEntries(bucket.entries());
+    },
+    async set(key: string, value: string, _pxMode: "PX", ttlMs: number, _nxMode: "NX") {
+      cleanupExpired();
+      if (stringStore.has(key)) {
+        return null;
+      }
+      stringStore.set(key, { value, expiresAt: Date.now() + ttlMs });
+      return "OK" as const;
+    },
+    async del(...keys: string[]) {
+      cleanupExpired();
+      let count = 0;
+      for (const key of keys) {
+        if (stringStore.delete(key)) count += 1;
+      }
+      return count;
+    },
+  };
+}
+
 // ─────────────────────────────────────────────────────────────
 // API KEY GENERATION
 // ─────────────────────────────────────────────────────────────
@@ -322,28 +375,51 @@ describe("RouteResolver", () => {
 });
 
 describe("CircuitBreakerService", () => {
-  it("opens after repeated upstream failures and blocks until cooldown elapses", () => {
+  it("opens after repeated upstream failures and blocks until cooldown elapses", async () => {
     vi.useFakeTimers();
     const breaker = new CircuitBreakerService({
       enabled: true,
       failureThreshold: 2,
       cooldownMs: 30_000,
+      probeTtlMs: 10_000,
     });
 
-    expect(breaker.beforeRequest("test-api").state).toBe("closed");
-    breaker.recordResult("test-api", 502);
-    expect(breaker.beforeRequest("test-api").state).toBe("closed");
+    expect((await breaker.beforeRequest("test-api")).state).toBe("closed");
+    await breaker.recordResult("test-api", 502);
+    expect((await breaker.beforeRequest("test-api")).state).toBe("closed");
 
-    breaker.recordResult("test-api", 504);
-    const openState = breaker.beforeRequest("test-api");
+    await breaker.recordResult("test-api", 504);
+    const openState = await breaker.beforeRequest("test-api");
     expect(openState.state).toBe("open");
     expect(openState.retryAfterMs).toBeGreaterThan(0);
 
     vi.advanceTimersByTime(30_000);
-    expect(breaker.beforeRequest("test-api").state).toBe("half_open");
+    expect((await breaker.beforeRequest("test-api")).state).toBe("half_open");
 
-    breaker.recordResult("test-api", 200);
-    expect(breaker.beforeRequest("test-api").state).toBe("closed");
+    await breaker.recordResult("test-api", 200);
+    expect((await breaker.beforeRequest("test-api")).state).toBe("closed");
+    vi.useRealTimers();
+  });
+
+  it("shares breaker state across service instances when backed by Redis", async () => {
+    vi.useFakeTimers();
+    const redis = createCircuitBreakerRedisMock();
+    const config = {
+      enabled: true,
+      failureThreshold: 2,
+      cooldownMs: 30_000,
+      probeTtlMs: 10_000,
+    };
+
+    const breakerA = new CircuitBreakerService(config, redis as any);
+    const breakerB = new CircuitBreakerService(config, redis as any);
+
+    await breakerA.recordResult("test-api", 502);
+    await breakerA.recordResult("test-api", 503);
+
+    const sharedState = await breakerB.beforeRequest("test-api");
+    expect(sharedState.state).toBe("open");
+    expect(sharedState.retryAfterMs).toBeGreaterThan(0);
     vi.useRealTimers();
   });
 });

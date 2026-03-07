@@ -72,6 +72,8 @@ export interface GatewayDependencies {
   }) => Promise<boolean>;
   /** Shared control plane: current route config version (optional). */
   loadRouteVersion?: () => Promise<number | null>;
+  /** Shared control plane: bump listing degradation version on global state changes. */
+  bumpListingDegradationVersion?: () => Promise<number>;
   /** Runtime health check for the database dependency. */
   checkDatabaseHealth?: () => Promise<ReadinessCheckResult>;
   /** Runtime health check for the Redis dependency. */
@@ -153,6 +155,11 @@ export function createGatewayApp(
     enabled: cfg.circuitBreakerEnabled,
     failureThreshold: cfg.circuitBreakerFailureThreshold,
     cooldownMs: cfg.circuitBreakerCooldownMs,
+    probeTtlMs: Math.max(cfg.upstreamTimeoutMs + 5_000, 45_000),
+  }, deps.redis, async ({ previousState, nextState }) => {
+    if (deps.bumpListingDegradationVersion && previousState !== nextState) {
+      await deps.bumpListingDegradationVersion();
+    }
   });
 
   // ─── Public routes (no auth) ───

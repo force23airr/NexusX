@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 
 export const GATEWAY_ROUTE_VERSION_KEY = "gateway.route-version";
+export const GATEWAY_LISTING_DEGRADATION_VERSION_KEY = "gateway.listing-degradation-version";
 
 type PrismaLike = PrismaClient | Prisma.TransactionClient;
 

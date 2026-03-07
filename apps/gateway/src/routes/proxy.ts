@@ -123,7 +123,9 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       return;
     }
 
-    const circuitState = config.circuitBreaker?.beforeRequest(listingSlug);
+    const circuitState = config.circuitBreaker
+      ? await config.circuitBreaker.beforeRequest(listingSlug)
+      : undefined;
     if (circuitState && circuitState.state === "open") {
       const retryAfterSeconds = Math.max(1, Math.ceil(circuitState.retryAfterMs / 1000));
       res.setHeader("Retry-After", retryAfterSeconds.toString());
@@ -254,7 +256,9 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       ctx.requestId,
       credential
     );
-    config.circuitBreaker?.recordResult(listingSlug, proxyResult.statusCode);
+    if (config.circuitBreaker) {
+      await config.circuitBreaker.recordResult(listingSlug, proxyResult.statusCode);
+    }
 
     let x402SettlementStatus: "settled" | "pending_reconciliation" | "upstream_failed" | undefined;
 

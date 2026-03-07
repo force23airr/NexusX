@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
-import { bumpControlPlaneVersion, enqueueActivationEvent } from "@nexusx/database";
+import {
+  GATEWAY_LISTING_DEGRADATION_VERSION_KEY,
+  bumpControlPlaneVersion,
+  enqueueActivationEvent,
+} from "@nexusx/database";
 import { validateActivationReadiness } from "@/lib/providerListing";
 
 // ─────────────────────────────────────────────────────────────
@@ -92,6 +96,7 @@ export async function POST(
       });
 
       await bumpControlPlaneVersion(tx);
+      await bumpControlPlaneVersion(tx, GATEWAY_LISTING_DEGRADATION_VERSION_KEY);
 
       return nextListing;
     });
@@ -113,6 +118,7 @@ export async function POST(
         data: { status: "PAUSED" },
       });
       await bumpControlPlaneVersion(tx);
+      await bumpControlPlaneVersion(tx, GATEWAY_LISTING_DEGRADATION_VERSION_KEY);
       return nextListing;
     });
 
@@ -136,6 +142,7 @@ export async function POST(
         },
       });
       await bumpControlPlaneVersion(tx);
+      await bumpControlPlaneVersion(tx, GATEWAY_LISTING_DEGRADATION_VERSION_KEY);
       return nextListing;
     });
 
