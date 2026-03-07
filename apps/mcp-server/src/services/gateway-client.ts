@@ -160,28 +160,82 @@ export class GatewayClient {
           isSandbox: this.sandbox,
           billingMode: "individual",
           quotedPriceUsdc: 0,
+          receipt: null,
         };
       }
 
       // Extract NexusX metadata headers
-      const priceUsdc = parseFloat(response.headers.get("x-nexusx-price-usdc") || "0");
-      const platformFeeUsdc = parseFloat(response.headers.get("x-nexusx-fee-usdc") || "0");
-      const latencyMs = parseInt(response.headers.get("x-nexusx-latency-ms") || "0", 10);
-      const requestId = response.headers.get("x-nexusx-request-id") || "";
-      const billingMode = response.headers.get("x-nexusx-billing-mode") || "individual";
-      const quotedPriceUsdc = parseFloat(
-        response.headers.get("x-nexusx-bundle-quoted-price-usdc") || "0",
+      const priceUsdc = parseNumberHeader(response.headers.get("x-nexusx-price-usdc"));
+      const quotedPriceUsdc = parseNumberHeader(
+        response.headers.get("x-nexusx-quoted-price-usdc"),
+        priceUsdc,
       );
+      const platformFeeUsdc = parseNumberHeader(response.headers.get("x-nexusx-fee-usdc"));
+      const providerAmountUsdc = parseNumberHeader(
+        response.headers.get("x-nexusx-provider-amount-usdc"),
+      );
+      const latencyMs = parseIntegerHeader(response.headers.get("x-nexusx-latency-ms"));
+      const requestId = response.headers.get("x-nexusx-request-id") || "";
+      const receiptId = response.headers.get("x-nexusx-receipt-id") || "";
+      const responseQueryId = response.headers.get("x-nexusx-query-id") || queryId;
+      const authMode: "api_key" | "x402" =
+        response.headers.get("x-nexusx-auth-mode") === "x402" ? "x402" : "api_key";
+      const billingMode: "individual" | "bundle_step" =
+        response.headers.get("x-nexusx-billing-mode") === "bundle_step" ? "bundle_step" : "individual";
+      const receiptOutcomeHeader = response.headers.get("x-nexusx-receipt-outcome");
+      const receiptOutcome: "success" | "failed" | "rejected" =
+        receiptOutcomeHeader === "rejected"
+          ? "rejected"
+          : receiptOutcomeHeader === "failed"
+            ? "failed"
+            : "success";
+      const settlementHeader = response.headers.get("x-nexusx-settlement-status");
+      const settlementStatus: "none" | "settled" | "pending_reconciliation" | "upstream_failed" | "deferred_bundle" | "abandoned" =
+        settlementHeader === "settled" ||
+        settlementHeader === "pending_reconciliation" ||
+        settlementHeader === "upstream_failed" ||
+        settlementHeader === "deferred_bundle" ||
+        settlementHeader === "abandoned"
+          ? settlementHeader
+          : "none";
       const responseBundleSessionId =
         response.headers.get("x-nexusx-bundle-session-id") || undefined;
       const responseBundleStepIndexRaw =
         response.headers.get("x-nexusx-bundle-step-index");
       const responseBundleStepIndex =
         responseBundleStepIndexRaw !== null
-          ? Number.parseInt(responseBundleStepIndexRaw, 10)
+          ? parseIntegerHeader(responseBundleStepIndexRaw, -1)
           : undefined;
+      const txHash = response.headers.get("x-nexusx-txhash") || undefined;
+      const circuitState = response.headers.get("x-nexusx-circuit-state") || undefined;
 
       const responseBody = await response.text();
+      const receipt = receiptId
+        ? {
+            id: receiptId,
+            requestId,
+            queryId: responseQueryId,
+            listingSlug: response.headers.get("x-nexusx-listing") || slug,
+            authMode,
+            billingMode,
+            outcome: receiptOutcome,
+            settlementStatus,
+            priceUsdc,
+            quotedPriceUsdc,
+            platformFeeUsdc,
+            providerAmountUsdc,
+            latencyMs,
+            statusCode: response.status,
+            sandbox: this.sandbox,
+            txHash,
+            bundleSessionId: responseBundleSessionId,
+            bundleStepIndex:
+              typeof responseBundleStepIndex === "number" && responseBundleStepIndex >= 0
+                ? responseBundleStepIndex
+                : undefined,
+            circuitState,
+          }
+        : null;
 
       return {
         success: response.status >= 200 && response.status < 400,
@@ -192,8 +246,9 @@ export class GatewayClient {
         latencyMs,
         requestId,
         isSandbox: this.sandbox,
-        billingMode: billingMode === "bundle_step" ? "bundle_step" : "individual",
-        quotedPriceUsdc: Number.isFinite(quotedPriceUsdc) ? quotedPriceUsdc : 0,
+        billingMode,
+        quotedPriceUsdc,
+        receipt,
         bundleSessionId: responseBundleSessionId,
         bundleStepIndex:
           typeof responseBundleStepIndex === "number" && Number.isFinite(responseBundleStepIndex)
@@ -213,6 +268,7 @@ export class GatewayClient {
           isSandbox: this.sandbox,
           billingMode: "individual",
           quotedPriceUsdc: 0,
+          receipt: null,
         };
       }
 
@@ -230,6 +286,7 @@ export class GatewayClient {
         isSandbox: this.sandbox,
         billingMode: "individual",
         quotedPriceUsdc: 0,
+        receipt: null,
       };
     }
   }
@@ -382,6 +439,16 @@ async function safeJson(response: Response): Promise<any> {
   } catch {
     return { message: text };
   }
+}
+
+function parseNumberHeader(value: string | null, fallback = 0): number {
+  const parsed = Number.parseFloat(value ?? "");
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseIntegerHeader(value: string | null, fallback = 0): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 /**

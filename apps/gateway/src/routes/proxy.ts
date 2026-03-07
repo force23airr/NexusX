@@ -18,7 +18,10 @@ import type {
   BundleSessionRecord,
   TransactionRecord,
   X402ExecutionRecord,
+  ExecutionReceiptRecord,
   GatewayConfig,
+  PersistedExecutionReceiptRef,
+  ProxyResult,
 } from "../types";
 import type { RouteResolver } from "../services/routeResolver";
 import type { ProxyService } from "../services/proxyService";
@@ -52,6 +55,8 @@ export interface ProxyRouteConfig {
   persistTransaction?: TransactionPersistFn;
   /** Persist x402 execution settlement state for reconciliation. */
   persistX402Execution?: (record: X402ExecutionRecord) => Promise<void>;
+  /** Persist canonical execution receipts for agent-visible call tracing. */
+  persistExecutionReceipt?: (record: ExecutionReceiptRecord) => Promise<PersistedExecutionReceiptRef>;
   /** Mark a discovery query as converted once execution reaches the provider. */
   markQuerySelection?: (input: {
     queryLogId: string;
@@ -80,6 +85,185 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
   router.all("/v1/:listingSlug/*", handleProxy);
   router.all("/v1/:listingSlug", handleProxy);
 
+  async function persistReceipt(
+    record: ExecutionReceiptRecord,
+  ): Promise<PersistedExecutionReceiptRef | null> {
+    if (!config.persistExecutionReceipt) {
+      return null;
+    }
+    try {
+      return await config.persistExecutionReceipt(record);
+    } catch (err) {
+      console.error("[Proxy] Execution receipt persist error:", err, {
+        requestId: record.requestId,
+        listingSlug: record.listingSlug,
+      });
+      return null;
+    }
+  }
+
+  function setExecutionHeaders(
+    res: Response,
+    input: {
+      receiptId?: string | null;
+      requestId: string;
+      queryId?: string;
+      listingSlug: string;
+      authMode: "api_key" | "x402";
+      billingMode: "individual" | "bundle_step";
+      outcome: "success" | "failed" | "rejected";
+      settlementStatus: "none" | "settled" | "pending_reconciliation" | "upstream_failed" | "deferred_bundle" | "abandoned";
+      chargedPriceUsdc: number;
+      quotedPriceUsdc: number;
+      platformFeeUsdc: number;
+      providerAmountUsdc: number;
+      latencyMs: number;
+      sandbox: boolean;
+      txHash?: string | null;
+      bundleSessionId?: string;
+      bundleStepIndex?: number;
+      circuitState?: string | null;
+    },
+  ): void {
+    if (input.receiptId) {
+      res.setHeader("X-NexusX-Receipt-Id", input.receiptId);
+    }
+    res.setHeader("X-NexusX-Request-Id", input.requestId);
+    res.setHeader("X-NexusX-Listing", input.listingSlug);
+    res.setHeader("X-NexusX-Auth-Mode", input.authMode);
+    res.setHeader("X-NexusX-Receipt-Outcome", input.outcome);
+    res.setHeader("X-NexusX-Billing-Mode", input.billingMode);
+    res.setHeader("X-NexusX-Settlement-Status", input.settlementStatus);
+    res.setHeader("X-NexusX-Price-USDC", input.chargedPriceUsdc.toFixed(6));
+    res.setHeader("X-NexusX-Quoted-Price-USDC", input.quotedPriceUsdc.toFixed(6));
+    res.setHeader("X-NexusX-Fee-USDC", input.platformFeeUsdc.toFixed(6));
+    res.setHeader("X-NexusX-Provider-Amount-USDC", input.providerAmountUsdc.toFixed(6));
+    res.setHeader("X-NexusX-Latency-Ms", Math.max(0, Math.trunc(input.latencyMs)).toString());
+    if (input.queryId) {
+      res.setHeader("X-NexusX-Query-Id", input.queryId);
+    }
+    if (input.txHash) {
+      res.setHeader("X-NexusX-TxHash", input.txHash);
+    }
+    if (input.authMode === "x402") {
+      res.setHeader("X-NexusX-Payment", "x402");
+    }
+    if (input.bundleSessionId) {
+      res.setHeader("X-NexusX-Bundle-Session-Id", input.bundleSessionId);
+    }
+    if (typeof input.bundleStepIndex === "number" && Number.isFinite(input.bundleStepIndex)) {
+      res.setHeader("X-NexusX-Bundle-Step-Index", String(input.bundleStepIndex));
+    }
+    if (input.billingMode === "bundle_step") {
+      res.setHeader("X-NexusX-Bundle-Quoted-Price-USDC", input.quotedPriceUsdc.toFixed(6));
+    }
+    if (input.sandbox) {
+      res.setHeader("X-NexusX-Sandbox", "true");
+    }
+    if (input.circuitState) {
+      res.setHeader("X-NexusX-Circuit-State", input.circuitState);
+    }
+  }
+
+  function buildBaseReceipt(
+    ctx: RequestContext,
+    listingSlug: string,
+    queryLogId?: string,
+  ): Pick<
+    ExecutionReceiptRecord,
+    "requestId" | "queryLogId" | "listingSlug" | "buyerId" | "payerAddress" | "authMode" | "sandbox" | "metadata"
+  > {
+    return {
+      requestId: ctx.requestId,
+      queryLogId: queryLogId ?? null,
+      listingSlug,
+      buyerId: ctx.authMode === "api_key" ? ctx.buyerId : null,
+      payerAddress: ctx.authMode === "x402" ? ctx.buyerAddress : null,
+      authMode: ctx.authMode === "x402" ? "X402" : "API_KEY",
+      sandbox: ctx.isSandbox === true,
+      metadata: {},
+    };
+  }
+
+  async function sendGatewayResponse(
+    res: Response,
+    input: {
+      ctx: RequestContext;
+      statusCode: number;
+      body: Record<string, unknown>;
+      listingSlug: string;
+      queryLogId?: string;
+      billingMode?: "INDIVIDUAL" | "BUNDLE_STEP";
+      outcome: "SUCCESS" | "FAILED" | "REJECTED";
+      settlementStatus?: "NONE" | "SETTLED" | "PENDING_RECONCILIATION" | "UPSTREAM_FAILED" | "DEFERRED_BUNDLE" | "ABANDONED";
+      listingId?: string | null;
+      quotedPriceUsdc?: number;
+      chargedPriceUsdc?: number;
+      platformFeeUsdc?: number;
+      providerAmountUsdc?: number;
+      upstreamStatus?: number | null;
+      latencyMs?: number;
+      bytesTransferred?: number | null;
+      txHash?: string | null;
+      bundleSessionId?: string;
+      bundleStepIndex?: number;
+      circuitState?: string | null;
+      errorCode?: string;
+      errorMessage?: string;
+      metadata?: Record<string, unknown>;
+    },
+  ): Promise<void> {
+    const receipt = await persistReceipt({
+      ...buildBaseReceipt(input.ctx, input.listingSlug, input.queryLogId),
+      listingId: input.listingId ?? null,
+      billingMode: input.billingMode ?? "INDIVIDUAL",
+      outcome: input.outcome,
+      settlementStatus: input.settlementStatus ?? "NONE",
+      quotedPriceUsdc: input.quotedPriceUsdc ?? 0,
+      chargedPriceUsdc: input.chargedPriceUsdc ?? 0,
+      platformFeeUsdc: input.platformFeeUsdc ?? 0,
+      providerAmountUsdc: input.providerAmountUsdc ?? 0,
+      httpStatus: input.statusCode,
+      upstreamStatus: input.upstreamStatus ?? null,
+      latencyMs: input.latencyMs ?? 0,
+      bytesTransferred: input.bytesTransferred ?? null,
+      bundleSessionId: input.bundleSessionId ?? null,
+      bundleStepIndex: input.bundleStepIndex,
+      txHash: input.txHash ?? null,
+      circuitState: input.circuitState ?? null,
+      errorCode: input.errorCode ?? null,
+      errorMessage: input.errorMessage ?? null,
+      metadata: input.metadata ?? {},
+    });
+
+    setExecutionHeaders(res, {
+      receiptId: receipt?.id ?? null,
+      requestId: input.ctx.requestId,
+      queryId: input.queryLogId,
+      listingSlug: input.listingSlug,
+      authMode: input.ctx.authMode === "x402" ? "x402" : "api_key",
+      billingMode: (input.billingMode ?? "INDIVIDUAL") === "BUNDLE_STEP" ? "bundle_step" : "individual",
+      outcome: input.outcome.toLowerCase() as "success" | "failed" | "rejected",
+      settlementStatus: (input.settlementStatus ?? "NONE").toLowerCase() as
+        "none" | "settled" | "pending_reconciliation" | "upstream_failed" | "deferred_bundle" | "abandoned",
+      chargedPriceUsdc: input.chargedPriceUsdc ?? 0,
+      quotedPriceUsdc: input.quotedPriceUsdc ?? 0,
+      platformFeeUsdc: input.platformFeeUsdc ?? 0,
+      providerAmountUsdc: input.providerAmountUsdc ?? 0,
+      latencyMs: input.latencyMs ?? 0,
+      sandbox: input.ctx.isSandbox === true,
+      txHash: input.txHash ?? null,
+      bundleSessionId: input.bundleSessionId,
+      bundleStepIndex: input.bundleStepIndex,
+      circuitState: input.circuitState ?? null,
+    });
+
+    res.status(input.statusCode).json({
+      ...input.body,
+      receiptId: receipt?.id ?? undefined,
+    });
+  }
+
   async function handleProxy(req: Request, res: Response): Promise<void> {
     const ctx = (req as any).ctx as RequestContext | undefined;
     if (!ctx) {
@@ -96,29 +280,57 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       route = await routeResolver.resolveBySlug(listingSlug);
     } catch (err) {
       console.error("[Proxy] Route resolution error:", err);
-      res.status(500).json({
-        error: "INTERNAL_ERROR",
-        message: "Failed to resolve listing.",
-        requestId: ctx.requestId,
+      await sendGatewayResponse(res, {
+        ctx,
+        statusCode: 500,
+        body: {
+          error: "INTERNAL_ERROR",
+          message: "Failed to resolve listing.",
+          requestId: ctx.requestId,
+        },
+        listingSlug,
+        queryLogId: discoveryQueryId,
+        outcome: "FAILED",
+        errorCode: "INTERNAL_ERROR",
+        errorMessage: "Failed to resolve listing.",
       });
       return;
     }
 
     if (!route) {
-      res.status(404).json({
-        error: "LISTING_NOT_FOUND",
-        message: `No active listing found for slug: ${listingSlug}`,
-        requestId: ctx.requestId,
+      await sendGatewayResponse(res, {
+        ctx,
+        statusCode: 404,
+        body: {
+          error: "LISTING_NOT_FOUND",
+          message: `No active listing found for slug: ${listingSlug}`,
+          requestId: ctx.requestId,
+        },
+        listingSlug,
+        queryLogId: discoveryQueryId,
+        outcome: "REJECTED",
+        errorCode: "LISTING_NOT_FOUND",
+        errorMessage: `No active listing found for slug: ${listingSlug}`,
       });
       return;
     }
 
     // ─── 2. Check listing status ───
     if (route.status !== "ACTIVE") {
-      res.status(503).json({
-        error: "LISTING_UNAVAILABLE",
-        message: `Listing "${listingSlug}" is currently ${route.status.toLowerCase()}.`,
-        requestId: ctx.requestId,
+      await sendGatewayResponse(res, {
+        ctx,
+        statusCode: 503,
+        body: {
+          error: "LISTING_UNAVAILABLE",
+          message: `Listing "${listingSlug}" is currently ${route.status.toLowerCase()}.`,
+          requestId: ctx.requestId,
+        },
+        listingSlug,
+        listingId: route.listingId,
+        queryLogId: discoveryQueryId,
+        outcome: "REJECTED",
+        errorCode: "LISTING_UNAVAILABLE",
+        errorMessage: `Listing "${listingSlug}" is currently ${route.status.toLowerCase()}.`,
       });
       return;
     }
@@ -126,14 +338,27 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     const circuitState = config.circuitBreaker
       ? await config.circuitBreaker.beforeRequest(listingSlug)
       : undefined;
+    const circuitStateLabel = circuitState?.state ?? null;
     if (circuitState && circuitState.state === "open") {
       const retryAfterSeconds = Math.max(1, Math.ceil(circuitState.retryAfterMs / 1000));
       res.setHeader("Retry-After", retryAfterSeconds.toString());
-      res.status(503).json({
-        error: "UPSTREAM_TEMPORARILY_UNAVAILABLE",
-        message: "This provider is temporarily failing. Retry after the cooldown window.",
-        requestId: ctx.requestId,
-        retryAfterSeconds,
+      await sendGatewayResponse(res, {
+        ctx,
+        statusCode: 503,
+        body: {
+          error: "UPSTREAM_TEMPORARILY_UNAVAILABLE",
+          message: "This provider is temporarily failing. Retry after the cooldown window.",
+          requestId: ctx.requestId,
+          retryAfterSeconds,
+        },
+        listingSlug,
+        listingId: route.listingId,
+        queryLogId: discoveryQueryId,
+        outcome: "REJECTED",
+        circuitState: circuitStateLabel,
+        errorCode: "UPSTREAM_TEMPORARILY_UNAVAILABLE",
+        errorMessage: "This provider is temporarily failing. Retry after the cooldown window.",
+        metadata: { retryAfterSeconds },
       });
       return;
     }
@@ -154,76 +379,180 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
 
     if (bundleSessionId) {
       if (ctx.authMode === "x402") {
-        res.status(400).json({
-          error: "INVALID_BUNDLE_CONTEXT",
-          message: "Bundle session billing is only supported for API key authenticated calls.",
-          requestId: ctx.requestId,
+        await sendGatewayResponse(res, {
+          ctx,
+          statusCode: 400,
+          body: {
+            error: "INVALID_BUNDLE_CONTEXT",
+            message: "Bundle session billing is only supported for API key authenticated calls.",
+            requestId: ctx.requestId,
+          },
+          listingSlug,
+          listingId: route.listingId,
+          queryLogId: discoveryQueryId,
+          outcome: "REJECTED",
+          billingMode: "BUNDLE_STEP",
+          circuitState: circuitStateLabel,
+          errorCode: "INVALID_BUNDLE_CONTEXT",
+          errorMessage: "Bundle session billing is only supported for API key authenticated calls.",
         });
         return;
       }
 
       if (!config.lookupBundleSession) {
-        res.status(503).json({
-          error: "BUNDLE_SETTLEMENT_UNAVAILABLE",
-          message: "Bundle settlement is not configured on this gateway.",
-          requestId: ctx.requestId,
+        await sendGatewayResponse(res, {
+          ctx,
+          statusCode: 503,
+          body: {
+            error: "BUNDLE_SETTLEMENT_UNAVAILABLE",
+            message: "Bundle settlement is not configured on this gateway.",
+            requestId: ctx.requestId,
+          },
+          listingSlug,
+          listingId: route.listingId,
+          queryLogId: discoveryQueryId,
+          outcome: "FAILED",
+          billingMode: "BUNDLE_STEP",
+          circuitState: circuitStateLabel,
+          errorCode: "BUNDLE_SETTLEMENT_UNAVAILABLE",
+          errorMessage: "Bundle settlement is not configured on this gateway.",
         });
         return;
       }
 
       bundleStepIndex = parseStepIndex(bundleStepIndexHeader);
       if (bundleStepIndex === undefined) {
-        res.status(400).json({
-          error: "INVALID_BUNDLE_CONTEXT",
-          message: "Missing or invalid X-NexusX-Bundle-Step-Index header.",
-          requestId: ctx.requestId,
+        await sendGatewayResponse(res, {
+          ctx,
+          statusCode: 400,
+          body: {
+            error: "INVALID_BUNDLE_CONTEXT",
+            message: "Missing or invalid X-NexusX-Bundle-Step-Index header.",
+            requestId: ctx.requestId,
+          },
+          listingSlug,
+          listingId: route.listingId,
+          queryLogId: discoveryQueryId,
+          outcome: "REJECTED",
+          billingMode: "BUNDLE_STEP",
+          circuitState: circuitStateLabel,
+          errorCode: "INVALID_BUNDLE_CONTEXT",
+          errorMessage: "Missing or invalid X-NexusX-Bundle-Step-Index header.",
         });
         return;
       }
 
       const session = await config.lookupBundleSession(bundleSessionId);
       if (!session) {
-        res.status(404).json({
-          error: "BUNDLE_SESSION_NOT_FOUND",
-          message: "Bundle session was not found.",
-          requestId: ctx.requestId,
+        await sendGatewayResponse(res, {
+          ctx,
+          statusCode: 404,
+          body: {
+            error: "BUNDLE_SESSION_NOT_FOUND",
+            message: "Bundle session was not found.",
+            requestId: ctx.requestId,
+          },
+          listingSlug,
+          listingId: route.listingId,
+          queryLogId: discoveryQueryId,
+          outcome: "REJECTED",
+          billingMode: "BUNDLE_STEP",
+          circuitState: circuitStateLabel,
+          errorCode: "BUNDLE_SESSION_NOT_FOUND",
+          errorMessage: "Bundle session was not found.",
+          bundleSessionId,
         });
         return;
       }
 
       if (session.buyerId !== ctx.buyerId) {
-        res.status(403).json({
-          error: "BUNDLE_SESSION_FORBIDDEN",
-          message: "Bundle session does not belong to this buyer.",
-          requestId: ctx.requestId,
+        await sendGatewayResponse(res, {
+          ctx,
+          statusCode: 403,
+          body: {
+            error: "BUNDLE_SESSION_FORBIDDEN",
+            message: "Bundle session does not belong to this buyer.",
+            requestId: ctx.requestId,
+          },
+          listingSlug,
+          listingId: route.listingId,
+          queryLogId: discoveryQueryId,
+          outcome: "REJECTED",
+          billingMode: "BUNDLE_STEP",
+          circuitState: circuitStateLabel,
+          errorCode: "BUNDLE_SESSION_FORBIDDEN",
+          errorMessage: "Bundle session does not belong to this buyer.",
+          bundleSessionId,
         });
         return;
       }
 
       if (session.expiresAt && session.expiresAt.getTime() <= Date.now()) {
-        res.status(409).json({
-          error: "BUNDLE_SESSION_EXPIRED",
-          message: "Bundle session has expired.",
-          requestId: ctx.requestId,
+        await sendGatewayResponse(res, {
+          ctx,
+          statusCode: 409,
+          body: {
+            error: "BUNDLE_SESSION_EXPIRED",
+            message: "Bundle session has expired.",
+            requestId: ctx.requestId,
+          },
+          listingSlug,
+          listingId: route.listingId,
+          queryLogId: discoveryQueryId,
+          outcome: "REJECTED",
+          billingMode: "BUNDLE_STEP",
+          circuitState: circuitStateLabel,
+          errorCode: "BUNDLE_SESSION_EXPIRED",
+          errorMessage: "Bundle session has expired.",
+          bundleSessionId,
+          bundleStepIndex,
         });
         return;
       }
 
       if (session.status !== "REGISTERED" && session.status !== "IN_PROGRESS") {
-        res.status(409).json({
-          error: "BUNDLE_SESSION_CLOSED",
-          message: `Bundle session is ${session.status.toLowerCase()} and cannot accept step calls.`,
-          requestId: ctx.requestId,
+        await sendGatewayResponse(res, {
+          ctx,
+          statusCode: 409,
+          body: {
+            error: "BUNDLE_SESSION_CLOSED",
+            message: `Bundle session is ${session.status.toLowerCase()} and cannot accept step calls.`,
+            requestId: ctx.requestId,
+          },
+          listingSlug,
+          listingId: route.listingId,
+          queryLogId: discoveryQueryId,
+          outcome: "REJECTED",
+          billingMode: "BUNDLE_STEP",
+          circuitState: circuitStateLabel,
+          errorCode: "BUNDLE_SESSION_CLOSED",
+          errorMessage: `Bundle session is ${session.status.toLowerCase()} and cannot accept step calls.`,
+          bundleSessionId,
+          bundleStepIndex,
         });
         return;
       }
 
       const expectedSlug = session.toolSlugs[bundleStepIndex];
       if (!expectedSlug || expectedSlug !== listingSlug) {
-        res.status(400).json({
-          error: "BUNDLE_STEP_MISMATCH",
-          message: `Bundle step ${bundleStepIndex} expected slug \"${expectedSlug ?? "n/a"}\" but received \"${listingSlug}\".`,
-          requestId: ctx.requestId,
+        await sendGatewayResponse(res, {
+          ctx,
+          statusCode: 400,
+          body: {
+            error: "BUNDLE_STEP_MISMATCH",
+            message: `Bundle step ${bundleStepIndex} expected slug \"${expectedSlug ?? "n/a"}\" but received \"${listingSlug}\".`,
+            requestId: ctx.requestId,
+          },
+          listingSlug,
+          listingId: route.listingId,
+          queryLogId: discoveryQueryId,
+          outcome: "REJECTED",
+          billingMode: "BUNDLE_STEP",
+          circuitState: circuitStateLabel,
+          errorCode: "BUNDLE_STEP_MISMATCH",
+          errorMessage: `Bundle step ${bundleStepIndex} expected slug "${expectedSlug ?? "n/a"}" but received "${listingSlug}".`,
+          bundleSessionId,
+          bundleStepIndex,
         });
         return;
       }
@@ -244,18 +573,48 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
 
     // ─── 6. Proxy to upstream ───
     const credential = config.credentialService?.getCredential(listingSlug);
-    const proxyResult = await proxyService.forward(
-      route,
-      {
-        method: req.method,
-        path: upstreamPath,
-        queryString,
-        headers: req.headers,
-        body,
-      },
-      ctx.requestId,
-      credential
-    );
+    let proxyResult: ProxyResult;
+    try {
+      proxyResult = await proxyService.forward(
+        route,
+        {
+          method: req.method,
+          path: upstreamPath,
+          queryString,
+          headers: req.headers,
+          body,
+        },
+        ctx.requestId,
+        credential
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to proxy request upstream.";
+      if (config.circuitBreaker) {
+        await config.circuitBreaker.recordResult(listingSlug, 502);
+      }
+      await sendGatewayResponse(res, {
+        ctx,
+        statusCode: 502,
+        body: {
+          error: "UPSTREAM_PROXY_FAILED",
+          message,
+          requestId: ctx.requestId,
+        },
+        listingSlug,
+        listingId: route.listingId,
+        queryLogId: discoveryQueryId,
+        outcome: "FAILED",
+        circuitState: circuitStateLabel,
+        errorCode: "UPSTREAM_PROXY_FAILED",
+        errorMessage: message,
+        latencyMs: Math.max(0, Date.now() - ctx.receivedAt),
+        metadata: {
+          method: req.method,
+          upstreamPath,
+        },
+      });
+      return;
+    }
     if (config.circuitBreaker) {
       await config.circuitBreaker.recordResult(listingSlug, proxyResult.statusCode);
     }
@@ -425,48 +784,96 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       });
     }
 
+    const billingMode = txRecord?.billingMode === "BUNDLE_STEP" ? "BUNDLE_STEP" : "INDIVIDUAL";
+    const settlementStatus =
+      ctx.authMode === "x402"
+        ? (ctx.x402
+            ? "SETTLED"
+            : x402SettlementStatus === "pending_reconciliation"
+              ? "PENDING_RECONCILIATION"
+              : x402SettlementStatus === "upstream_failed"
+                ? "UPSTREAM_FAILED"
+                : "NONE")
+        : billingMode === "BUNDLE_STEP"
+          ? "DEFERRED_BUNDLE"
+          : "NONE";
+    const chargedPriceUsdc =
+      ctx.authMode === "x402"
+        ? (ctx.x402?.amountUsdc ?? (settlementStatus === "PENDING_RECONCILIATION" ? route.currentPriceUsdc : 0))
+        : (txRecord?.priceUsdc ?? 0);
+    const quotedPriceUsdc =
+      billingMode === "BUNDLE_STEP"
+        ? (txRecord?.quotedPriceUsdc ?? 0)
+        : chargedPriceUsdc;
+    const platformFeeUsdc =
+      ctx.authMode === "x402"
+        ? (ctx.x402?.platformFeeUsdc ?? (settlementStatus === "PENDING_RECONCILIATION" || settlementStatus === "UPSTREAM_FAILED"
+            ? billingService.computeSplit(route.currentPriceUsdc).platformFee
+            : 0))
+        : (txRecord?.platformFeeUsdc ?? 0);
+    const providerAmountUsdc =
+      ctx.authMode === "x402"
+        ? (ctx.x402?.providerAmountUsdc ?? (settlementStatus === "PENDING_RECONCILIATION" || settlementStatus === "UPSTREAM_FAILED"
+            ? billingService.computeSplit(route.currentPriceUsdc).providerAmount
+            : 0))
+        : (txRecord?.providerAmountUsdc ?? 0);
+    const receiptOutcome = proxyResult.statusCode >= 200 && proxyResult.statusCode < 400 ? "SUCCESS" : "FAILED";
+    const receipt = await persistReceipt({
+      ...buildBaseReceipt(ctx, listingSlug, discoveryQueryId),
+      listingId: route.listingId,
+      billingMode,
+      outcome: receiptOutcome,
+      settlementStatus,
+      quotedPriceUsdc,
+      chargedPriceUsdc,
+      platformFeeUsdc,
+      providerAmountUsdc,
+      httpStatus: proxyResult.statusCode,
+      upstreamStatus: proxyResult.statusCode,
+      latencyMs: proxyResult.latencyMs,
+      bytesTransferred: proxyResult.bytesTransferred,
+      bundleSessionId: bundleSessionId ?? null,
+      bundleStepIndex,
+      txHash: ctx.x402?.txHash ?? null,
+      circuitState: circuitStateLabel,
+      errorCode: receiptOutcome === "FAILED" ? `HTTP_${proxyResult.statusCode}` : null,
+      errorMessage:
+        receiptOutcome === "FAILED"
+          ? `Execution returned HTTP ${proxyResult.statusCode}.`
+          : null,
+      metadata: {
+        method: req.method,
+        upstreamPath,
+      },
+    });
+
     // ─── 8. Send response to buyer ───
     // Set upstream response headers.
     for (const [key, value] of Object.entries(proxyResult.headers)) {
       res.setHeader(key, value);
     }
 
-    // Add NexusX headers.
-    res.setHeader("X-NexusX-Request-Id", ctx.requestId);
-    res.setHeader("X-NexusX-Listing", listingSlug);
-    res.setHeader("X-NexusX-Latency-Ms", proxyResult.latencyMs.toString());
-    res.setHeader("X-NexusX-Billing-Mode", txRecord?.billingMode === "BUNDLE_STEP" ? "bundle_step" : "individual");
-
-    if (ctx.authMode === "x402" && ctx.x402) {
-      res.setHeader("X-NexusX-Price-USDC", ctx.x402.amountUsdc.toFixed(6));
-      res.setHeader("X-NexusX-Fee-USDC", ctx.x402.platformFeeUsdc.toFixed(6));
-      res.setHeader("X-NexusX-Payment", "x402");
-      res.setHeader("X-NexusX-TxHash", ctx.x402.txHash);
-      res.setHeader("X-NexusX-Settlement-Status", "settled");
-    } else if (ctx.authMode === "x402" && x402SettlementStatus) {
-      res.setHeader("X-NexusX-Payment", "x402");
-      res.setHeader("X-NexusX-Settlement-Status", x402SettlementStatus);
-    } else if (txRecord?.billingMode === "BUNDLE_STEP") {
-      res.setHeader("X-NexusX-Price-USDC", "0.000000");
-      res.setHeader("X-NexusX-Fee-USDC", "0.000000");
-      res.setHeader(
-        "X-NexusX-Bundle-Quoted-Price-USDC",
-        (txRecord.quotedPriceUsdc ?? 0).toFixed(6),
-      );
-      if (bundleSessionId) {
-        res.setHeader("X-NexusX-Bundle-Session-Id", bundleSessionId);
-      }
-      if (bundleStepIndex !== undefined) {
-        res.setHeader("X-NexusX-Bundle-Step-Index", String(bundleStepIndex));
-      }
-    } else if (txRecord && txRecord.priceUsdc > 0) {
-      res.setHeader("X-NexusX-Price-USDC", txRecord.priceUsdc.toFixed(6));
-      res.setHeader("X-NexusX-Fee-USDC", txRecord.platformFeeUsdc.toFixed(6));
-    }
-
-    if (isSandbox) {
-      res.setHeader("X-NexusX-Sandbox", "true");
-    }
+    setExecutionHeaders(res, {
+      receiptId: receipt?.id ?? null,
+      requestId: ctx.requestId,
+      queryId: discoveryQueryId,
+      listingSlug,
+      authMode: ctx.authMode === "x402" ? "x402" : "api_key",
+      billingMode: billingMode === "BUNDLE_STEP" ? "bundle_step" : "individual",
+      outcome: receiptOutcome.toLowerCase() as "success" | "failed" | "rejected",
+      settlementStatus: settlementStatus.toLowerCase() as
+        "none" | "settled" | "pending_reconciliation" | "upstream_failed" | "deferred_bundle" | "abandoned",
+      chargedPriceUsdc,
+      quotedPriceUsdc,
+      platformFeeUsdc,
+      providerAmountUsdc,
+      latencyMs: proxyResult.latencyMs,
+      sandbox: isSandbox,
+      txHash: ctx.x402?.txHash ?? null,
+      bundleSessionId,
+      bundleStepIndex,
+      circuitState: circuitStateLabel,
+    });
 
     res.status(proxyResult.statusCode).send(proxyResult.body);
   }

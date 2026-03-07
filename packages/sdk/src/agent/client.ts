@@ -13,6 +13,7 @@ import type {
   X402PaymentRequirements,
   CallParams,
   CallResult,
+  ExecutionReceiptSummary,
   ChainStep,
   ChainResult,
   SearchMatch,
@@ -25,6 +26,16 @@ import type {
 
 function readOptionalString(value: unknown): string | undefined {
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function parseNumberHeader(value: string | null, fallback = 0): number {
+  const parsed = Number.parseFloat(value ?? "");
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function parseIntegerHeader(value: string | null, fallback = 0): number {
+  const parsed = Number.parseInt(value ?? "", 10);
+  return Number.isFinite(parsed) ? parsed : fallback;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -299,9 +310,71 @@ export class NexusXAgent {
     try {
       const response = await fetch(url.toString(), init);
 
-      const priceUsdc = parseFloat(response.headers.get("x-nexusx-price-usdc") || "0") || 0;
-      const latencyMs = parseInt(response.headers.get("x-nexusx-latency-ms") || "0", 10) || 0;
+      const priceUsdc = parseNumberHeader(response.headers.get("x-nexusx-price-usdc"));
+      const quotedPriceUsdc = parseNumberHeader(
+        response.headers.get("x-nexusx-quoted-price-usdc"),
+        priceUsdc,
+      );
+      const platformFeeUsdc = parseNumberHeader(response.headers.get("x-nexusx-fee-usdc"));
+      const providerAmountUsdc = parseNumberHeader(
+        response.headers.get("x-nexusx-provider-amount-usdc"),
+      );
+      const latencyMs = parseIntegerHeader(response.headers.get("x-nexusx-latency-ms"));
       const requestId = response.headers.get("x-nexusx-request-id") || "";
+      const receiptId = response.headers.get("x-nexusx-receipt-id") || "";
+      const responseQueryId = response.headers.get("x-nexusx-query-id") || params.queryId;
+      const listingFromHeader = response.headers.get("x-nexusx-listing") || slug;
+      const authMode = response.headers.get("x-nexusx-auth-mode") === "x402" ? "x402" : "api_key";
+      const billingMode =
+        response.headers.get("x-nexusx-billing-mode") === "bundle_step" ? "bundle_step" : "individual";
+      const outcomeHeader = response.headers.get("x-nexusx-receipt-outcome");
+      const outcome =
+        outcomeHeader === "rejected"
+          ? "rejected"
+          : outcomeHeader === "failed"
+            ? "failed"
+            : "success";
+      const settlementHeader = response.headers.get("x-nexusx-settlement-status");
+      const settlementStatus =
+        settlementHeader === "settled" ||
+        settlementHeader === "pending_reconciliation" ||
+        settlementHeader === "upstream_failed" ||
+        settlementHeader === "deferred_bundle" ||
+        settlementHeader === "abandoned"
+          ? settlementHeader
+          : "none";
+      const txHash = response.headers.get("x-nexusx-txhash") || undefined;
+      const bundleSessionId = response.headers.get("x-nexusx-bundle-session-id") || undefined;
+      const bundleStepIndexRaw = response.headers.get("x-nexusx-bundle-step-index");
+      const bundleStepIndex =
+        bundleStepIndexRaw !== null ? parseIntegerHeader(bundleStepIndexRaw, -1) : undefined;
+      const circuitState = response.headers.get("x-nexusx-circuit-state") || undefined;
+      const receipt: ExecutionReceiptSummary | null = receiptId
+        ? {
+            id: receiptId,
+            requestId,
+            queryId: responseQueryId,
+            listingSlug: listingFromHeader,
+            authMode,
+            billingMode,
+            outcome,
+            settlementStatus,
+            priceUsdc,
+            quotedPriceUsdc,
+            platformFeeUsdc,
+            providerAmountUsdc,
+            latencyMs,
+            statusCode: response.status,
+            sandbox: this.sandbox,
+            txHash,
+            bundleSessionId,
+            bundleStepIndex:
+              typeof bundleStepIndex === "number" && bundleStepIndex >= 0
+                ? bundleStepIndex
+                : undefined,
+            circuitState,
+          }
+        : null;
 
       const raw = await response.text();
       let data: unknown = raw;
@@ -317,8 +390,15 @@ export class NexusXAgent {
         data,
         raw,
         priceUsdc,
+        quotedPriceUsdc,
+        platformFeeUsdc,
+        providerAmountUsdc,
         latencyMs,
         requestId,
+        billingMode,
+        settlementStatus,
+        isSandbox: this.sandbox,
+        receipt,
       };
     } catch (err) {
       const isTimeout = err instanceof DOMException && err.name === "TimeoutError";
@@ -328,8 +408,15 @@ export class NexusXAgent {
         data: { error: isTimeout ? "TIMEOUT" : "CONNECTION_ERROR", message: String(err) },
         raw: "",
         priceUsdc: 0,
+        quotedPriceUsdc: 0,
+        platformFeeUsdc: 0,
+        providerAmountUsdc: 0,
         latencyMs: isTimeout ? this.timeoutMs : 0,
         requestId: "",
+        billingMode: "individual",
+        settlementStatus: "none",
+        isSandbox: this.sandbox,
+        receipt: null,
       };
     }
   }

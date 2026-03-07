@@ -12,6 +12,7 @@ import {
   GATEWAY_ROUTE_VERSION_KEY,
   bumpControlPlaneVersion,
   markQueryLogSelected,
+  persistExecutionReceipt,
 } from "@nexusx/database";
 import { startGateway } from "./server";
 import type { GatewayDependencies } from "./server";
@@ -152,6 +153,10 @@ const deps: GatewayDependencies = {
 
   persistX402Execution: async (record) => {
     await persistX402ExecutionRecord(prisma, record);
+  },
+
+  persistExecutionReceipt: async (record) => {
+    return persistExecutionReceipt(prisma, record);
   },
 
   markQuerySelection: async (input) => {

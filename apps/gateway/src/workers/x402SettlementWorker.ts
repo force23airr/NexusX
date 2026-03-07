@@ -1,4 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
+import { updateExecutionReceiptSettlement } from "@nexusx/database";
 import { X402Adapter, type PaymentRequirement } from "../services/x402Adapter";
 import { persistX402ExecutionRecord } from "../services/x402ExecutionLedger";
 import type { GatewayConfig, X402ExecutionRecord } from "../types";
@@ -118,6 +119,13 @@ export class X402SettlementWorker {
               lastError: "Missing payment header for retry",
             },
           });
+          await updateExecutionReceiptSettlement(this.prisma, {
+            requestId: claimed.requestId,
+            settlementStatus: "ABANDONED",
+            retryCount: claimed.attemptCount,
+            errorCode: "ABANDONED",
+            errorMessage: "Missing payment header for retry",
+          }).catch(() => {});
           continue;
         }
 
@@ -147,6 +155,17 @@ export class X402SettlementWorker {
             };
 
             await persistX402ExecutionRecord(this.prisma, settledRecord);
+            await updateExecutionReceiptSettlement(this.prisma, {
+              requestId: claimed.requestId,
+              settlementStatus: "SETTLED",
+              chargedPriceUsdc: Number(claimed.quotedPriceUsdc),
+              platformFeeUsdc: Number(claimed.platformFeeUsdc),
+              providerAmountUsdc: Number(claimed.providerAmountUsdc),
+              txHash: result.txHash || null,
+              retryCount: claimed.attemptCount,
+              errorCode: null,
+              errorMessage: null,
+            }).catch(() => {});
             console.log(
               `[X402SettlementWorker] Settled ${claimed.requestId} (${claimed.listingSlug}) -> ${result.txHash}`,
             );
@@ -165,6 +184,16 @@ export class X402SettlementWorker {
               lastError: (result.error || "Settlement failed").slice(0, 1000),
             },
           });
+          await updateExecutionReceiptSettlement(this.prisma, {
+            requestId: claimed.requestId,
+            settlementStatus: "PENDING_RECONCILIATION",
+            chargedPriceUsdc: Number(claimed.quotedPriceUsdc),
+            platformFeeUsdc: Number(claimed.platformFeeUsdc),
+            providerAmountUsdc: Number(claimed.providerAmountUsdc),
+            retryCount: claimed.attemptCount,
+            errorCode: "SETTLEMENT_PENDING",
+            errorMessage: result.error || "Settlement failed",
+          }).catch(() => {});
           console.warn(
             `[X402SettlementWorker] Retry scheduled for ${claimed.requestId} in ${retryDelayMs}ms: ${result.error}`,
           );
@@ -177,6 +206,16 @@ export class X402SettlementWorker {
               availableAt: new Date(Date.now() + 60_000),
               lastError: message.slice(0, 1000),
             },
+          }).catch(() => {});
+          await updateExecutionReceiptSettlement(this.prisma, {
+            requestId: claimed.requestId,
+            settlementStatus: "PENDING_RECONCILIATION",
+            chargedPriceUsdc: Number(claimed.quotedPriceUsdc),
+            platformFeeUsdc: Number(claimed.platformFeeUsdc),
+            providerAmountUsdc: Number(claimed.providerAmountUsdc),
+            retryCount: claimed.attemptCount,
+            errorCode: "SETTLEMENT_PENDING",
+            errorMessage: message,
           }).catch(() => {});
           console.error(`[X402SettlementWorker] Failed to settle ${claimed.requestId}:`, err);
         }

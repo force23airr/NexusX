@@ -173,6 +173,7 @@ export function createAuthMiddleware(
       rateLimitRpm: record.rateLimitRpm,
       requestId,
       receivedAt: Date.now(),
+      authMode: "api_key",
     };
 
     (req as any).ctx = ctx;

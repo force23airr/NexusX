@@ -96,21 +96,34 @@ export class ToolExecutor {
 
     // 5. Format response
     if (!result.success) {
+      const receiptLines = result.receipt
+        ? [
+            `\nReceipt ID: ${result.receipt.id}`,
+            `\nReceipt Outcome: ${result.receipt.outcome}`,
+            `\nSettlement: ${result.receipt.settlementStatus}`,
+          ]
+        : [];
       return this.errorResult(
         `API call failed (HTTP ${result.statusCode}):\n${result.body}\n\n` +
         `Request ID: ${result.requestId}` +
-        (result.priceUsdc > 0 ? `\nCharged: $${result.priceUsdc.toFixed(6)} USDC` : ""),
+        (result.priceUsdc > 0 ? `\nCharged: $${result.priceUsdc.toFixed(6)} USDC` : "") +
+        receiptLines.join(""),
       );
     }
 
     // Build response with metadata
     const metadataLines = [
       `--- NexusX Metadata ---`,
+      result.receipt ? `Receipt ID: ${result.receipt.id}` : undefined,
       `Request ID: ${result.requestId}`,
       `Price: $${result.priceUsdc.toFixed(6)} USDC`,
+      `Quoted Price: $${(result.receipt?.quotedPriceUsdc ?? result.quotedPriceUsdc ?? result.priceUsdc).toFixed(6)} USDC`,
       `Latency: ${result.latencyMs}ms`,
+      `Settlement: ${result.receipt?.settlementStatus ?? "none"}`,
       result.isSandbox ? `Mode: Sandbox (no billing)` : `Fee: $${result.platformFeeUsdc.toFixed(6)} USDC`,
-    ];
+      result.receipt?.txHash ? `Tx Hash: ${result.receipt.txHash}` : undefined,
+      result.receipt?.circuitState ? `Circuit State: ${result.receipt.circuitState}` : undefined,
+    ].filter((line): line is string => typeof line === "string");
 
     // Fetch reliability score and add warnings (non-blocking)
     try {
@@ -191,6 +204,8 @@ export class ToolExecutor {
       quotedPriceUsdc: number;
       billedPriceUsdc: number;
       requestId: string;
+      receiptId?: string;
+      settlementStatus?: string;
     }> = [];
     const intermediate: Array<{ step: number; slug: string; output: unknown }> = [];
 
@@ -224,6 +239,8 @@ export class ToolExecutor {
         quotedPriceUsdc,
         billedPriceUsdc: round6(result.priceUsdc),
         requestId: result.requestId,
+        receiptId: result.receipt?.id,
+        settlementStatus: result.receipt?.settlementStatus,
       });
 
       if (!result.success) {
@@ -414,6 +431,8 @@ export class ToolExecutor {
       quotedPriceUsdc: number;
       billedPriceUsdc: number;
       requestId: string;
+      receiptId?: string;
+      settlementStatus?: string;
     }>,
     totalQuotedPrice: number,
     totalLatency: number,
@@ -447,7 +466,9 @@ export class ToolExecutor {
     for (const step of steps) {
       lines.push(
         `  ${step.step}. ${step.slug} | HTTP ${step.statusCode} | ${step.latencyMs}ms | ` +
-        `quoted=$${step.quotedPriceUsdc.toFixed(6)} billed=$${step.billedPriceUsdc.toFixed(6)} | req=${step.requestId || "n/a"}`,
+        `quoted=$${step.quotedPriceUsdc.toFixed(6)} billed=$${step.billedPriceUsdc.toFixed(6)} | ` +
+        `req=${step.requestId || "n/a"} | receipt=${step.receiptId ?? "n/a"} | ` +
+        `settlement=${step.settlementStatus ?? "none"}`,
       );
     }
 

@@ -89,10 +89,46 @@ export interface CallResult {
   raw: string;
   /** Price charged in USDC (0 if sandbox or free). */
   priceUsdc: number;
+  /** Quoted price in USDC (differs from charged price for bundle-step calls). */
+  quotedPriceUsdc: number;
+  /** Platform fee captured in the execution receipt. */
+  platformFeeUsdc: number;
+  /** Provider amount captured in the execution receipt. */
+  providerAmountUsdc: number;
   /** Upstream latency reported by gateway, in ms. */
   latencyMs: number;
   /** Gateway request ID for tracing. */
   requestId: string;
+  /** Gateway billing mode for this execution. */
+  billingMode: "individual" | "bundle_step";
+  /** Settlement status reported by the gateway. */
+  settlementStatus: "none" | "settled" | "pending_reconciliation" | "upstream_failed" | "deferred_bundle" | "abandoned";
+  /** True when the gateway executed in validated sandbox mode. */
+  isSandbox: boolean;
+  /** Typed execution receipt summary returned by the gateway. */
+  receipt: ExecutionReceiptSummary | null;
+}
+
+export interface ExecutionReceiptSummary {
+  id: string;
+  requestId: string;
+  queryId?: string;
+  listingSlug: string;
+  authMode: "api_key" | "x402";
+  billingMode: "individual" | "bundle_step";
+  outcome: "success" | "failed" | "rejected";
+  settlementStatus: "none" | "settled" | "pending_reconciliation" | "upstream_failed" | "deferred_bundle" | "abandoned";
+  priceUsdc: number;
+  quotedPriceUsdc: number;
+  platformFeeUsdc: number;
+  providerAmountUsdc: number;
+  latencyMs: number;
+  statusCode: number;
+  sandbox: boolean;
+  txHash?: string;
+  bundleSessionId?: string;
+  bundleStepIndex?: number;
+  circuitState?: string;
 }
 
 // ─────────────────────────────────────────────────────────────

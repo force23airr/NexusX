@@ -35,6 +35,8 @@ import type {
   DemandSignalEvent,
   TransactionRecord,
   X402ExecutionRecord,
+  ExecutionReceiptRecord,
+  PersistedExecutionReceiptRef,
   BundleSessionRegistrationInput,
   BundleSessionRecord,
   BundleSessionFinalizeResult,
@@ -64,6 +66,10 @@ export interface GatewayDependencies {
   persistTransaction: TransactionPersistFn;
   /** Database: Persist x402 execution settlement state (optional). */
   persistX402Execution?: (record: X402ExecutionRecord) => Promise<void>;
+  /** Database: Persist canonical execution receipts. */
+  persistExecutionReceipt?: (
+    record: ExecutionReceiptRecord
+  ) => Promise<PersistedExecutionReceiptRef>;
   /** Observability: mark a discovery query as having converted into execution. */
   markQuerySelection?: (input: {
     queryLogId: string;
@@ -233,6 +239,7 @@ export function createGatewayApp(
     gatewayConfig: cfg,
     persistTransaction: deps.persistTransaction,
     persistX402Execution: deps.persistX402Execution,
+    persistExecutionReceipt: deps.persistExecutionReceipt,
     markQuerySelection: deps.markQuerySelection,
   });
 

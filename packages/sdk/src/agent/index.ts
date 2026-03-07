@@ -11,6 +11,7 @@ export type {
   X402PaymentRequirements,
   CallParams,
   CallResult,
+  ExecutionReceiptSummary,
   ChainStep,
   ChainResult,
   SearchMatch,

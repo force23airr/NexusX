@@ -83,6 +83,54 @@ export interface X402ExecutionRecord {
   lastError?: string | null;
 }
 
+export type ExecutionReceiptOutcome =
+  | "SUCCESS"
+  | "FAILED"
+  | "REJECTED";
+
+export type ExecutionReceiptSettlementStatus =
+  | "NONE"
+  | "SETTLED"
+  | "PENDING_RECONCILIATION"
+  | "UPSTREAM_FAILED"
+  | "DEFERRED_BUNDLE"
+  | "ABANDONED";
+
+export interface ExecutionReceiptRecord {
+  requestId: string;
+  queryLogId?: string | null;
+  listingId?: string | null;
+  listingSlug: string;
+  buyerId?: string | null;
+  payerAddress?: string | null;
+  authMode: "API_KEY" | "X402";
+  billingMode: "INDIVIDUAL" | "BUNDLE_STEP";
+  outcome: ExecutionReceiptOutcome;
+  settlementStatus: ExecutionReceiptSettlementStatus;
+  sandbox?: boolean;
+  quotedPriceUsdc?: number | null;
+  chargedPriceUsdc?: number;
+  platformFeeUsdc?: number;
+  providerAmountUsdc?: number;
+  httpStatus: number;
+  upstreamStatus?: number | null;
+  latencyMs?: number | null;
+  bytesTransferred?: number | null;
+  bundleSessionId?: string | null;
+  bundleStepIndex?: number | null;
+  txHash?: string | null;
+  circuitState?: string | null;
+  retryCount?: number;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  metadata?: Record<string, unknown> | null;
+}
+
+export interface PersistedExecutionReceiptRef {
+  id: string;
+  requestId: string;
+}
+
 /** Resolved listing details for proxying. */
 export interface ListingRoute {
   listingId: string;

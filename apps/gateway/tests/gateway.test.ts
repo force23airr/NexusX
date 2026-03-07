@@ -20,6 +20,7 @@ import type {
   ListingRoute,
   DemandSignalEvent,
   TransactionRecord,
+  ExecutionReceiptRecord,
 } from "../src/types";
 
 // ─────────────────────────────────────────────────────────────
@@ -60,9 +61,11 @@ function createMockDeps(overrides?: Partial<GatewayDependencies>): {
   deps: GatewayDependencies;
   signals: DemandSignalEvent[];
   transactions: TransactionRecord[];
+  receipts: ExecutionReceiptRecord[];
 } {
   const signals: DemandSignalEvent[] = [];
   const transactions: TransactionRecord[] = [];
+  const receipts: ExecutionReceiptRecord[] = [];
   const testKey = createTestKey();
 
   const deps: GatewayDependencies = {
@@ -84,13 +87,20 @@ function createMockDeps(overrides?: Partial<GatewayDependencies>): {
     persistTransaction: async (record) => {
       transactions.push(record);
     },
+    persistExecutionReceipt: async (record) => {
+      receipts.push(record);
+      return {
+        id: `rcpt_${receipts.length}`,
+        requestId: record.requestId,
+      };
+    },
     emitDemandSignal: (signal) => {
       signals.push(signal);
     },
     ...overrides,
   };
 
-  return { deps, signals, transactions };
+  return { deps, signals, transactions, receipts };
 }
 
 function createCircuitBreakerRedisMock() {
@@ -721,7 +731,7 @@ describe("Proxy Bundle Billing", () => {
 
   it("marks bundle step calls as bundle-billed and persists quoted pricing", async () => {
     const { rawKey, keyHash } = generateApiKey();
-    const { deps, transactions } = createMockDeps({
+    const { deps, transactions, receipts } = createMockDeps({
       lookupApiKey: async (prefix) => {
         if (prefix !== rawKey.slice(4, 12)) return null;
         return {
@@ -780,6 +790,72 @@ describe("Proxy Bundle Billing", () => {
     expect(transactions[0].status).toBe("PENDING");
     expect(transactions[0].bundleSessionId).toBe("bs_001");
     expect(transactions[0].quotedPriceUsdc).toBe(0.005);
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].billingMode).toBe("BUNDLE_STEP");
+    expect(receipts[0].settlementStatus).toBe("DEFERRED_BUNDLE");
+    expect(res.headers["x-nexusx-receipt-id"]).toBe("rcpt_1");
+    expect(res.headers["x-nexusx-quoted-price-usdc"]).toBe("0.005000");
+    expect(res.headers["x-nexusx-receipt-outcome"]).toBe("success");
+
+    cleanup();
+  });
+
+  it("persists and exposes rejected receipts for invalid bundle execution context", async () => {
+    const { rawKey, keyHash } = generateApiKey();
+    const { deps, receipts } = createMockDeps({
+      lookupApiKey: async (prefix) => {
+        if (prefix !== rawKey.slice(4, 12)) return null;
+        return {
+          id: "key_001",
+          userId: "usr_001",
+          keyHash,
+          status: "ACTIVE",
+          rateLimitRpm: 60,
+          allowedIps: [],
+          expiresAt: null,
+          walletAddress: "0xBuyerWallet",
+        };
+      },
+      lookupBundleSession: async () => ({
+        id: "bs_001",
+        buyerId: "usr_001",
+        apiKeyId: "key_001",
+        bundleSlug: "bundle-translate-analyze",
+        bundleName: "Bundle",
+        status: "REGISTERED",
+        toolSlugs: ["test-api"],
+        registeredGrossPriceUsdc: 0.005,
+        executedGrossPriceUsdc: 0,
+        targetBundlePriceUsdc: 0.004,
+        billedPriceUsdc: 0,
+        discountUsdc: 0,
+        platformFeeRate: 0.15,
+        platformFeeUsdc: 0,
+        providerPoolUsdc: 0,
+        expiresAt: new Date(Date.now() + 30 * 60 * 1000),
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        finalizedAt: null,
+      }),
+    });
+
+    const { app, cleanup } = createGatewayApp(deps);
+
+    const res = await request(app)
+      .post("/v1/test-api/anything")
+      .set("Authorization", `Bearer ${rawKey}`)
+      .set("X-NexusX-Bundle-Session-Id", "bs_001")
+      .send({ hello: "world" });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe("INVALID_BUNDLE_CONTEXT");
+    expect(res.body.receiptId).toBe("rcpt_1");
+    expect(res.headers["x-nexusx-receipt-id"]).toBe("rcpt_1");
+    expect(res.headers["x-nexusx-receipt-outcome"]).toBe("rejected");
+    expect(res.headers["x-nexusx-billing-mode"]).toBe("bundle_step");
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].outcome).toBe("REJECTED");
+    expect(receipts[0].billingMode).toBe("BUNDLE_STEP");
 
     cleanup();
   });

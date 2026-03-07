@@ -111,6 +111,30 @@ export interface ToolExecutionResult {
   bundleStepIndex?: number;
   /** Populated when statusCode is 402 — contains payment requirements from the gateway. */
   paymentRequired?: X402PaymentRequirements[];
+  /** Canonical gateway execution receipt summary. */
+  receipt?: ExecutionReceiptSummary | null;
+}
+
+export interface ExecutionReceiptSummary {
+  id: string;
+  requestId: string;
+  queryId?: string;
+  listingSlug: string;
+  authMode: "api_key" | "x402";
+  billingMode: "individual" | "bundle_step";
+  outcome: "success" | "failed" | "rejected";
+  settlementStatus: "none" | "settled" | "pending_reconciliation" | "upstream_failed" | "deferred_bundle" | "abandoned";
+  priceUsdc: number;
+  quotedPriceUsdc: number;
+  platformFeeUsdc: number;
+  providerAmountUsdc: number;
+  latencyMs: number;
+  statusCode: number;
+  sandbox: boolean;
+  txHash?: string;
+  bundleSessionId?: string;
+  bundleStepIndex?: number;
+  circuitState?: string;
 }
 
 /** Session-scoped budget state. */

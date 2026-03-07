@@ -106,6 +106,14 @@ export {
   type SharedCircuitState,
 } from "./circuit-breaker-state";
 
+export {
+  persistExecutionReceipt,
+  updateExecutionReceiptSettlement,
+  type ExecutionReceiptRecord,
+  type PersistedExecutionReceiptRef,
+  type ExecutionReceiptSettlementUpdate,
+} from "./execution-receipts";
+
 // ─── Operational Observability ───
 export {
   markQueryLogSelected,
@@ -164,6 +172,7 @@ export type {
   WatchlistItem,
   Rating,
   QueryLog,
+  ExecutionReceipt,
   PlatformConfig,
   AuditLog,
 } from "@prisma/client";
@@ -175,6 +184,9 @@ export {
   ListingType,
   DemandSignalType,
   TransactionStatus,
+  ExecutionAuthMode,
+  ExecutionReceiptOutcome,
+  ExecutionSettlementStatus,
   SettlementStatus,
   SubscriptionStatus,
   ApiKeyStatus,
