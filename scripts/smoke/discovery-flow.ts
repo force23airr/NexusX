@@ -5,6 +5,7 @@ const REQUIRED_ENV = [
   "NEXUSX_PROVIDER_API_KEY",
   "NEXUSX_WEB_URL",
   "NEXUSX_GATEWAY_URL",
+  "NEXUSX_SMOKE_TARGET_BASE_URL",
 ] as const;
 
 for (const key of REQUIRED_ENV) {
@@ -28,8 +29,8 @@ const agent = new NexusXAgent({
 
 const region = (process.env.NEXUSX_SMOKE_REGION || "US").toUpperCase();
 const categorySlug = process.env.NEXUSX_SMOKE_CATEGORY || "language-models";
-const targetBaseUrl = process.env.NEXUSX_SMOKE_TARGET_BASE_URL || "https://httpbin.org";
-const docsUrl = process.env.NEXUSX_SMOKE_DOCS_URL || "https://httpbin.org";
+const targetBaseUrl = process.env.NEXUSX_SMOKE_TARGET_BASE_URL!;
+const docsUrl = process.env.NEXUSX_SMOKE_DOCS_URL || targetBaseUrl;
 const query = process.env.NEXUSX_SMOKE_QUERY || "summarize text for an agent";
 const keepListing = process.env.NEXUSX_SMOKE_KEEP_LISTING === "1";
 const suffix = Date.now().toString(36);
