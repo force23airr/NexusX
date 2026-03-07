@@ -10,12 +10,12 @@ import { getCurrentProvider } from "@/lib/auth";
 const GATEWAY_URL = process.env.GATEWAY_URL || "http://localhost:3100";
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ listingId: string }> }
 ) {
   const { listingId } = await params;
 
-  const result = await getCurrentProvider();
+  const result = await getCurrentProvider(req);
   if (!result) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }

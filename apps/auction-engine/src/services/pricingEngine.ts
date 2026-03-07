@@ -27,9 +27,9 @@ import type {
   PriceMultipliers,
   AuctionResult,
   PricingConfig,
-} from "../../../packages/types/src/auction";
+} from "@nexusx/types";
 
-import { DEFAULT_PRICING_CONFIG } from "../../../packages/types/src/auction";
+import { DEFAULT_PRICING_CONFIG } from "@nexusx/types";
 
 // ─────────────────────────────────────────────
 // Utility

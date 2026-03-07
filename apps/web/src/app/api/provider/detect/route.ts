@@ -53,6 +53,81 @@ function inferTags(spec: Record<string, unknown>, endpoints: SpecEndpoint[]): st
   return Array.from(tags).slice(0, 10);
 }
 
+function inferKeywordModalities(
+  text: string,
+  target: Set<string>,
+  options: { image?: boolean; audio?: boolean; video?: boolean; text?: boolean; structured?: boolean } = {},
+) {
+  const lower = text.toLowerCase();
+  if (options.image && /(image|vision|photo|ocr|object-detect)/.test(lower)) target.add("image");
+  if (options.audio && /(audio|speech|voice|transcrib)/.test(lower)) target.add("audio");
+  if (options.video && /(video|stream|frame)/.test(lower)) target.add("video");
+  if (options.text && /(text|chat|translate|summari|embed|classif|sentiment|search|extract)/.test(lower)) target.add("text");
+  if (options.structured && /(json|schema|structured|payload|record|dataset|form)/.test(lower)) target.add("structured-data");
+}
+
+function inferModalities(params: {
+  spec: Record<string, unknown>;
+  endpoints: SpecEndpoint[];
+  sampleRequest: Record<string, unknown> | null;
+  sampleResponse: Record<string, unknown> | null;
+  description: string;
+  name: string;
+}): { inputModalities: string[]; outputModalities: string[] } {
+  const input = new Set<string>();
+  const output = new Set<string>();
+
+  const combinedText = [
+    params.name,
+    params.description,
+    ...params.endpoints.map((endpoint) => `${endpoint.path} ${endpoint.summary} ${endpoint.tags.join(" ")}`),
+  ].join(" ");
+
+  inferKeywordModalities(combinedText, input, {
+    image: true,
+    audio: true,
+    video: true,
+    text: true,
+    structured: true,
+  });
+  inferKeywordModalities(combinedText, output, {
+    image: /(generate|render)/.test(combinedText.toLowerCase()),
+    audio: /(generate audio|synthesize|tts)/.test(combinedText.toLowerCase()),
+    video: /(generate video|render video)/.test(combinedText.toLowerCase()),
+    text: true,
+    structured: true,
+  });
+
+  for (const endpoint of params.endpoints) {
+    if (endpoint.requestSchema) input.add("structured-data");
+  }
+
+  if (params.sampleRequest && Object.keys(params.sampleRequest).length > 0) {
+    input.add("structured-data");
+  }
+  if (params.sampleResponse && Object.keys(params.sampleResponse).length > 0) {
+    output.add("structured-data");
+  }
+
+  if (input.size === 0) input.add("text");
+  if (output.size === 0) output.add("text");
+
+  return {
+    inputModalities: Array.from(input).slice(0, 5),
+    outputModalities: Array.from(output).slice(0, 5),
+  };
+}
+
+function unique(values: Array<string | undefined | null>): string[] {
+  return Array.from(
+    new Set(
+      values
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .map((value) => value.trim().toLowerCase()),
+    ),
+  );
+}
+
 // ─── Synthesize a marketplace description from spec info ───
 
 function synthesizeDescription(
@@ -100,13 +175,44 @@ interface InputSchemaField {
   description: string;
 }
 
+interface DetectionResult {
+  detected: boolean;
+  name: string;
+  description: string;
+  baseUrl: string;
+  healthCheckUrl: string;
+  docsUrl: string;
+  authType: string;
+  listingType: string;
+  sampleRequest: Record<string, unknown> | null;
+  sampleResponse: Record<string, unknown> | null;
+  endpoints: Array<{
+    path: string;
+    method: string;
+    summary: string;
+    requestSchema: Record<string, unknown> | null;
+  }>;
+  inputSchemaFields: InputSchemaField[];
+  suggestedCategorySlug: string | null;
+  tags: string[];
+  availabilityRegions: string[];
+  restrictedRegions: string[];
+  complianceTags: string[];
+  capabilityTags: string[];
+  inputModalities: string[];
+  outputModalities: string[];
+  domainMetadata?: Record<string, unknown>;
+  healthCheckStatus: { ok: boolean; latencyMs: number } | null;
+  warnings: string[];
+}
+
 // ─── Extract from NexusX manifest ───
 
 function extractFromManifest(
   cap: import("@nexusx/database").NexusXManifestCapability,
   sourceUrl: string,
   totalCapabilities: number,
-) {
+): DetectionResult {
   const warnings: string[] = [
     "NexusX manifest detected — use 'Import from Domain' to import all capabilities at once.",
   ];
@@ -131,12 +237,23 @@ function extractFromManifest(
     inputSchemaFields: [] as { name: string; type: string; required: boolean; description: string }[],
     suggestedCategorySlug: cap.category || null,
     tags: cap.tags || [],
+    availabilityRegions: cap.availabilityRegions || [],
+    restrictedRegions: cap.restrictedRegions || [],
+    complianceTags: cap.complianceTags || [],
+    capabilityTags: cap.capabilityTags || unique([...(cap.tags || []), ...cap.intents]),
+    inputModalities: cap.inputModalities || [],
+    outputModalities: cap.outputModalities || [],
+    domainMetadata: {
+      ...(cap.domainMetadata || {}),
+      manifestSourceUrl: sourceUrl,
+      manifestCapabilityCount: totalCapabilities,
+    },
     healthCheckStatus: null as { ok: boolean; latencyMs: number } | null,
     warnings,
   };
 }
 
-function extractFromSpec(spec: Record<string, unknown>, sourceUrl: string) {
+function extractFromSpec(spec: Record<string, unknown>, sourceUrl: string): DetectionResult {
   const info = (spec.info as Record<string, unknown>) || {};
   const name = (info.title as string) || "";
   const rawDescription = (info.description as string) || "";
@@ -260,6 +377,15 @@ function extractFromSpec(spec: Record<string, unknown>, sourceUrl: string) {
   const suggestedCategorySlug = suggestCategory(combinedText);
   const tags = inferTags(spec, endpoints);
   const description = synthesizeDescription(rawDescription, name, endpoints);
+  const capabilityTags = unique([...tags, ...endpoints.flatMap((endpoint) => endpoint.tags)]);
+  const modalities = inferModalities({
+    spec,
+    endpoints,
+    sampleRequest,
+    sampleResponse,
+    description,
+    name,
+  });
 
   return {
     detected: true,
@@ -276,6 +402,19 @@ function extractFromSpec(spec: Record<string, unknown>, sourceUrl: string) {
     inputSchemaFields,
     suggestedCategorySlug,
     tags,
+    availabilityRegions: [],
+    restrictedRegions: [],
+    complianceTags: [],
+    capabilityTags,
+    inputModalities: modalities.inputModalities,
+    outputModalities: modalities.outputModalities,
+    domainMetadata: {
+      detection: {
+        source: "openapi",
+        endpointCount: endpoints.length,
+        inferredFromSpec: true,
+      },
+    },
     healthCheckStatus: null as { ok: boolean; latencyMs: number } | null,
     warnings: [] as string[],
   };
@@ -455,7 +594,11 @@ function inferFromResponse(
 
 // ─── Fallback response shape ───
 
-function fallbackResponse(url: string, warnings: string[], inferred?: ReturnType<typeof inferFromResponse>) {
+function fallbackResponse(
+  url: string,
+  warnings: string[],
+  inferred?: ReturnType<typeof inferFromResponse>,
+): DetectionResult {
   return {
     detected: false,
     name: inferred?.name || "",
@@ -471,6 +614,13 @@ function fallbackResponse(url: string, warnings: string[], inferred?: ReturnType
     inputSchemaFields: [],
     suggestedCategorySlug: null,
     tags: [],
+    availabilityRegions: [],
+    restrictedRegions: [],
+    complianceTags: [],
+    capabilityTags: [],
+    inputModalities: [],
+    outputModalities: [],
+    domainMetadata: undefined,
     healthCheckStatus: null,
     warnings,
   };
@@ -530,7 +680,7 @@ export async function POST(req: NextRequest) {
       res.headers.forEach((v, k) => { directHeaders[k.toLowerCase()] = v; });
     } catch { /* will fall through to probes */ }
 
-    let result: ReturnType<typeof extractFromSpec> | null = null;
+    let result: DetectionResult | null = null;
 
     if (directText) {
       let spec: Record<string, unknown> | null = null;

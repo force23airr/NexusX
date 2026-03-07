@@ -9,12 +9,12 @@ import { extractListingWriteData } from "@/lib/providerListing";
 // ─────────────────────────────────────────────────────────────
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ listingId: string }> }
 ) {
   const { listingId } = await params;
 
-  const result = await getCurrentProvider();
+  const result = await getCurrentProvider(req);
   if (!result) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
@@ -102,7 +102,7 @@ export async function PUT(
   const { listingId } = await params;
   const body = await req.json();
 
-  const result = await getCurrentProvider();
+  const result = await getCurrentProvider(req);
   if (!result) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }

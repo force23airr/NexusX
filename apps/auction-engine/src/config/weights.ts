@@ -8,7 +8,7 @@
 // Mature-stage needs precision.
 // ═══════════════════════════════════════════════════════════════
 
-import type { PricingConfig } from "../../../../packages/types/src/auction";
+import type { PricingConfig } from "@nexusx/types";
 
 /**
  * LAUNCH PHASE (Month 1-3)

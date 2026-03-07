@@ -261,6 +261,13 @@ export interface DetectResponse {
   inputSchemaFields: InputSchemaField[];
   suggestedCategorySlug: string | null;
   tags: string[];
+  availabilityRegions?: string[];
+  restrictedRegions?: string[];
+  complianceTags?: string[];
+  capabilityTags?: string[];
+  inputModalities?: string[];
+  outputModalities?: string[];
+  domainMetadata?: Record<string, unknown>;
   healthCheckStatus: { ok: boolean; latencyMs: number } | null;
   warnings: string[];
 }

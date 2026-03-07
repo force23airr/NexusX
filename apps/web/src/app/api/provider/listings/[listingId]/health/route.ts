@@ -9,12 +9,12 @@ import { assertSafeHttpUrl, safeFetch } from "@/lib/ssrf";
 // ─────────────────────────────────────────────────────────────
 
 export async function POST(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ listingId: string }> }
 ) {
   const { listingId } = await params;
 
-  const result = await getCurrentProvider();
+  const result = await getCurrentProvider(req);
   if (!result) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }

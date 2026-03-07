@@ -24,7 +24,7 @@ export async function POST(
     );
   }
 
-  const result = await getCurrentProvider();
+  const result = await getCurrentProvider(req);
   if (!result) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }

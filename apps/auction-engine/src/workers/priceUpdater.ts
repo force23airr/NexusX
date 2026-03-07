@@ -22,7 +22,7 @@ import type {
   DemandState,
   QualityMetrics,
   SupplyState,
-} from "../../../../packages/types/src/auction";
+} from "@nexusx/types";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -300,7 +300,7 @@ export class PriceUpdater {
     const signals = await this.prisma.demandSignal.findMany({
       where: {
         listingId,
-        timestamp: { gte: windowStart },
+        capturedAt: { gte: windowStart },
       },
     });
 
@@ -317,8 +317,8 @@ export class PriceUpdater {
     const midpoint = new Date(
       Date.now() - GROWTH_CONFIG.demandWindowMs / 2,
     );
-    const firstHalf = signals.filter((s) => s.timestamp < midpoint).length;
-    const secondHalf = signals.filter((s) => s.timestamp >= midpoint).length;
+    const firstHalf = signals.filter((s) => s.capturedAt < midpoint).length;
+    const secondHalf = signals.filter((s) => s.capturedAt >= midpoint).length;
     const velocity = secondHalf - firstHalf;
 
     return {
@@ -334,8 +334,9 @@ export class PriceUpdater {
 
   private async getQualityMetrics(listingId: string): Promise<QualityMetrics> {
     // Fetch from the quality_metrics table or compute from transaction history
-    const metrics = await this.prisma.qualityMetric.findUnique({
+    const metrics = await this.prisma.qualitySnapshot.findFirst({
       where: { listingId },
+      orderBy: { computedAt: "desc" },
     });
 
     if (metrics) {

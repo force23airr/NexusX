@@ -3,8 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
 
 
-export async function GET() {
-  const result = await getCurrentProvider();
+export async function GET(req: NextRequest) {
+  const result = await getCurrentProvider(req);
   if (!result) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
@@ -42,7 +42,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Valid amount is required" }, { status: 400 });
   }
 
-  const result = await getCurrentProvider();
+  const result = await getCurrentProvider(req);
   if (!result) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }

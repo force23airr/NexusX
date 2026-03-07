@@ -15,7 +15,7 @@ import { Prisma, type ListingType } from "@prisma/client";
  * Request: { "domain": "example.com" }
  */
 export async function POST(req: NextRequest) {
-  const result = await getCurrentProvider();
+  const result = await getCurrentProvider(req);
   if (!result) {
     return NextResponse.json({ error: "Authentication required" }, { status: 401 });
   }
@@ -106,7 +106,9 @@ export async function POST(req: NextRequest) {
     }
 
     try {
-      const capabilityTags = Array.from(new Set([...(cap.tags || []), ...cap.intents]));
+      const capabilityTags = Array.from(
+        new Set([...(cap.capabilityTags || []), ...(cap.tags || []), ...cap.intents]),
+      );
       const listingData = await extractListingWriteData({
         name: cap.name,
         description: cap.description,
@@ -120,8 +122,14 @@ export async function POST(req: NextRequest) {
         capacityPerMinute: cap.capacityPerMinute || 60,
         tags: cap.tags || [],
         intents: cap.intents,
+        availabilityRegions: cap.availabilityRegions || [],
+        restrictedRegions: cap.restrictedRegions || [],
+        complianceTags: cap.complianceTags || [],
         capabilityTags,
+        inputModalities: cap.inputModalities || [],
+        outputModalities: cap.outputModalities || [],
         domainMetadata: {
+          ...(cap.domainMetadata || {}),
           manifestProvider: manifest.provider.name,
           manifestVersion: manifest.version,
           endpoint: cap.endpoint ?? null,

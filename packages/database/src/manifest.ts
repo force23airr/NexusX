@@ -39,6 +39,13 @@ export interface NexusXManifestCapability {
   };
   capacityPerMinute?: number;
   tags?: string[];
+  availabilityRegions?: string[];
+  restrictedRegions?: string[];
+  complianceTags?: string[];
+  capabilityTags?: string[];
+  inputModalities?: string[];
+  outputModalities?: string[];
+  domainMetadata?: Record<string, unknown>;
   sampleRequest?: Record<string, unknown>;
   sampleResponse?: Record<string, unknown>;
 }
@@ -50,6 +57,17 @@ export interface NexusXManifestCapability {
 type ValidationResult =
   | { valid: true; manifest: NexusXManifest }
   | { valid: false; errors: string[] };
+
+function validateOptionalStringArray(
+  value: unknown,
+  field: string,
+  errors: string[],
+): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value) || value.some((entry) => typeof entry !== "string" || entry.trim().length === 0)) {
+    errors.push(`${field} must be an array of non-empty strings`);
+  }
+}
 
 export function validateManifest(data: unknown): ValidationResult {
   const errors: string[] = [];
@@ -101,6 +119,16 @@ export function validateManifest(data: unknown): ValidationResult {
       }
       if (!Array.isArray(c.intents) || c.intents.length === 0) {
         errors.push(`${prefix}.intents must be a non-empty array of strings`);
+      }
+      validateOptionalStringArray(c.tags, `${prefix}.tags`, errors);
+      validateOptionalStringArray(c.availabilityRegions, `${prefix}.availabilityRegions`, errors);
+      validateOptionalStringArray(c.restrictedRegions, `${prefix}.restrictedRegions`, errors);
+      validateOptionalStringArray(c.complianceTags, `${prefix}.complianceTags`, errors);
+      validateOptionalStringArray(c.capabilityTags, `${prefix}.capabilityTags`, errors);
+      validateOptionalStringArray(c.inputModalities, `${prefix}.inputModalities`, errors);
+      validateOptionalStringArray(c.outputModalities, `${prefix}.outputModalities`, errors);
+      if (c.domainMetadata !== undefined && (!c.domainMetadata || typeof c.domainMetadata !== "object" || Array.isArray(c.domainMetadata))) {
+        errors.push(`${prefix}.domainMetadata must be a JSON object`);
       }
 
       // pricing

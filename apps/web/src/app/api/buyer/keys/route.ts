@@ -31,8 +31,8 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const body = await req.json();
-  const { name, rateLimitRpm } = body;
+  const requestBody = await req.json();
+  const { name, rateLimitRpm } = requestBody;
 
   if (!name || typeof name !== "string") {
     return NextResponse.json({ error: "Name is required" }, { status: 400 });
@@ -45,8 +45,8 @@ export async function POST(req: NextRequest) {
 
   // Generate a random API key in canonical format: nxs_PREFIX_BODY
   const prefix = randomBytes(4).toString("hex");   // 8 hex chars
-  const body = randomBytes(14).toString("hex");     // 28 hex chars
-  const rawKey = `nxs_${prefix}_${body}`;
+  const keyBody = randomBytes(14).toString("hex");     // 28 hex chars
+  const rawKey = `nxs_${prefix}_${keyBody}`;
   const keyHash = createHash("sha256").update(rawKey).digest("hex");
   const keyPrefix = prefix;
 

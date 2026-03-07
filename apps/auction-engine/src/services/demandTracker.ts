@@ -21,12 +21,12 @@ import type {
   DemandSignalType,
   DemandState,
   PricingConfig,
-} from "../../../../packages/types/src/auction";
+} from "@nexusx/types";
 
 import {
   DEFAULT_SIGNAL_WEIGHTS,
   DEFAULT_PRICING_CONFIG,
-} from "../../../../packages/types/src/auction";
+} from "@nexusx/types";
 
 // ─────────────────────────────────────────────
 // Types

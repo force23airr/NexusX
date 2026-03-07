@@ -165,16 +165,35 @@ function wizardReducer(state: WizardFormData, action: WizardAction): WizardFormD
         tags: r.tags && r.tags.length > 0
           ? Array.from(new Set([...state.tags, ...r.tags]))
           : state.tags,
-        capabilityTags: r.tags && r.tags.length > 0
-          ? Array.from(new Set([...state.capabilityTags, ...r.tags]))
-          : state.capabilityTags,
-        domainMetadataText: state.domainMetadataText || stringifyDomainMetadata({
-          detection: {
-            endpointCount: r.endpoints.length,
-            authType: r.authType || undefined,
-            specUrl: state.specUrl || undefined,
+        availabilityRegions: r.availabilityRegions && r.availabilityRegions.length > 0
+          ? Array.from(new Set([...state.availabilityRegions, ...r.availabilityRegions]))
+          : state.availabilityRegions,
+        restrictedRegions: r.restrictedRegions && r.restrictedRegions.length > 0
+          ? Array.from(new Set([...state.restrictedRegions, ...r.restrictedRegions]))
+          : state.restrictedRegions,
+        complianceTags: r.complianceTags && r.complianceTags.length > 0
+          ? Array.from(new Set([...state.complianceTags, ...r.complianceTags]))
+          : state.complianceTags,
+        capabilityTags: r.capabilityTags && r.capabilityTags.length > 0
+          ? Array.from(new Set([...state.capabilityTags, ...r.capabilityTags]))
+          : r.tags && r.tags.length > 0
+            ? Array.from(new Set([...state.capabilityTags, ...r.tags]))
+            : state.capabilityTags,
+        inputModalities: r.inputModalities && r.inputModalities.length > 0
+          ? Array.from(new Set([...state.inputModalities, ...r.inputModalities]))
+          : state.inputModalities,
+        outputModalities: r.outputModalities && r.outputModalities.length > 0
+          ? Array.from(new Set([...state.outputModalities, ...r.outputModalities]))
+          : state.outputModalities,
+        domainMetadataText: state.domainMetadataText || stringifyDomainMetadata(
+          r.domainMetadata || {
+            detection: {
+              endpointCount: r.endpoints.length,
+              authType: r.authType || undefined,
+              specUrl: state.specUrl || undefined,
+            },
           },
-        }),
+        ),
         endpoints: r.endpoints || [],
         inputSchemaFields: r.inputSchemaFields || [],
         floorPrice: state.floorPrice || pricing.floor.toString(),

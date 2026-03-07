@@ -12,7 +12,7 @@
 //   More investment in infrastructure → Better uptime/latency
 // ═══════════════════════════════════════════════════════════════
 
-import type { QualityMetrics } from "../../../../packages/types/src/auction";
+import type { QualityMetrics } from "@nexusx/types";
 import { QUALITY_WEIGHTS, LATENCY_BENCHMARKS } from "../config/weights";
 
 // ─────────────────────────────────────────────
