@@ -94,8 +94,29 @@ export type AuthType =
   | "oauth2"
   | "none";
 
+export interface DiscoveryMetadata {
+  /** Broad search tags used during discovery. */
+  tags?: string[];
+  /** Concrete tasks an agent can complete with this API. */
+  intents?: string[];
+  /** ISO country codes where the API is available. Empty means global. */
+  availabilityRegions?: string[];
+  /** ISO country codes where the API must not be surfaced. */
+  restrictedRegions?: string[];
+  /** Compliance or policy tags. */
+  complianceTags?: string[];
+  /** Capability tags used for hard filtering. */
+  capabilityTags?: string[];
+  /** Modalities the API accepts. */
+  inputModalities?: string[];
+  /** Modalities the API returns. */
+  outputModalities?: string[];
+  /** Optional vertical-specific metadata. */
+  domainMetadata?: Record<string, unknown> | null;
+}
+
 /** Input for creating a new listing. */
-export interface CreateListingInput {
+export interface CreateListingInput extends DiscoveryMetadata {
   /** URL-friendly slug (must be unique). */
   slug: string;
   /** Display name. */
@@ -131,9 +152,6 @@ export interface CreateListingInput {
   /** Whether this is a unique/exclusive listing. Default: false. */
   isUnique?: boolean;
 
-  // ─── Discovery ───
-  /** Tags for search and filtering. */
-  tags?: string[];
   /** Example request payload (JSON). */
   sampleRequest?: Record<string, unknown>;
   /** Example response payload (JSON). */
@@ -143,7 +161,7 @@ export interface CreateListingInput {
 }
 
 /** Input for updating an existing listing. All fields optional. */
-export interface UpdateListingInput {
+export interface UpdateListingInput extends DiscoveryMetadata {
   name?: string;
   description?: string;
   categorySlug?: string;
@@ -182,13 +200,21 @@ export interface Listing {
   capacityPerMinute: number;
   isUnique: boolean;
   tags: string[];
+  intents: string[];
+  availabilityRegions: string[];
+  restrictedRegions: string[];
+  complianceTags: string[];
+  capabilityTags: string[];
+  inputModalities: string[];
+  outputModalities: string[];
+  domainMetadata: Record<string, unknown> | null;
   totalCalls: string;
   totalRevenue: string;
   avgRating: string;
   ratingCount: number;
   publishedAt: string | null;
   createdAt: string;
-  updatedAt: string;
+  updatedAt?: string;
 }
 
 // ─────────────────────────────────────────────────────────────

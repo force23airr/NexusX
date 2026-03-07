@@ -11,7 +11,7 @@
 //   - Client initialization
 // ═══════════════════════════════════════════════════════════════
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createHmac } from "crypto";
 import { NexusXProvider } from "../src/provider/client";
 import {
@@ -140,6 +140,130 @@ describe("Listing Input Validation", () => {
   it("rejects zero capacity", async () => {
     const input = { ...validListingInput(), capacityPerMinute: 0 };
     await expect(provider.createListing(input)).rejects.toThrow("at least 1");
+  });
+});
+
+// ─────────────────────────────────────────────────────────────
+// HTTP COMPATIBILITY
+// ─────────────────────────────────────────────────────────────
+
+describe("Provider HTTP Compatibility", () => {
+  const listingPayload = {
+    id: "lst_001",
+    slug: "my-test-api",
+    name: "My Test API",
+    description: "A comprehensive test API for unit testing the Provider SDK.",
+    listingType: "REST_API",
+    status: "DRAFT",
+    categorySlug: "nlp",
+    baseUrl: "https://api.myservice.com/v1",
+    healthCheckUrl: null,
+    docsUrl: null,
+    sandboxUrl: null,
+    authType: "api_key",
+    floorPriceUsdc: "0.001000",
+    ceilingPriceUsdc: null,
+    currentPriceUsdc: "0.001000",
+    capacityPerMinute: 100,
+    isUnique: false,
+    tags: ["nlp", "testing"],
+    intents: ["summarize-text"],
+    availabilityRegions: [],
+    restrictedRegions: [],
+    complianceTags: ["soc2"],
+    capabilityTags: ["summarize"],
+    inputModalities: ["text"],
+    outputModalities: ["text"],
+    domainMetadata: { vertical: "nlp" },
+    totalCalls: "0",
+    totalRevenue: "0",
+    avgRating: "0",
+    ratingCount: 0,
+    publishedAt: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("normalizes raw JSON create responses and hydrates the listing", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: listingPayload.id, slug: listingPayload.slug }), {
+          status: 201,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(listingPayload), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    const listing = await makeProvider().createListing(validListingInput());
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("https://api.nexusx.io/provider/listings");
+    expect(listing.id).toBe(listingPayload.id);
+    expect(listing.capabilityTags).toEqual(["summarize"]);
+  });
+
+  it("uses PUT for updates instead of PATCH", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ id: listingPayload.id, slug: listingPayload.slug, name: listingPayload.name, status: "PAUSED" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ...listingPayload, status: "PAUSED" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await makeProvider().updateListing(listingPayload.id, {
+      description: listingPayload.description,
+      capabilityTags: ["summarize", "classify"],
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.method).toBe("PUT");
+  });
+
+  it("routes lifecycle actions through the shared status endpoint", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ status: "PAUSED" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ ...listingPayload, status: "PAUSED" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+
+    vi.stubGlobal("fetch", fetchMock);
+
+    await makeProvider().pauseListing(listingPayload.id);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(`https://api.nexusx.io/provider/listings/${listingPayload.id}/status`);
+    expect((fetchMock.mock.calls[0]?.[1] as RequestInit | undefined)?.body).toBe(JSON.stringify({ action: "pause" }));
   });
 });
 

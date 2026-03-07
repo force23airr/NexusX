@@ -17,6 +17,10 @@ import {
 import type { ListingDetail, ProviderAnalytics, ListingStatus } from "@/types";
 import { ActivationWizard } from "@/components/provider/ActivationWizard";
 import { IntegrationPanel } from "@/components/provider/IntegrationPanel";
+import DiscoveryMetadataFields, {
+  parseDomainMetadataText,
+  stringifyDomainMetadata,
+} from "@/components/provider/DiscoveryMetadataFields";
 
 type Tab = "overview" | "settings" | "integration";
 
@@ -384,6 +388,38 @@ function OverviewTab({
         </div>
       )}
 
+      {(listing.intents?.length ||
+        listing.capabilityTags?.length ||
+        listing.complianceTags?.length ||
+        listing.availabilityRegions?.length ||
+        listing.restrictedRegions?.length ||
+        listing.inputModalities?.length ||
+        listing.outputModalities?.length ||
+        listing.domainMetadata) && (
+        <div className="card p-5 space-y-4">
+          <h3 className="text-sm font-semibold text-zinc-300">Discovery Metadata</h3>
+          <MetadataGroup label="Intents" values={listing.intents ?? []} />
+          <MetadataGroup label="Capability Tags" values={listing.capabilityTags ?? []} />
+          <MetadataGroup label="Compliance Tags" values={listing.complianceTags ?? []} />
+          <MetadataGroup label="Availability Regions" values={listing.availabilityRegions ?? []} emptyLabel="Global" />
+          <MetadataGroup label="Restricted Regions" values={listing.restrictedRegions ?? []} />
+          <MetadataGroup label="Input Modalities" values={listing.inputModalities ?? []} />
+          <MetadataGroup label="Output Modalities" values={listing.outputModalities ?? []} />
+          {listing.domainMetadata && (
+            <div>
+              <p className="text-xs text-zinc-500 mb-1 font-semibold uppercase tracking-wider">
+                Domain Metadata
+              </p>
+              <pre className="bg-surface-1 border border-surface-4 rounded-lg p-3 overflow-x-auto">
+                <code className="text-xs font-mono text-zinc-300">
+                  {JSON.stringify(listing.domainMetadata, null, 2)}
+                </code>
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Sample Request/Response */}
       {(listing.sampleRequest || listing.sampleResponse) && (
         <div className="card p-5">
@@ -439,22 +475,40 @@ function SettingsTab({
     healthCheckUrl: listing.healthCheckUrl || "",
     docsUrl: listing.docsUrl || "",
     sandboxUrl: listing.sandboxUrl || "",
+    tags: listing.tags ?? [],
+    intents: listing.intents ?? [],
+    availabilityRegions: listing.availabilityRegions ?? [],
+    restrictedRegions: listing.restrictedRegions ?? [],
+    complianceTags: listing.complianceTags ?? [],
+    capabilityTags: listing.capabilityTags ?? [],
+    inputModalities: listing.inputModalities ?? [],
+    outputModalities: listing.outputModalities ?? [],
+    domainMetadataText: stringifyDomainMetadata(listing.domainMetadata),
     floorPriceUsdc: listing.floorPriceUsdc.toString(),
     ceilingPriceUsdc: listing.ceilingPriceUsdc?.toString() || "",
     capacityPerMinute: listing.capacityPerMinute.toString(),
   });
   const [isSaving, setIsSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
-  const updateField = (key: string, value: string) => {
+  const updateField = (key: string, value: string | string[]) => {
     setForm((prev) => ({ ...prev, [key]: value }));
     setSaveMsg(null);
+    setFieldErrors((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   };
 
   const handleSave = async () => {
     setIsSaving(true);
     setSaveMsg(null);
+    setFieldErrors({});
     try {
+      const domainMetadata = parseDomainMetadataText(form.domainMetadataText);
       await provider.updateListing(listing.id, {
         name: form.name,
         description: form.description,
@@ -462,6 +516,15 @@ function SettingsTab({
         healthCheckUrl: form.healthCheckUrl || null,
         docsUrl: form.docsUrl || null,
         sandboxUrl: form.sandboxUrl || null,
+        tags: form.tags,
+        intents: form.intents,
+        availabilityRegions: form.availabilityRegions,
+        restrictedRegions: form.restrictedRegions,
+        complianceTags: form.complianceTags,
+        capabilityTags: form.capabilityTags,
+        inputModalities: form.inputModalities,
+        outputModalities: form.outputModalities,
+        domainMetadata: domainMetadata ?? null,
         floorPriceUsdc: parseFloat(form.floorPriceUsdc),
         ceilingPriceUsdc: form.ceilingPriceUsdc
           ? parseFloat(form.ceilingPriceUsdc)
@@ -471,6 +534,9 @@ function SettingsTab({
       setSaveMsg("Saved successfully");
       onSaved();
     } catch (err: unknown) {
+      if (err instanceof Error && err.message.includes("Domain metadata")) {
+        setFieldErrors({ domainMetadataText: err.message });
+      }
       const msg = err instanceof Error ? err.message : "Save failed";
       setSaveMsg(msg);
     } finally {
@@ -555,6 +621,27 @@ function SettingsTab({
 
       <div className="card p-6 space-y-5">
         <h3 className="text-lg font-semibold text-zinc-100 border-b border-surface-4 pb-3">
+          Discovery Metadata
+        </h3>
+        <DiscoveryMetadataFields
+          value={{
+            tags: form.tags,
+            intents: form.intents,
+            availabilityRegions: form.availabilityRegions,
+            restrictedRegions: form.restrictedRegions,
+            complianceTags: form.complianceTags,
+            capabilityTags: form.capabilityTags,
+            inputModalities: form.inputModalities,
+            outputModalities: form.outputModalities,
+            domainMetadataText: form.domainMetadataText,
+          }}
+          errors={fieldErrors}
+          onChange={(field, value) => updateField(field, value)}
+        />
+      </div>
+
+      <div className="card p-6 space-y-5">
+        <h3 className="text-lg font-semibold text-zinc-100 border-b border-surface-4 pb-3">
           Pricing (USDC per call)
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -629,5 +716,35 @@ function FieldLabel({ label }: { label: string }) {
     <label className="block text-2xs text-zinc-500 uppercase tracking-wider font-semibold mb-1.5">
       {label}
     </label>
+  );
+}
+
+function MetadataGroup({
+  label,
+  values,
+  emptyLabel,
+}: {
+  label: string;
+  values: string[];
+  emptyLabel?: string;
+}) {
+  return (
+    <div>
+      <p className="text-xs text-zinc-500 mb-2 font-semibold uppercase tracking-wider">{label}</p>
+      {values.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {values.map((value) => (
+            <span
+              key={value}
+              className="px-2.5 py-1 bg-surface-3 text-zinc-400 text-xs rounded-md"
+            >
+              {value}
+            </span>
+          ))}
+        </div>
+      ) : emptyLabel ? (
+        <p className="text-sm text-zinc-400">{emptyLabel}</p>
+      ) : null}
+    </div>
   );
 }

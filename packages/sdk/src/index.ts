@@ -64,6 +64,8 @@ export type {
   ChainStep,
   ChainResult,
   SearchMatch,
+  SearchMetadataFilters,
+  SearchOptions,
   SearchResult,
   PricingInfo,
   ReliabilityInfo,

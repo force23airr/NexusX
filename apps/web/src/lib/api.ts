@@ -10,6 +10,8 @@
 import type {
   Listing,
   ListingDetail,
+  ListingDiscoveryMetadata,
+  MarketplaceSearchOptions,
   RouteResult,
   Transaction,
   Wallet,
@@ -86,10 +88,15 @@ async function apiFetch<T>(
 
 export const marketplace = {
   /** Search listings with natural language via AI router. */
-  async search(query: string): Promise<RouteResult> {
+  async search(query: string, options?: MarketplaceSearchOptions): Promise<RouteResult> {
     return apiFetch("/api/search", {
       method: "POST",
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({
+        query,
+        limit: options?.limit,
+        priorityMode: options?.priorityMode,
+        metadataFilters: options?.metadataFilters,
+      }),
     });
   },
 
@@ -328,7 +335,7 @@ export const provider = {
     isUnique: boolean;
     sampleRequest?: unknown;
     sampleResponse?: unknown;
-  }): Promise<{ id: string; slug: string }> {
+  } & ListingDiscoveryMetadata): Promise<{ id: string; slug: string }> {
     return apiFetch("/api/provider/listings", {
       method: "POST",
       body: JSON.stringify(data),

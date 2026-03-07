@@ -71,14 +71,14 @@ export class NexusXProvider {
   /** Create a new listing (starts in DRAFT status). */
   async createListing(input: CreateListingInput): Promise<Listing> {
     this.validateListingInput(input);
-    const res = await this.http.post<Listing>("/provider/listings", input);
-    return res.data;
+    const res = await this.http.post<{ id: string }>("/provider/listings", input);
+    return this.getListing(res.data.id);
   }
 
   /** Update an existing listing. */
   async updateListing(listingId: string, input: UpdateListingInput): Promise<Listing> {
-    const res = await this.http.patch<Listing>(`/provider/listings/${listingId}`, input);
-    return res.data;
+    await this.http.put(`/provider/listings/${listingId}`, input);
+    return this.getListing(listingId);
   }
 
   /** Get a single listing by ID. */
@@ -97,28 +97,24 @@ export class NexusXProvider {
     return res.data;
   }
 
-  /** Submit a DRAFT listing for review → PENDING_REVIEW. */
+  /** Activate a DRAFT listing so agents can discover and call it. */
   async publishListing(listingId: string): Promise<Listing> {
-    const res = await this.http.post<Listing>(`/provider/listings/${listingId}/publish`);
-    return res.data;
+    return this.runStatusAction(listingId, "activate");
   }
 
   /** Pause an ACTIVE listing → PAUSED. */
   async pauseListing(listingId: string): Promise<Listing> {
-    const res = await this.http.post<Listing>(`/provider/listings/${listingId}/pause`);
-    return res.data;
+    return this.runStatusAction(listingId, "pause");
   }
 
   /** Resume a PAUSED listing → ACTIVE. */
   async resumeListing(listingId: string): Promise<Listing> {
-    const res = await this.http.post<Listing>(`/provider/listings/${listingId}/resume`);
-    return res.data;
+    return this.runStatusAction(listingId, "activate");
   }
 
   /** Deprecate a listing → DEPRECATED. */
   async deprecateListing(listingId: string): Promise<Listing> {
-    const res = await this.http.post<Listing>(`/provider/listings/${listingId}/deprecate`);
-    return res.data;
+    return this.runStatusAction(listingId, "deprecate");
   }
 
   // ─────────────────────────────────────────────────────────
@@ -367,6 +363,11 @@ export class NexusXProvider {
     if (input.capacityPerMinute !== undefined && input.capacityPerMinute < 1) {
       throw new Error("Capacity must be at least 1 request per minute.");
     }
+    if (input.domainMetadata !== undefined && input.domainMetadata !== null) {
+      if (typeof input.domainMetadata !== "object" || Array.isArray(input.domainMetadata)) {
+        throw new Error("domainMetadata must be a plain JSON object.");
+      }
+    }
   }
 
   private validateMetricReport(report: HealthMetricReport): void {
@@ -379,5 +380,13 @@ export class NexusXProvider {
     if (report.uptimeMinutes > report.totalMinutes) {
       throw new Error("Uptime minutes cannot exceed total minutes.");
     }
+  }
+
+  private async runStatusAction(
+    listingId: string,
+    action: "activate" | "pause" | "deprecate",
+  ): Promise<Listing> {
+    await this.http.post(`/provider/listings/${listingId}/status`, { action });
+    return this.getListing(listingId);
   }
 }

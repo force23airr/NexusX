@@ -12,6 +12,36 @@ export type UserRole = "PROVIDER" | "BUYER" | "ADMIN";
 export type ListingType = "REST_API" | "GRAPHQL_API" | "WEBSOCKET" | "DATASET" | "MODEL_INFERENCE" | "COMPOSITE";
 export type ListingStatus = "DRAFT" | "PENDING_REVIEW" | "ACTIVE" | "PAUSED" | "SUSPENDED" | "DEPRECATED";
 export type TransactionStatus = "PENDING" | "CONFIRMED" | "FAILED" | "REFUNDED" | "DISPUTED";
+export type SearchPriorityMode = "frugal" | "balanced" | "mission_critical";
+
+export interface ListingDiscoveryMetadata {
+  tags?: string[];
+  intents?: string[];
+  availabilityRegions?: string[];
+  restrictedRegions?: string[];
+  complianceTags?: string[];
+  capabilityTags?: string[];
+  inputModalities?: string[];
+  outputModalities?: string[];
+  domainMetadata?: Record<string, unknown> | null;
+}
+
+export interface SearchMetadataFilters {
+  availabilityRegion?: string;
+  complianceRequired?: string[];
+  capabilityRequired?: string[];
+  inputModality?: string[];
+  outputModality?: string[];
+  listingType?: ListingType;
+  maxPriceUsdc?: number;
+  minCapacityRpm?: number;
+}
+
+export interface MarketplaceSearchOptions {
+  limit?: number;
+  priorityMode?: SearchPriorityMode;
+  metadataFilters?: SearchMetadataFilters;
+}
 
 // ─── User & Auth ───
 
@@ -27,7 +57,7 @@ export interface User {
 
 // ─── Listings ───
 
-export interface Listing {
+export interface Listing extends ListingDiscoveryMetadata {
   id: string;
   slug: string;
   name: string;

@@ -10,6 +10,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import type { PrismaClient } from "@prisma/client";
+import { bumpControlPlaneVersion } from "./control-plane";
 import { embedAllListings, type EmbeddingConfig } from "./embeddings";
 
 // ─── Constants ───────────────────────────────────────────────
@@ -387,6 +388,7 @@ export async function indexBazaar(
 
   // 5. Track seen URLs for deactivation
   const seenUrls = new Set<string>();
+  let changedPublicListings = false;
 
   // 6. Upsert each resource
   for (const resource of filtered) {
@@ -421,6 +423,7 @@ export async function indexBazaar(
           tags,
         },
       });
+      changedPublicListings = true;
       result.updated++;
     } else {
       // Generate unique slug
@@ -467,6 +470,7 @@ export async function indexBazaar(
             publishedAt: new Date(),
           },
         });
+        changedPublicListings = true;
         result.created++;
       } catch (err) {
         console.warn(`[BazaarIndexer] Failed to create listing for ${url}:`, err);
@@ -487,6 +491,9 @@ export async function indexBazaar(
       data: { status: "PAUSED" },
     });
     result.deactivated = stale.count;
+    if (stale.count > 0) {
+      changedPublicListings = true;
+    }
   }
 
   console.log(
@@ -504,6 +511,10 @@ export async function indexBazaar(
     } else {
       console.warn("[BazaarIndexer] OPENAI_API_KEY not set — skipping embeddings");
     }
+  }
+
+  if (changedPublicListings) {
+    await bumpControlPlaneVersion(prisma);
   }
 
   return result;

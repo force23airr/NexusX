@@ -14,6 +14,7 @@
 
 import { PrismaClient } from "@prisma/client";
 import Redis from "ioredis";
+import { bumpControlPlaneVersion } from "@nexusx/database";
 import { getPricingEngine } from "../services/pricingEngine";
 import { GROWTH_CONFIG } from "../config/weights";
 import type {
@@ -199,6 +200,10 @@ export class PriceUpdater {
 
         // Persist snapshot + auction result + Redis history (non-critical)
         await this.persistHistory(listing, result, previousPrice, roundedChangePercent, now);
+      }
+
+      if (updatedCount > 0) {
+        await bumpControlPlaneVersion(this.prisma);
       }
 
       const elapsed = Date.now() - startMs;

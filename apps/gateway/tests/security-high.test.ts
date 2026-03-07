@@ -19,6 +19,7 @@ import type {
   DemandSignalEvent,
   TransactionRecord,
   GatewayConfig,
+  X402ExecutionRecord,
 } from "../src/types";
 
 // -----------------------------------------------------------------
@@ -60,9 +61,11 @@ function createMockDeps(overrides?: Partial<GatewayDependencies>): {
   testKey: { rawKey: string; record: ApiKeyRecord };
   signals: DemandSignalEvent[];
   transactions: TransactionRecord[];
+  x402Executions: X402ExecutionRecord[];
 } {
   const signals: DemandSignalEvent[] = [];
   const transactions: TransactionRecord[] = [];
+  const x402Executions: X402ExecutionRecord[] = [];
   const testKey = createTestKey();
 
   const deps: GatewayDependencies = {
@@ -84,13 +87,16 @@ function createMockDeps(overrides?: Partial<GatewayDependencies>): {
     persistTransaction: async (record) => {
       transactions.push(record);
     },
+    persistX402Execution: async (record) => {
+      x402Executions.push(record);
+    },
     emitDemandSignal: (signal) => {
       signals.push(signal);
     },
     ...overrides,
   };
 
-  return { deps, testKey, signals, transactions };
+  return { deps, testKey, signals, transactions, x402Executions };
 }
 
 // -----------------------------------------------------------------
@@ -327,6 +333,77 @@ describe("H-1: Payment Replay Protection", () => {
       .set("X-Payment", proof2)
       .send({});
     expect(res2.status).toBe(200);
+
+    cleanup();
+  });
+
+  it("should expose settled status and persist a settled x402 execution record", async () => {
+    const { deps, x402Executions } = createMockDeps();
+    const x402Config: Partial<GatewayConfig> = {
+      x402Enabled: true,
+      x402FacilitatorUrl: "https://x402.org/facilitator",
+      x402Network: "base-sepolia",
+      x402PlatformAddress: "0xPlatform",
+    };
+    const { app, cleanup } = createGatewayApp(deps, x402Config);
+
+    const paymentProof = Buffer.from(JSON.stringify({ nonce: "settled-proof" })).toString("base64");
+    const res = await request(app)
+      .post("/v1/test-api/chat")
+      .set("X-Payment", paymentProof)
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(res.headers["x-nexusx-settlement-status"]).toBe("settled");
+    expect(x402Executions).toHaveLength(1);
+    expect(x402Executions[0].status).toBe("SETTLED");
+    expect(x402Executions[0].txHash).toBe("0xabc123");
+
+    cleanup();
+  });
+
+  it("should return pending reconciliation when post-success settlement fails", async () => {
+    const settlementFailureFetch = vi.fn(async (url: string) => {
+      const urlStr = typeof url === "string" ? url : String(url);
+      if (urlStr.includes("/verify")) {
+        return new Response(
+          JSON.stringify({ isValid: true, payer: "0xPayerAddress" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      if (urlStr.includes("/settle")) {
+        return new Response(
+          JSON.stringify({ success: false, error: "facilitator temporary failure" }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    vi.stubGlobal("fetch", settlementFailureFetch as any);
+
+    const { deps, x402Executions } = createMockDeps();
+    const x402Config: Partial<GatewayConfig> = {
+      x402Enabled: true,
+      x402FacilitatorUrl: "https://x402.org/facilitator",
+      x402Network: "base-sepolia",
+      x402PlatformAddress: "0xPlatform",
+    };
+    const { app, cleanup } = createGatewayApp(deps, x402Config);
+
+    const paymentProof = Buffer.from(JSON.stringify({ nonce: "needs-retry" })).toString("base64");
+    const res = await request(app)
+      .post("/v1/test-api/chat")
+      .set("X-Payment", paymentProof)
+      .send({});
+
+    expect(res.status).toBe(200);
+    expect(res.headers["x-nexusx-settlement-status"]).toBe("pending_reconciliation");
+    expect(x402Executions).toHaveLength(1);
+    expect(x402Executions[0].status).toBe("SETTLEMENT_PENDING");
+    expect(x402Executions[0].paymentHeader).toBe(paymentProof);
 
     cleanup();
   });

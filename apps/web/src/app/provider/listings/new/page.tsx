@@ -5,6 +5,10 @@ import { useRouter } from "next/navigation";
 import { provider, marketplace } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import McpPreviewPanel from "@/components/provider/McpPreviewPanel";
+import DiscoveryMetadataFields, {
+  parseDomainMetadataText,
+  stringifyDomainMetadata,
+} from "@/components/provider/DiscoveryMetadataFields";
 import type { ListingType, DetectEndpoint, DetectResponse, InputSchemaField } from "@/types";
 
 // ─── Constants ───
@@ -77,7 +81,15 @@ interface WizardFormData {
   authType: string;
   sampleRequest: string;
   sampleResponse: string;
+  tags: string[];
   intents: string[];
+  availabilityRegions: string[];
+  restrictedRegions: string[];
+  complianceTags: string[];
+  capabilityTags: string[];
+  inputModalities: string[];
+  outputModalities: string[];
+  domainMetadataText: string;
   endpoints: DetectEndpoint[];
   inputSchemaFields: InputSchemaField[];
   // Step 2
@@ -106,7 +118,15 @@ const INITIAL_STATE: WizardFormData = {
   authType: "api_key",
   sampleRequest: "",
   sampleResponse: "",
+  tags: [],
   intents: [],
+  availabilityRegions: [],
+  restrictedRegions: [],
+  complianceTags: [],
+  capabilityTags: [],
+  inputModalities: [],
+  outputModalities: [],
+  domainMetadataText: "",
   endpoints: [],
   inputSchemaFields: [],
   floorPrice: "",
@@ -142,6 +162,19 @@ function wizardReducer(state: WizardFormData, action: WizardAction): WizardFormD
         authType: r.authType || state.authType,
         sampleRequest: r.sampleRequest ? JSON.stringify(r.sampleRequest, null, 2) : state.sampleRequest,
         sampleResponse: r.sampleResponse ? JSON.stringify(r.sampleResponse, null, 2) : state.sampleResponse,
+        tags: r.tags && r.tags.length > 0
+          ? Array.from(new Set([...state.tags, ...r.tags]))
+          : state.tags,
+        capabilityTags: r.tags && r.tags.length > 0
+          ? Array.from(new Set([...state.capabilityTags, ...r.tags]))
+          : state.capabilityTags,
+        domainMetadataText: state.domainMetadataText || stringifyDomainMetadata({
+          detection: {
+            endpointCount: r.endpoints.length,
+            authType: r.authType || undefined,
+            specUrl: state.specUrl || undefined,
+          },
+        }),
         endpoints: r.endpoints || [],
         inputSchemaFields: r.inputSchemaFields || [],
         floorPrice: state.floorPrice || pricing.floor.toString(),
@@ -424,6 +457,13 @@ export default function CreateListingPage() {
         if (!form.description.trim()) errs.description = "Description is required";
         if (!form.categoryId) errs.categoryId = "Category is required";
         if (!form.baseUrl.trim()) errs.baseUrl = "Base URL is required";
+        if (form.domainMetadataText.trim()) {
+          try {
+            parseDomainMetadataText(form.domainMetadataText);
+          } catch (error) {
+            errs.domainMetadataText = error instanceof Error ? error.message : "Invalid domain metadata";
+          }
+        }
       } else if (step === 2) {
         if (!form.floorPrice || parseFloat(form.floorPrice) <= 0)
           errs.floorPrice = "Floor price must be greater than 0";
@@ -479,6 +519,7 @@ export default function CreateListingPage() {
         try { sampleResponse = JSON.parse(form.sampleResponse); }
         catch { /* skip invalid */ }
       }
+      const domainMetadata = parseDomainMetadataText(form.domainMetadataText);
 
       await provider.createListing({
         name: form.name,
@@ -494,8 +535,15 @@ export default function CreateListingPage() {
         floorPriceUsdc: parseFloat(form.floorPrice),
         ceilingPriceUsdc: form.ceilingPrice ? parseFloat(form.ceilingPrice) : undefined,
         capacityPerMinute: parseInt(form.capacityPerMinute, 10) || 60,
-        tags: [],
+        tags: form.tags,
         intents: form.intents,
+        availabilityRegions: form.availabilityRegions,
+        restrictedRegions: form.restrictedRegions,
+        complianceTags: form.complianceTags,
+        capabilityTags: form.capabilityTags,
+        inputModalities: form.inputModalities,
+        outputModalities: form.outputModalities,
+        domainMetadata,
         isUnique: false,
         sampleRequest,
         sampleResponse,
@@ -776,48 +824,6 @@ export default function CreateListingPage() {
                       />
                     </div>
 
-                    {/* Intent Tags */}
-                    <div>
-                      <FieldLabel label="Intents" />
-                      <p className="text-2xs text-zinc-500 mb-2">
-                        What can agents do with your API? Press Enter or comma to add.
-                      </p>
-                      <div className="flex flex-wrap gap-1.5 mb-2">
-                        {form.intents.map((intent, idx) => (
-                          <span
-                            key={idx}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 bg-brand-600/10 text-brand-300 border border-brand-600/20 rounded text-xs"
-                          >
-                            {intent}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                const next = form.intents.filter((_, i) => i !== idx);
-                                setField("intents", next);
-                              }}
-                              className="text-brand-400 hover:text-red-400 ml-0.5"
-                            >
-                              &times;
-                            </button>
-                          </span>
-                        ))}
-                      </div>
-                      <input
-                        className="input-base w-full"
-                        placeholder="e.g., translate text between languages, detect sentiment..."
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === ",") {
-                            e.preventDefault();
-                            const val = (e.target as HTMLInputElement).value.trim().replace(/,$/, "");
-                            if (val && !form.intents.includes(val)) {
-                              setField("intents", [...form.intents, val]);
-                              (e.target as HTMLInputElement).value = "";
-                            }
-                          }
-                        }}
-                      />
-                    </div>
-
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       <div>
                         <FieldLabel label="Listing Type" />
@@ -873,6 +879,30 @@ export default function CreateListingPage() {
                         placeholder="https://docs.example.com"
                         value={form.docsUrl}
                         onChange={(e) => setField("docsUrl", e.target.value)}
+                      />
+                    </div>
+
+                    <div className="pt-2 border-t border-surface-4">
+                      <h3 className="text-sm font-semibold text-zinc-300 mb-1">Discovery Metadata</h3>
+                      <p className="text-2xs text-zinc-500 mb-4">
+                        Structured metadata makes your API discoverable to agents by region, capability, compliance, and modality.
+                      </p>
+                      <DiscoveryMetadataFields
+                        value={{
+                          tags: form.tags,
+                          intents: form.intents,
+                          availabilityRegions: form.availabilityRegions,
+                          restrictedRegions: form.restrictedRegions,
+                          complianceTags: form.complianceTags,
+                          capabilityTags: form.capabilityTags,
+                          inputModalities: form.inputModalities,
+                          outputModalities: form.outputModalities,
+                          domainMetadataText: form.domainMetadataText,
+                        }}
+                        errors={errors}
+                        onChange={(field, value) => {
+                          setField(field as keyof WizardFormData, value as WizardFormData[keyof WizardFormData]);
+                        }}
                       />
                     </div>
                   </section>

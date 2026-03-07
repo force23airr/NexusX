@@ -286,6 +286,33 @@ describe("RouteResolver", () => {
     expect(lookupCount).toBe(2);
   });
 
+  it("invalidates cache when shared route version changes", async () => {
+    let version = 1;
+    resolver = new RouteResolver(
+      async (slug) => {
+        lookupCount++;
+        if (slug === "test-api") return TEST_LISTING;
+        return null;
+      },
+      async (id) => {
+        lookupCount++;
+        if (id === TEST_LISTING.listingId) return TEST_LISTING;
+        return null;
+      },
+      60_000,
+      async () => version,
+      0,
+    );
+
+    await resolver.resolveBySlug("test-api");
+    await resolver.resolveBySlug("test-api");
+    expect(lookupCount).toBe(1);
+
+    version = 2;
+    await resolver.resolveBySlug("test-api");
+    expect(lookupCount).toBe(2);
+  });
+
   it("reports cache stats", () => {
     const stats = resolver.stats();
     expect(stats.ttlMs).toBe(5000);

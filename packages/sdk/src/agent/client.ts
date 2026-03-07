@@ -16,6 +16,7 @@ import type {
   ChainStep,
   ChainResult,
   SearchMatch,
+  SearchOptions,
   SearchResult,
   PricingInfo,
   ReliabilityInfo,
@@ -134,7 +135,7 @@ export class NexusXAgent {
   // ─── Discovery ───
 
   /** Semantic search for APIs. Requires webUrl to be configured. */
-  async search(query: string): Promise<SearchResult> {
+  async search(query: string, options?: SearchOptions): Promise<SearchResult> {
     if (!this.webUrl) {
       throw new Error("NexusXAgent.search() requires webUrl in config.");
     }
@@ -142,7 +143,12 @@ export class NexusXAgent {
     const response = await fetch(`${this.webUrl}/api/search`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ query }),
+      body: JSON.stringify({
+        query,
+        limit: options?.limit,
+        priorityMode: options?.priorityMode,
+        metadataFilters: options?.metadataFilters,
+      }),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
 

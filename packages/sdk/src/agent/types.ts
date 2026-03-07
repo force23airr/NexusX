@@ -138,6 +138,23 @@ export interface SearchMatch {
   matchReasons: string[];
 }
 
+export interface SearchMetadataFilters {
+  availabilityRegion?: string;
+  complianceRequired?: string[];
+  capabilityRequired?: string[];
+  inputModality?: string[];
+  outputModality?: string[];
+  listingType?: string;
+  maxPriceUsdc?: number;
+  minCapacityRpm?: number;
+}
+
+export interface SearchOptions {
+  limit?: number;
+  priorityMode?: "frugal" | "balanced" | "mission_critical";
+  metadataFilters?: SearchMetadataFilters;
+}
+
 export interface SearchResult {
   queryId: string;
   matches: SearchMatch[];

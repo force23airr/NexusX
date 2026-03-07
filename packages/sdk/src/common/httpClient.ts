@@ -98,8 +98,9 @@ export class HttpClient {
         // Non-retryable client errors (4xx except 429).
         if (response.status >= 400 && response.status < 500 && response.status !== 429) {
           const body = await this.safeReadBody(response);
+          const message = this.extractErrorMessage(body) || `API error: ${response.status} ${response.statusText}`;
           throw new NexusXApiError(
-            `API error: ${response.status} ${response.statusText}`,
+            message,
             response.status,
             requestId,
             body
@@ -122,8 +123,9 @@ export class HttpClient {
           }
 
           const body = await this.safeReadBody(response);
+          const message = this.extractErrorMessage(body) || `API error after ${this.retries} retries: ${response.status}`;
           throw new NexusXApiError(
-            `API error after ${this.retries} retries: ${response.status}`,
+            message,
             response.status,
             requestId,
             body
@@ -131,7 +133,8 @@ export class HttpClient {
         }
 
         // Success.
-        const data = await response.json() as ApiResponse<T>;
+        const body = await this.safeReadBody(response);
+        const data = this.normalizeSuccessResponse<T>(body, requestId);
         return data;
       } catch (err) {
         lastError = err instanceof Error ? err : new Error(String(err));
@@ -197,6 +200,42 @@ export class HttpClient {
       return await response.text();
     } catch {
       return "";
+    }
+  }
+
+  private normalizeSuccessResponse<T>(body: string, requestId?: string): ApiResponse<T> {
+    const parsed = this.tryParseJson(body);
+
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      "success" in parsed &&
+      "data" in parsed
+    ) {
+      return parsed as ApiResponse<T>;
+    }
+
+    return {
+      success: true,
+      data: (parsed ?? (body as unknown)) as T,
+      requestId,
+    };
+  }
+
+  private extractErrorMessage(body: string): string | null {
+    const parsed = this.tryParseJson(body);
+    if (!parsed || typeof parsed !== "object") return null;
+
+    const message = (parsed as Record<string, unknown>).error ?? (parsed as Record<string, unknown>).message;
+    return typeof message === "string" && message.trim().length > 0 ? message : null;
+  }
+
+  private tryParseJson(body: string): unknown {
+    if (!body) return null;
+    try {
+      return JSON.parse(body);
+    } catch {
+      return null;
     }
   }
 
