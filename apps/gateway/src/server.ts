@@ -24,6 +24,7 @@ import { ReliabilityAggregator } from "./services/reliability-aggregator";
 import { createProxyRoute, extractListingSlug } from "./routes/proxy";
 import { createBundleSessionRoutes } from "./routes/bundle-sessions";
 import { createHealthRoutes } from "./routes/health";
+import type { ReadinessCheckResult } from "./routes/health";
 import { createPriceHistoryRoutes } from "./routes/price-history";
 import { QualityMonitorWorker, loadQualityMonitorConfig } from "./workers/qualityMonitor";
 import { IndexingWorker, loadIndexingWorkerConfig } from "./workers/indexingWorker";
@@ -70,6 +71,10 @@ export interface GatewayDependencies {
   }) => Promise<boolean>;
   /** Shared control plane: current route config version (optional). */
   loadRouteVersion?: () => Promise<number | null>;
+  /** Runtime health check for the database dependency. */
+  checkDatabaseHealth?: () => Promise<ReadinessCheckResult>;
+  /** Runtime health check for the Redis dependency. */
+  checkRedisHealth?: () => Promise<ReadinessCheckResult>;
   /** Database: Register a pre-execution bundle session. */
   registerBundleSession?: (
     input: BundleSessionRegistrationInput
@@ -150,6 +155,21 @@ export function createGatewayApp(
       routeResolver,
       billingService,
       startedAt,
+      readinessChecks: {
+        ...(deps.checkDatabaseHealth ? { database: deps.checkDatabaseHealth } : {}),
+        ...(deps.checkRedisHealth ? { redis: deps.checkRedisHealth } : {}),
+        ...(cfg.x402Enabled
+          ? {
+              x402: async (): Promise<ReadinessCheckResult> => ({
+                ok: Boolean(cfg.x402FacilitatorUrl && cfg.x402PlatformAddress),
+                message:
+                  cfg.x402FacilitatorUrl && cfg.x402PlatformAddress
+                    ? undefined
+                    : "configuration_invalid",
+              }),
+            }
+          : {}),
+      },
     })
   );
 
@@ -317,6 +337,11 @@ export function startGateway(
       x402SettlementWorker.start();
     }
   });
+
+  server.requestTimeout = Math.max(cfg.upstreamTimeoutMs + 5_000, 45_000);
+  server.headersTimeout = Math.max(server.requestTimeout + 5_000, 60_000);
+  server.keepAliveTimeout = 5_000;
+  server.maxRequestsPerSocket = 1_000;
 
   // Graceful shutdown.
   const shutdown = async (signal: string) => {

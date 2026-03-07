@@ -27,6 +27,8 @@ interface HttpTransportOptions {
   allowedOrigins: string[];
 }
 
+const MAX_HTTP_BODY_BYTES = 1 * 1024 * 1024;
+
 function isLoopbackHost(host: string): boolean {
   return host === "127.0.0.1" || host === "::1" || host === "localhost";
 }
@@ -46,12 +48,16 @@ export async function startHttpTransport(
   options: HttpTransportOptions,
 ): Promise<void> {
   const { port, host, allowedOrigins } = options;
+  const requiresAuth = !isLoopbackHost(host);
+  if (requiresAuth && allowedOrigins.includes("*")) {
+    throw new Error("[MCP HTTP] Wildcard CORS is not allowed when binding a non-loopback host.");
+  }
   const app = express();
   app.disable("x-powered-by");
   const sessions = new Map<string, SessionEntry>();
 
   // Parse JSON bodies for MCP protocol messages
-  app.use(express.json());
+  app.use(express.json({ limit: MAX_HTTP_BODY_BYTES }));
 
   // ─── CORS ───
   app.use((req: Request, res: Response, next: NextFunction) => {
@@ -69,7 +75,6 @@ export async function startHttpTransport(
 
   // ─── Bearer Token Auth ───
   const authToken = process.env.MCP_AUTH_TOKEN;
-  const requiresAuth = !isLoopbackHost(host);
   if (requiresAuth && !authToken) {
     throw new Error("[MCP HTTP] MCP_AUTH_TOKEN is required when binding a non-loopback host.");
   }

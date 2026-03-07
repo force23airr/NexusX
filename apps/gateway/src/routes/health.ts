@@ -10,15 +10,39 @@ import { Router, type Request, type Response } from "express";
 import type { RouteResolver } from "../services/routeResolver";
 import type { BillingService } from "../services/billingService";
 
+export interface ReadinessCheckResult {
+  ok: boolean;
+  latencyMs?: number;
+  message?: string;
+}
+
 export interface HealthRouteConfig {
   routeResolver: RouteResolver;
   billingService: BillingService;
   startedAt: number;
+  readinessChecks?: Record<string, () => Promise<ReadinessCheckResult>>;
+}
+
+async function runReadinessCheck(
+  name: string,
+  check: () => Promise<ReadinessCheckResult>,
+): Promise<[string, ReadinessCheckResult]> {
+  try {
+    const result = await Promise.race<ReadinessCheckResult>([
+      check(),
+      new Promise<ReadinessCheckResult>((resolve) => {
+        setTimeout(() => resolve({ ok: false, message: "timeout" }), 2_000);
+      }),
+    ]);
+    return [name, result];
+  } catch {
+    return [name, { ok: false, message: "unavailable" }];
+  }
 }
 
 export function createHealthRoutes(config: HealthRouteConfig): Router {
   const router = Router();
-  const { routeResolver, billingService, startedAt } = config;
+  const { routeResolver, billingService, startedAt, readinessChecks } = config;
 
   // ─── Liveness probe (k8s) ───
   router.get("/health", (_req: Request, res: Response) => {
@@ -26,12 +50,18 @@ export function createHealthRoutes(config: HealthRouteConfig): Router {
   });
 
   // ─── Readiness probe (k8s) ───
-  router.get("/ready", (_req: Request, res: Response) => {
-    // In production, check DB/Redis connectivity here.
-    res.status(200).json({
-      status: "ready",
+  router.get("/ready", async (_req: Request, res: Response) => {
+    const checks = readinessChecks ?? {};
+    const entries = await Promise.all(
+      Object.entries(checks).map(([name, check]) => runReadinessCheck(name, check)),
+    );
+    const componentChecks = Object.fromEntries(entries);
+    const isReady = Object.values(componentChecks).every((check) => check.ok);
+
+    res.status(isReady ? 200 : 503).json({
+      status: isReady ? "ready" : "not_ready",
       uptime: Math.round((Date.now() - startedAt) / 1000),
-      cache: routeResolver.stats(),
+      checks: componentChecks,
     });
   });
 

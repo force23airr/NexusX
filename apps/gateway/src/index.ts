@@ -16,6 +16,23 @@ import { persistX402ExecutionRecord } from "./services/x402ExecutionLedger";
 
 const prisma = new PrismaClient();
 
+async function checkPrismaHealth() {
+  const start = performance.now();
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return {
+      ok: true,
+      latencyMs: Math.round(performance.now() - start),
+    };
+  } catch {
+    return {
+      ok: false,
+      latencyMs: Math.round(performance.now() - start),
+      message: "unavailable",
+    };
+  }
+}
+
 const deps: GatewayDependencies = {
   lookupApiKey: async (prefix: string) => {
     const key = await prisma.apiKey.findFirst({
@@ -522,6 +539,24 @@ const redisClient = new Redis(redisUrl);
 
 deps.redis = redisClient;
 deps.prisma = prisma;
+deps.checkDatabaseHealth = checkPrismaHealth;
+deps.checkRedisHealth = async () => {
+  const start = performance.now();
+  try {
+    const result = await redisClient.ping();
+    return {
+      ok: result === "PONG",
+      latencyMs: Math.round(performance.now() - start),
+      message: result === "PONG" ? undefined : "unexpected_response",
+    };
+  } catch {
+    return {
+      ok: false,
+      latencyMs: Math.round(performance.now() - start),
+      message: "unavailable",
+    };
+  }
+};
 
 startGateway(deps, {
   x402Enabled: process.env.X402_ENABLED === "true",

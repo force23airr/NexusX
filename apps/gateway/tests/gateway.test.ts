@@ -348,6 +348,25 @@ describe("Health Routes", () => {
     expect(res.status).toBe(200);
     expect(res.body.status).toBe("ready");
     expect(typeof res.body.uptime).toBe("number");
+    expect(res.body.cache).toBeUndefined();
+    expect(res.body.checks).toEqual({});
+  });
+
+  it("GET /ready returns 503 when a dependency health check fails", async () => {
+    const { deps } = createMockDeps({
+      checkDatabaseHealth: async () => ({
+        ok: false,
+        message: "unavailable",
+      }),
+    });
+    const gateway = createGatewayApp(deps);
+
+    const res = await request(gateway.app).get("/ready");
+    expect(res.status).toBe(503);
+    expect(res.body.status).toBe("not_ready");
+    expect(res.body.checks.database.ok).toBe(false);
+
+    gateway.cleanup();
   });
 
   it("GET /status returns gateway info", async () => {

@@ -18,7 +18,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import express from "express";
 import type { Request, Response, NextFunction } from "express";
 import request from "supertest";
-import { timingSafeEqual, createHash } from "crypto";
+import { timingSafeEqual } from "crypto";
 
 // =================================================================
 // RECONSTRUCTED MIDDLEWARE
@@ -30,20 +30,39 @@ import { timingSafeEqual, createHash } from "crypto";
 function createMcpHttpApp(options: {
   authToken?: string;
   activeSessions?: number;
+  host?: string;
+  allowedOrigins?: string[];
 }) {
+  const host = options.host ?? "127.0.0.1";
+  const allowedOrigins = options.allowedOrigins ?? [];
+  const requiresAuth = host !== "127.0.0.1" && host !== "::1" && host !== "localhost";
+  if (requiresAuth && allowedOrigins.includes("*")) {
+    throw new Error("[MCP HTTP] Wildcard CORS is not allowed when binding a non-loopback host.");
+  }
   const app = express();
-  app.use(express.json());
+  app.disable("x-powered-by");
+  app.use(express.json({ limit: 1 * 1024 * 1024 }));
+
+  const resolveAllowedOrigin = (origin: string | undefined): string | null => {
+    if (!origin) return null;
+    if (allowedOrigins.includes("*")) return "*";
+    return allowedOrigins.includes(origin) ? origin : null;
+  };
 
   // CORS middleware -- identical to http.ts
-  app.use((_req: Request, res: Response, next: NextFunction) => {
-    res.setHeader("Access-Control-Allow-Origin", "*");
-    res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
-    res.setHeader(
-      "Access-Control-Allow-Headers",
-      "Content-Type, Authorization, Mcp-Session-Id"
-    );
-    res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
-    if (_req.method === "OPTIONS") {
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const origin = resolveAllowedOrigin(req.headers.origin);
+    if (origin) {
+      res.setHeader("Access-Control-Allow-Origin", origin);
+      res.setHeader("Vary", "Origin");
+      res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
+      res.setHeader(
+        "Access-Control-Allow-Headers",
+        "Content-Type, Authorization, Mcp-Session-Id"
+      );
+      res.setHeader("Access-Control-Expose-Headers", "Mcp-Session-Id");
+    }
+    if (req.method === "OPTIONS") {
       res.status(204).end();
       return;
     }
@@ -52,11 +71,20 @@ function createMcpHttpApp(options: {
 
   // Auth middleware -- identical to http.ts
   const authToken = options.authToken;
+  if (requiresAuth && !authToken) {
+    throw new Error("[MCP HTTP] MCP_AUTH_TOKEN is required when binding a non-loopback host.");
+  }
   if (authToken) {
     app.use("/mcp", (req: Request, res: Response, next: NextFunction) => {
       if (req.method === "OPTIONS") return next();
       const bearer = req.headers.authorization?.replace("Bearer ", "");
-      if (bearer !== authToken) {
+      if (!bearer) {
+        res.status(401).json({ error: "Invalid or missing auth token" });
+        return;
+      }
+      const provided = Buffer.from(bearer);
+      const expected = Buffer.from(authToken);
+      if (provided.length !== expected.length || !timingSafeEqual(provided, expected)) {
         res.status(401).json({ error: "Invalid or missing auth token" });
         return;
       }
@@ -131,28 +159,12 @@ describe("MCP HTTP Auth Token Validation", () => {
   });
 
   // ---------------------------------------------------------------
-  // Attack: Token comparison uses simple === which is not timing-safe.
-  // This test documents the vulnerability for remediation.
+  // Positive: token comparison should use timingSafeEqual with a
+  // length check so malformed tokens do not throw and mismatches
+  // fail closed.
   // ---------------------------------------------------------------
-  it("should document that auth token comparison is NOT timing-safe (vulnerability)", () => {
-    // The current implementation uses `bearer !== authToken` (line 54 of http.ts),
-    // which is a simple string comparison vulnerable to timing attacks.
-    //
-    // A timing-safe comparison should use crypto.timingSafeEqual().
-    // This test verifies the CURRENT behavior and documents the gap.
-    //
-    // Recommendation: Replace with:
-    //   const expected = Buffer.from(authToken);
-    //   const received = Buffer.from(bearer || "");
-    //   if (expected.length !== received.length ||
-    //       !timingSafeEqual(expected, received)) { ... }
-
+  it("should use timing-safe auth token comparison semantics", () => {
     const token = "my-secret-token";
-
-    // Current approach (vulnerable):
-    const simpleCompare = (a: string, b: string) => a === b;
-    expect(simpleCompare(token, token)).toBe(true);
-    expect(simpleCompare(token, "wrong")).toBe(false);
 
     // Recommended approach (timing-safe):
     const safeCompare = (a: string, b: string): boolean => {
@@ -181,7 +193,7 @@ describe("MCP HTTP Auth Token Validation", () => {
   // Attack: Bypass auth via OPTIONS preflight.
   // ---------------------------------------------------------------
   it("should skip auth for OPTIONS preflight requests", async () => {
-    const app = createMcpHttpApp({ authToken: "secret" });
+    const app = createMcpHttpApp({ authToken: "secret", allowedOrigins: ["https://attacker.com"] });
 
     const res = await request(app)
       .options("/mcp")
@@ -277,25 +289,34 @@ describe("MCP HTTP Auth Token Validation", () => {
 // =================================================================
 
 describe("MCP HTTP CORS Policy", () => {
-  // ---------------------------------------------------------------
-  // Audit: CORS wildcard allows any origin -- document implications.
-  // ---------------------------------------------------------------
-  it("should set Access-Control-Allow-Origin to wildcard (*)", async () => {
-    const app = createMcpHttpApp({});
+  it("should allow wildcard CORS only for loopback-bound transports", async () => {
+    const app = createMcpHttpApp({ allowedOrigins: ["*"] });
     const res = await request(app).get("/health");
 
     expect(res.headers["access-control-allow-origin"]).toBe("*");
   });
 
+  it("should reject wildcard CORS when binding a non-loopback host", () => {
+    expect(() =>
+      createMcpHttpApp({
+        host: "0.0.0.0",
+        authToken: "secret",
+        allowedOrigins: ["*"],
+      }),
+    ).toThrow("Wildcard CORS is not allowed");
+  });
+
   it("should expose Mcp-Session-Id in CORS headers", async () => {
-    const app = createMcpHttpApp({});
-    const res = await request(app).get("/health");
+    const app = createMcpHttpApp({ allowedOrigins: ["https://example.com"] });
+    const res = await request(app)
+      .get("/health")
+      .set("Origin", "https://example.com");
 
     expect(res.headers["access-control-expose-headers"]).toBe("Mcp-Session-Id");
   });
 
   it("should allow Authorization in CORS preflight", async () => {
-    const app = createMcpHttpApp({});
+    const app = createMcpHttpApp({ allowedOrigins: ["https://example.com"] });
     const res = await request(app)
       .options("/mcp")
       .set("Origin", "https://example.com")
@@ -307,29 +328,12 @@ describe("MCP HTTP CORS Policy", () => {
       "Authorization"
     );
   });
-
-  // ---------------------------------------------------------------
-  // Security audit: Document that wildcard CORS + auth token is
-  // acceptable for MCP because agents are not browsers.
-  // ---------------------------------------------------------------
-  it("should document that wildcard CORS is intentional for MCP (agents, not browsers)", () => {
-    // MCP servers are accessed by AI agent runtimes, not browsers.
-    // Wildcard CORS is acceptable here because:
-    // 1. MCP protocol messages are not cookies/session-based.
-    // 2. Auth is via explicit Bearer token, not ambient credentials.
-    // 3. If auth token is set, CORS alone cannot bypass it.
-    //
-    // However, if this MCP server were ever exposed to browser-based
-    // agents, CORS should be restricted to known origins.
-    expect(true).toBe(true); // Documented finding.
-  });
-
   // ---------------------------------------------------------------
   // Attack: CORS wildcard with credentials should be rejected by
   // browsers (Access-Control-Allow-Credentials: true + * is invalid).
   // ---------------------------------------------------------------
   it("should NOT set Access-Control-Allow-Credentials header", async () => {
-    const app = createMcpHttpApp({});
+    const app = createMcpHttpApp({ allowedOrigins: ["*"] });
     const res = await request(app).get("/health");
 
     // Wildcard origin + credentials is a browser security violation.
@@ -414,20 +418,8 @@ describe("MCP HTTP Health Endpoint Information Disclosure", () => {
   // ---------------------------------------------------------------
   it("should not expose X-Powered-By header", async () => {
     const app = createMcpHttpApp({});
-    // Express default has X-Powered-By. In production http.ts
-    // should disable it (but the reconstructed test app doesn't).
-    // This test documents that the MCP server SHOULD disable it.
-    //
-    // NOTE: The actual http.ts does NOT call app.disable("x-powered-by"),
-    // which is a finding.
     const res = await request(app).get("/health");
-    // This test documents the behavior -- X-Powered-By might be present.
-    // If it is, this is a security finding.
-    if (res.headers["x-powered-by"]) {
-      // FINDING: MCP HTTP server leaks "Express" via X-Powered-By.
-      // Should add: app.disable("x-powered-by")
-      expect(res.headers["x-powered-by"]).toBeDefined(); // Document, don't fail.
-    }
+    expect(res.headers["x-powered-by"]).toBeUndefined();
   });
 
   // ---------------------------------------------------------------
@@ -482,23 +474,12 @@ describe("MCP HTTP Session Management Security", () => {
 // =================================================================
 
 describe("MCP HTTP Binding Address Security", () => {
-  // ---------------------------------------------------------------
-  // Audit: 0.0.0.0 binding means the server listens on all interfaces.
-  // ---------------------------------------------------------------
-  it("should document that 0.0.0.0 binding exposes to all network interfaces", () => {
-    // http.ts line 139: app.listen(port, "0.0.0.0", ...)
-    //
-    // FINDING: Binding to 0.0.0.0 makes the MCP server accessible
-    // from any network interface, not just localhost. In production:
-    //
-    // 1. If auth token is set, this is partially mitigated.
-    // 2. If auth token is NOT set, the MCP server is completely open
-    //    to the network.
-    // 3. Docker deployments should use network policies to restrict.
-    //
-    // Recommendation: Default to "127.0.0.1" for local dev,
-    // use "0.0.0.0" only when explicitly configured for remote access.
-    expect(true).toBe(true); // Documented finding.
+  it("should require MCP_AUTH_TOKEN when binding a non-loopback host", () => {
+    expect(() =>
+      createMcpHttpApp({
+        host: "0.0.0.0",
+      }),
+    ).toThrow("MCP_AUTH_TOKEN is required");
   });
 });
 
