@@ -2,13 +2,13 @@
 // NexusX — Rate Limiter Middleware
 // apps/gateway/src/middleware/rateLimiter.ts
 //
-// Sliding window rate limiter per API key. When a buyer exceeds
-// their RPM, the gateway returns 429 AND emits a RATE_LIMITED
-// demand signal — because rate limiting indicates excess demand,
-// which should push the auction price up.
+// Shared sliding-window rate limiter per buyer identity. Uses Redis
+// for cross-instance consistency when available, and falls back to a
+// local in-memory window if Redis is unavailable.
 // ═══════════════════════════════════════════════════════════════
 
 import type { Request, Response, NextFunction } from "express";
+import type Redis from "ioredis";
 import type { RequestContext, DemandSignalEvent } from "../types";
 
 // ─────────────────────────────────────────────────────────────
@@ -16,50 +16,119 @@ import type { RequestContext, DemandSignalEvent } from "../types";
 // ─────────────────────────────────────────────────────────────
 
 interface SlidingWindow {
-  /** Timestamps of requests in the current window. */
   timestamps: number[];
-  /** Window start time. */
   windowStart: number;
+}
+
+export interface RateLimitCheckResult {
+  allowed: boolean;
+  current: number;
+  remaining: number;
+  resetMs: number;
 }
 
 /** Emit function for demand signals. */
 export type SignalEmitter = (signal: DemandSignalEvent) => void;
 
+type SharedRateLimitRedis = Pick<Redis, "eval">;
+
+const WINDOW_MS = 60_000;
+const CLEANUP_INTERVAL_MS = 300_000;
+const RATE_LIMIT_REDIS_PREFIX = "nexusx:rate-limit:window";
+
+const REDIS_SLIDING_WINDOW_SCRIPT = `
+local key = KEYS[1]
+local now = tonumber(ARGV[1])
+local windowMs = tonumber(ARGV[2])
+local limit = tonumber(ARGV[3])
+local member = ARGV[4]
+local ttlMs = tonumber(ARGV[5])
+local windowStart = now - windowMs
+
+redis.call("ZREMRANGEBYSCORE", key, "-inf", windowStart)
+
+local current = redis.call("ZCARD", key)
+if current >= limit then
+  local oldest = redis.call("ZRANGE", key, 0, 0, "WITHSCORES")
+  local oldestScore = now
+  if oldest[2] ~= nil then
+    oldestScore = tonumber(oldest[2])
+  end
+  local resetMs = math.max(0, oldestScore + windowMs - now)
+  return {0, current, 0, resetMs}
+end
+
+redis.call("ZADD", key, now, member)
+redis.call("PEXPIRE", key, ttlMs)
+
+local nextCurrent = current + 1
+local remaining = math.max(0, limit - nextCurrent)
+return {1, nextCurrent, remaining, windowMs}
+`;
+
 // ─────────────────────────────────────────────────────────────
-// IN-MEMORY RATE LIMITER
+// RATE LIMITER
 // ─────────────────────────────────────────────────────────────
 
-/**
- * In-memory sliding window rate limiter.
- *
- * For production, replace with Redis-backed implementation
- * using sorted sets (ZRANGEBYSCORE + ZADD + ZREMRANGEBYSCORE).
- * The interface stays the same.
- */
 export class RateLimiter {
   private windows: Map<string, SlidingWindow> = new Map();
-  private readonly windowMs: number = 60_000; // 1 minute
-  private readonly cleanupIntervalMs: number = 300_000; // 5 min
   private cleanupTimer: ReturnType<typeof setInterval> | null = null;
+  private redis?: SharedRateLimitRedis;
+  private readonly windowMs: number;
 
-  constructor() {
-    // Periodic cleanup of expired windows.
-    this.cleanupTimer = setInterval(() => this.cleanup(), this.cleanupIntervalMs);
+  constructor(redis?: SharedRateLimitRedis, windowMs: number = WINDOW_MS) {
+    this.redis = redis;
+    this.windowMs = windowMs;
+    this.cleanupTimer = setInterval(() => this.cleanup(), CLEANUP_INTERVAL_MS);
   }
 
-  /**
-   * Check if the request is within rate limits.
-   *
-   * @param key      Rate limit key (API key ID).
-   * @param limitRpm Allowed requests per minute.
-   * @returns Object with allowed flag and current/remaining counts.
-   */
-  check(key: string, limitRpm: number): {
-    allowed: boolean;
-    current: number;
-    remaining: number;
-    resetMs: number;
-  } {
+  async check(
+    key: string,
+    limitRpm: number,
+    requestToken?: string,
+  ): Promise<RateLimitCheckResult> {
+    if (this.redis) {
+      try {
+        return await this.checkRedis(key, limitRpm, requestToken);
+      } catch (err) {
+        console.warn("[RateLimiter] Shared Redis check failed, falling back to local window:", err);
+      }
+    }
+
+    return this.checkLocal(key, limitRpm);
+  }
+
+  destroy(): void {
+    if (this.cleanupTimer) {
+      clearInterval(this.cleanupTimer);
+      this.cleanupTimer = null;
+    }
+    this.windows.clear();
+  }
+
+  private async checkRedis(
+    key: string,
+    limitRpm: number,
+    requestToken?: string,
+  ): Promise<RateLimitCheckResult> {
+    const now = Date.now();
+    const redisKey = `${RATE_LIMIT_REDIS_PREFIX}:${key}`;
+    const member = `${now}:${requestToken || cryptoRandomToken()}`;
+    const raw = await this.redis!.eval(
+      REDIS_SLIDING_WINDOW_SCRIPT,
+      1,
+      redisKey,
+      String(now),
+      String(this.windowMs),
+      String(Math.max(0, Math.trunc(limitRpm))),
+      member,
+      String(this.windowMs * 2),
+    );
+
+    return normalizeRedisRateLimitResult(raw, this.windowMs);
+  }
+
+  private checkLocal(key: string, limitRpm: number): RateLimitCheckResult {
     const now = Date.now();
     const windowStart = now - this.windowMs;
 
@@ -69,48 +138,44 @@ export class RateLimiter {
       this.windows.set(key, window);
     }
 
-    // Prune timestamps outside the sliding window.
     window.timestamps = window.timestamps.filter((t) => t > windowStart);
+    window.windowStart = now;
 
     const current = window.timestamps.length;
     const remaining = Math.max(0, limitRpm - current);
 
     if (current >= limitRpm) {
-      // Find when the oldest request in the window expires.
       const oldestInWindow = window.timestamps[0] || now;
       const resetMs = oldestInWindow + this.windowMs - now;
 
-      return { allowed: false, current, remaining: 0, resetMs: Math.max(0, resetMs) };
+      return {
+        allowed: false,
+        current,
+        remaining: 0,
+        resetMs: Math.max(0, resetMs),
+      };
     }
 
-    // Record this request.
     window.timestamps.push(now);
 
     return {
       allowed: true,
       current: current + 1,
-      remaining: remaining - 1,
+      remaining: Math.max(0, remaining - 1),
       resetMs: this.windowMs,
     };
   }
 
-  /** Remove expired windows to prevent memory growth. */
   private cleanup(): void {
     const cutoff = Date.now() - this.windowMs * 2;
     for (const [key, window] of this.windows) {
-      if (window.timestamps.length === 0 || window.timestamps[window.timestamps.length - 1] < cutoff) {
+      if (
+        window.timestamps.length === 0 ||
+        window.timestamps[window.timestamps.length - 1] < cutoff
+      ) {
         this.windows.delete(key);
       }
     }
-  }
-
-  /** Shutdown cleanup timer. */
-  destroy(): void {
-    if (this.cleanupTimer) {
-      clearInterval(this.cleanupTimer);
-      this.cleanupTimer = null;
-    }
-    this.windows.clear();
   }
 }
 
@@ -118,47 +183,37 @@ export class RateLimiter {
 // MIDDLEWARE FACTORY
 // ─────────────────────────────────────────────────────────────
 
-/**
- * Creates rate limiter middleware.
- *
- * @param limiter       RateLimiter instance (shared across routes).
- * @param emitSignal    Function to emit demand signals to the auction engine.
- * @param extractListingId  Function to extract the listing ID from the request path.
- */
 export function createRateLimitMiddleware(
   limiter: RateLimiter,
   emitSignal: SignalEmitter,
-  extractListingId: (req: Request) => string | null
+  extractListingId: (req: Request) => string | null,
 ) {
-  return function rateLimitMiddleware(
+  return async function rateLimitMiddleware(
     req: Request,
     res: Response,
-    next: NextFunction
-  ): void {
+    next: NextFunction,
+  ): Promise<void> {
     const ctx = (req as any).ctx as RequestContext | undefined;
     if (!ctx) {
       res.status(500).json({ error: "INTERNAL_ERROR", message: "Missing request context." });
       return;
     }
 
-    // Rate limit key: wallet address for x402, API key ID for traditional auth.
+    const listingScope = extractListingId(req);
     const rateLimitKey = ctx.authMode === "x402"
-      ? ctx.buyerAddress
-      : ctx.apiKeyId;
+      ? `x402:${ctx.buyerAddress}:${listingScope || "unknown"}`
+      : `api:${ctx.apiKeyId}`;
 
-    const result = limiter.check(rateLimitKey, ctx.rateLimitRpm);
+    const result = await limiter.check(rateLimitKey, ctx.rateLimitRpm, ctx.requestId);
 
-    // Always set rate limit headers.
     res.setHeader("X-RateLimit-Limit", ctx.rateLimitRpm.toString());
     res.setHeader("X-RateLimit-Remaining", result.remaining.toString());
     res.setHeader("X-RateLimit-Reset", Math.ceil(result.resetMs / 1000).toString());
 
     if (!result.allowed) {
-      // Emit RATE_LIMITED signal — this is a demand indicator.
-      const listingId = extractListingId(req);
-      if (listingId) {
+      if (listingScope) {
         emitSignal({
-          listingId,
+          listingId: listingScope,
           buyerId: ctx.buyerId,
           type: "RATE_LIMITED",
           weight: 1.5,
@@ -183,4 +238,37 @@ export function createRateLimitMiddleware(
 
     next();
   };
+}
+
+function normalizeRedisRateLimitResult(
+  raw: unknown,
+  fallbackWindowMs: number,
+): RateLimitCheckResult {
+  if (!Array.isArray(raw) || raw.length < 4) {
+    throw new Error("Invalid Redis sliding-window response.");
+  }
+
+  const allowed = Number(raw[0]) === 1;
+  const current = Number(raw[1] ?? 0);
+  const remaining = Number(raw[2] ?? 0);
+  const resetMs = Number(raw[3] ?? fallbackWindowMs);
+
+  if (
+    !Number.isFinite(current) ||
+    !Number.isFinite(remaining) ||
+    !Number.isFinite(resetMs)
+  ) {
+    throw new Error("Invalid Redis sliding-window counters.");
+  }
+
+  return {
+    allowed,
+    current: Math.max(0, Math.trunc(current)),
+    remaining: Math.max(0, Math.trunc(remaining)),
+    resetMs: Math.max(0, Math.trunc(resetMs)),
+  };
+}
+
+function cryptoRandomToken(): string {
+  return `${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
 }

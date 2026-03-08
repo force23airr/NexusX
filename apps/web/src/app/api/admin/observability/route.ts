@@ -20,6 +20,7 @@ function parseWindowHours(value: string | null): number {
 }
 
 type CircuitBreakerBackend = "redis" | "unavailable" | "error";
+type RateLimitBackend = "shared_redis" | "local_fallback" | "error";
 
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser();
@@ -57,9 +58,22 @@ export async function GET(req: NextRequest) {
     items: [],
   };
 
+  let rateLimiting: {
+    backend: RateLimitBackend;
+    status: "ok" | "warn" | "critical";
+    message: string;
+  } = {
+    backend: "local_fallback",
+    status: "warn",
+    message: "Redis is unavailable. Gateway instances may fall back to local rate limiting.",
+  };
+
   if (redis) {
     try {
-      const rawStates = await redis.hgetall(CIRCUIT_BREAKER_STATE_HASH_KEY);
+      const [rawStates] = await Promise.all([
+        redis.hgetall(CIRCUIT_BREAKER_STATE_HASH_KEY),
+        redis.ping(),
+      ]);
       const parsedStates = Object.fromEntries(
         Object.entries(rawStates)
           .map(([slug, raw]) => [slug, parseSharedCircuitState(raw)])
@@ -70,6 +84,11 @@ export async function GET(req: NextRequest) {
         backend: "redis",
         ...summarizeSharedCircuitStates(parsedStates),
       };
+      rateLimiting = {
+        backend: "shared_redis",
+        status: "ok",
+        message: "Gateway rate limiting is backed by shared Redis state.",
+      };
     } catch {
       circuitBreakers = {
         backend: "error",
@@ -77,6 +96,11 @@ export async function GET(req: NextRequest) {
         totalOpen: 0,
         totalHalfOpen: 0,
         items: [],
+      };
+      rateLimiting = {
+        backend: "error",
+        status: "critical",
+        message: "Redis health check failed. Shared rate limiting cannot be trusted right now.",
       };
     }
   }
@@ -89,5 +113,6 @@ export async function GET(req: NextRequest) {
       degradationVersion: versions[GATEWAY_LISTING_DEGRADATION_VERSION_KEY] ?? 0,
     },
     circuitBreakers,
+    rateLimiting,
   });
 }

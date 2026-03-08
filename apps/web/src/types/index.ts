@@ -242,6 +242,31 @@ export interface DiscoveryObservability {
   lastAcceptedAt: string | null;
 }
 
+export interface ThrottledListing {
+  listingId: string;
+  slug: string;
+  name: string;
+  count: number;
+  lastSeenAt: string | null;
+}
+
+export interface ThrottledBuyer {
+  buyerId: string;
+  displayName: string | null;
+  email: string | null;
+  count: number;
+  lastSeenAt: string | null;
+}
+
+export interface ThrottleObservability {
+  rateLimitedEvents: number;
+  uniqueBuyerCount: number;
+  uniqueListingCount: number;
+  lastRateLimitedAt: string | null;
+  topListings: ThrottledListing[];
+  topBuyers: ThrottledBuyer[];
+}
+
 export interface PipelineHealth {
   status: "ok" | "warn" | "critical";
   pendingCount: number;
@@ -257,6 +282,7 @@ export interface PlatformObservability {
   indexing: PipelineHealth;
   settlement: PipelineHealth;
   discovery: DiscoveryObservability;
+  throttling: ThrottleObservability;
 }
 
 export interface ProviderObservability {

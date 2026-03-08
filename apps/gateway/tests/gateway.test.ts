@@ -107,12 +107,18 @@ function createMockDeps(overrides?: Partial<GatewayDependencies>): {
 function createCircuitBreakerRedisMock() {
   const hashStore = new Map<string, Map<string, string>>();
   const stringStore = new Map<string, { value: string; expiresAt: number }>();
+  const sortedSetStore = new Map<string, { members: Array<{ member: string; score: number }>; expiresAt: number }>();
 
   const cleanupExpired = () => {
     const now = Date.now();
     for (const [key, entry] of stringStore.entries()) {
       if (entry.expiresAt <= now) {
         stringStore.delete(key);
+      }
+    }
+    for (const [key, entry] of sortedSetStore.entries()) {
+      if (entry.expiresAt <= now) {
+        sortedSetStore.delete(key);
       }
     }
   };
@@ -174,8 +180,55 @@ function createCircuitBreakerRedisMock() {
       let count = 0;
       for (const key of keys) {
         if (stringStore.delete(key)) count += 1;
+        if (sortedSetStore.delete(key)) count += 1;
       }
       return count;
+    },
+    async eval(
+      _script: string,
+      numKeys: number,
+      key: string,
+      nowArg: string,
+      windowMsArg: string,
+      limitArg: string,
+      member: string,
+      ttlMsArg: string,
+    ) {
+      cleanupExpired();
+      if (numKeys !== 1) {
+        throw new Error("Mock only supports one Redis key.");
+      }
+
+      const now = Number(nowArg);
+      const windowMs = Number(windowMsArg);
+      const limit = Number(limitArg);
+      const ttlMs = Number(ttlMsArg);
+      const windowStart = now - windowMs;
+
+      const bucket = sortedSetStore.get(key) ?? {
+        members: [],
+        expiresAt: now + ttlMs,
+      };
+
+      bucket.members = bucket.members
+        .filter((entry) => entry.score > windowStart)
+        .sort((a, b) => a.score - b.score);
+
+      const current = bucket.members.length;
+      if (current >= limit) {
+        const oldest = bucket.members[0]?.score ?? now;
+        bucket.expiresAt = now + ttlMs;
+        sortedSetStore.set(key, bucket);
+        return [0, current, 0, Math.max(0, oldest + windowMs - now)];
+      }
+
+      bucket.members.push({ member, score: now });
+      bucket.members.sort((a, b) => a.score - b.score);
+      bucket.expiresAt = now + ttlMs;
+      sortedSetStore.set(key, bucket);
+
+      const nextCurrent = current + 1;
+      return [1, nextCurrent, Math.max(0, limit - nextCurrent), windowMs];
     },
   };
 }
@@ -222,50 +275,66 @@ describe("RateLimiter", () => {
     limiter.destroy();
   });
 
-  it("allows requests within limit", () => {
+  it("allows requests within limit", async () => {
     for (let i = 0; i < 5; i++) {
-      const result = limiter.check("key1", 10);
+      const result = await limiter.check("key1", 10);
       expect(result.allowed).toBe(true);
     }
   });
 
-  it("blocks requests exceeding limit", () => {
+  it("blocks requests exceeding limit", async () => {
     for (let i = 0; i < 10; i++) {
-      limiter.check("key1", 10);
+      await limiter.check("key1", 10, `req_${i}`);
     }
-    const result = limiter.check("key1", 10);
+    const result = await limiter.check("key1", 10, "req_blocked");
     expect(result.allowed).toBe(false);
     expect(result.remaining).toBe(0);
   });
 
-  it("tracks separate keys independently", () => {
+  it("tracks separate keys independently", async () => {
     for (let i = 0; i < 10; i++) {
-      limiter.check("key1", 10);
+      await limiter.check("key1", 10, `key1_${i}`);
     }
 
     // key1 is exhausted.
-    expect(limiter.check("key1", 10).allowed).toBe(false);
+    expect((await limiter.check("key1", 10, "key1_over")).allowed).toBe(false);
 
     // key2 is fresh.
-    expect(limiter.check("key2", 10).allowed).toBe(true);
+    expect((await limiter.check("key2", 10, "key2_first")).allowed).toBe(true);
   });
 
-  it("reports correct remaining count", () => {
-    const result1 = limiter.check("key1", 5);
+  it("reports correct remaining count", async () => {
+    const result1 = await limiter.check("key1", 5, "first");
     expect(result1.remaining).toBe(4);
 
-    const result2 = limiter.check("key1", 5);
+    const result2 = await limiter.check("key1", 5, "second");
     expect(result2.remaining).toBe(3);
   });
 
-  it("provides retry-after when blocked", () => {
+  it("provides retry-after when blocked", async () => {
     for (let i = 0; i < 10; i++) {
-      limiter.check("key1", 10);
+      await limiter.check("key1", 10, `req_${i}`);
     }
-    const result = limiter.check("key1", 10);
+    const result = await limiter.check("key1", 10, "blocked");
     expect(result.allowed).toBe(false);
     expect(result.resetMs).toBeGreaterThan(0);
     expect(result.resetMs).toBeLessThanOrEqual(60000);
+  });
+
+  it("shares rate-limit state across limiter instances when backed by Redis", async () => {
+    const redis = createCircuitBreakerRedisMock();
+    const limiterA = new RateLimiter(redis as any);
+    const limiterB = new RateLimiter(redis as any);
+
+    expect((await limiterA.check("api:key_1", 2, "req_a_1")).allowed).toBe(true);
+    expect((await limiterB.check("api:key_1", 2, "req_b_1")).allowed).toBe(true);
+
+    const blocked = await limiterA.check("api:key_1", 2, "req_a_2");
+    expect(blocked.allowed).toBe(false);
+    expect(blocked.remaining).toBe(0);
+
+    limiterA.destroy();
+    limiterB.destroy();
   });
 });
 

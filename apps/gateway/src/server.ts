@@ -140,7 +140,7 @@ export function createGatewayApp(
   }));
 
   // ─── Services ───
-  const rateLimiter = new RateLimiter();
+  const rateLimiter = new RateLimiter(deps.redis);
   const proxyService = new ProxyService({ timeoutMs: cfg.upstreamTimeoutMs });
   const routeResolver = new RouteResolver(
     deps.lookupListingBySlug,

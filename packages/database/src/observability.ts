@@ -30,11 +30,37 @@ export interface DiscoveryConversionSnapshot {
   lastAcceptedAt: string | null;
 }
 
+export interface ThrottledListingSnapshot {
+  listingId: string;
+  slug: string;
+  name: string;
+  count: number;
+  lastSeenAt: string | null;
+}
+
+export interface ThrottledBuyerSnapshot {
+  buyerId: string;
+  displayName: string | null;
+  email: string | null;
+  count: number;
+  lastSeenAt: string | null;
+}
+
+export interface ThrottleObservabilitySnapshot {
+  rateLimitedEvents: number;
+  uniqueBuyerCount: number;
+  uniqueListingCount: number;
+  lastRateLimitedAt: string | null;
+  topListings: ThrottledListingSnapshot[];
+  topBuyers: ThrottledBuyerSnapshot[];
+}
+
 export interface PlatformObservabilitySnapshot {
   windowHours: number;
   indexing: PipelineHealthSnapshot;
   settlement: PipelineHealthSnapshot;
   discovery: DiscoveryConversionSnapshot;
+  throttling: ThrottleObservabilitySnapshot;
 }
 
 export interface ProviderObservabilitySnapshot {
@@ -361,6 +387,12 @@ export async function getPlatformObservabilitySnapshot(
     apiKeyExecutions,
     x402SettledExecutions,
     x402PendingExecutions,
+    rateLimitedEvents,
+    lastRateLimited,
+    topListingThrottleRows,
+    topBuyerThrottleRows,
+    uniqueBuyerThrottleRows,
+    uniqueListingThrottleRows,
   ] = await Promise.all([
     prisma.pendingActivation.count({
       where: {
@@ -474,7 +506,95 @@ export async function getPlatformObservabilitySnapshot(
         status: "SETTLEMENT_PENDING",
       },
     }),
+    prisma.demandSignal.count({
+      where: {
+        capturedAt: { gte: since },
+        type: "RATE_LIMITED",
+      },
+    }),
+    prisma.demandSignal.findFirst({
+      where: {
+        capturedAt: { gte: since },
+        type: "RATE_LIMITED",
+      },
+      orderBy: { capturedAt: "desc" },
+      select: { capturedAt: true },
+    }),
+    prisma.demandSignal.groupBy({
+      by: ["listingId"],
+      where: {
+        capturedAt: { gte: since },
+        type: "RATE_LIMITED",
+      },
+      _count: { _all: true },
+      _max: { capturedAt: true },
+      orderBy: { _count: { listingId: "desc" } },
+      take: 5,
+    }),
+    prisma.demandSignal.groupBy({
+      by: ["buyerId"],
+      where: {
+        capturedAt: { gte: since },
+        type: "RATE_LIMITED",
+        buyerId: { not: null },
+      },
+      _count: { _all: true },
+      _max: { capturedAt: true },
+      orderBy: { _count: { buyerId: "desc" } },
+      take: 5,
+    }),
+    prisma.demandSignal.groupBy({
+      by: ["buyerId"],
+      where: {
+        capturedAt: { gte: since },
+        type: "RATE_LIMITED",
+        buyerId: { not: null },
+      },
+    }),
+    prisma.demandSignal.groupBy({
+      by: ["listingId"],
+      where: {
+        capturedAt: { gte: since },
+        type: "RATE_LIMITED",
+      },
+    }),
   ]);
+
+  const [throttledListings, throttledBuyers] = await Promise.all([
+    topListingThrottleRows.length > 0
+      ? prisma.listing.findMany({
+          where: {
+            id: {
+              in: topListingThrottleRows.map((row) => row.listingId),
+            },
+          },
+          select: {
+            id: true,
+            slug: true,
+            name: true,
+          },
+        })
+      : Promise.resolve([]),
+    topBuyerThrottleRows.length > 0
+      ? prisma.user.findMany({
+          where: {
+            id: {
+              in: topBuyerThrottleRows
+                .map((row) => row.buyerId)
+                .filter((value): value is string => typeof value === "string"),
+            },
+          },
+          select: {
+            id: true,
+            displayName: true,
+            email: true,
+          },
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const listingById = new Map(throttledListings.map((listing) => [listing.id, listing]));
+  const buyerById = new Map(throttledBuyers.map((buyer) => [buyer.id, buyer]));
 
   const oldestPendingAgeMs = ageMs(oldestPending?.createdAt);
   const oldestRetryAgeMs = ageMs(oldestRetry?.createdAt);
@@ -521,6 +641,36 @@ export async function getPlatformObservabilitySnapshot(
       x402SettledExecutions,
       x402PendingExecutions,
       lastAcceptedAt: lastAccepted?.selectedAt?.toISOString() ?? null,
+    },
+    throttling: {
+      rateLimitedEvents,
+      uniqueBuyerCount: uniqueBuyerThrottleRows.filter(
+        (row): row is typeof row & { buyerId: string } => typeof row.buyerId === "string",
+      ).length,
+      uniqueListingCount: uniqueListingThrottleRows.length,
+      lastRateLimitedAt: lastRateLimited?.capturedAt?.toISOString() ?? null,
+      topListings: topListingThrottleRows.map((row) => {
+        const listing = listingById.get(row.listingId);
+        return {
+          listingId: row.listingId,
+          slug: listing?.slug ?? row.listingId,
+          name: listing?.name ?? row.listingId,
+          count: row._count._all,
+          lastSeenAt: row._max.capturedAt?.toISOString() ?? null,
+        };
+      }),
+      topBuyers: topBuyerThrottleRows
+        .filter((row): row is typeof row & { buyerId: string } => typeof row.buyerId === "string")
+        .map((row) => {
+          const buyer = buyerById.get(row.buyerId);
+          return {
+            buyerId: row.buyerId,
+            displayName: buyer?.displayName ?? null,
+            email: buyer?.email ?? null,
+            count: row._count._all,
+            lastSeenAt: row._max.capturedAt?.toISOString() ?? null,
+          };
+        }),
     },
   };
 }
