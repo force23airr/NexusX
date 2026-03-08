@@ -184,6 +184,7 @@ export interface SearchMatch {
   qualityScore: number;
   trustScore?: number;
   trustState?: "trusted" | "degraded" | "high_risk" | "unproven";
+  regionAffinityScore?: number;
   score: number;
   matchReasons: string[];
 }

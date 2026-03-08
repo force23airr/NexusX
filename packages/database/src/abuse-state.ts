@@ -36,6 +36,18 @@ export interface AbuseBlockSummary {
   items: AbuseBlockSnapshot[];
 }
 
+export function getAbuseHashField(scope: AbuseBlockScope, subjectKey: string): string {
+  return `${scope}:${subjectKey}`;
+}
+
+export function getAbuseBlockRedisKey(scope: AbuseBlockScope, subjectKey: string): string {
+  return `nexusx:abuse:block:${scope}:${subjectKey}`;
+}
+
+export function getAbuseCounterRedisKey(scope: AbuseBlockScope, subjectKey: string): string {
+  return `nexusx:abuse:counter:${scope}:${subjectKey}`;
+}
+
 export function serializeAbuseBlockState(state: AbuseBlockState): string {
   return JSON.stringify(state);
 }

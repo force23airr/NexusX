@@ -12,12 +12,14 @@
 // ═══════════════════════════════════════════════════════════════
 
 import { NextRequest, NextResponse } from "next/server";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { getUserFromApiKey } from "@/lib/apiKeyAuth";
 import { randomUUID } from "crypto";
 import {
   buildMetadataWhereClause,
+  computeRegionAffinity,
   recordUnmetDemand,
   searchListings,
   type EmbeddingConfig,
@@ -79,6 +81,8 @@ interface IndexedListing {
   status: string;
   providerName: string;
   providerId: string;
+  availabilityRegions: string[];
+  domainMetadata?: Prisma.JsonValue | null;
 }
 
 interface ScoreBreakdown {
@@ -87,6 +91,7 @@ interface ScoreBreakdown {
   priceScore: number;
   qualityScore: number;
   trustScore: number;
+  regionAffinityScore?: number;
   popularityScore: number;
   latencyScore: number;
   capabilityMatch: number;
@@ -422,6 +427,8 @@ async function loadListings(metadataFilters?: MetadataFilters): Promise<IndexedL
       status: l.status,
       providerName: l.provider.displayName,
       providerId: l.providerId,
+      availabilityRegions: l.availabilityRegions,
+      domainMetadata: l.domainMetadata as Prisma.JsonValue | null,
     };
   });
 }
@@ -511,6 +518,7 @@ function clamp01(v: number): number {
 function rankListings(
   listings: IndexedListing[],
   intent: ClassifiedIntent,
+  metadataFilters?: MetadataFilters,
   semanticScores?: Map<string, number>,
 ): RankedMatch[] {
   if (listings.length === 0) return [];
@@ -561,6 +569,11 @@ function rankListings(
 
     const qualityScore = listing.qualityScore;
     const trustScore = listing.trustScore;
+    const regionAffinity = computeRegionAffinity({
+      availabilityRegion: metadataFilters?.availabilityRegion,
+      availabilityRegions: listing.availabilityRegions,
+      domainMetadata: listing.domainMetadata ?? null,
+    });
     const popularityScore = maxCalls > 0 ? Math.log(1 + listing.totalCalls) / Math.log(1 + maxCalls) : 0;
 
     let latencyScore: number;
@@ -585,6 +598,7 @@ function rankListings(
       priceScore: clamp01(priceScore),
       qualityScore: clamp01(qualityScore),
       trustScore: clamp01(trustScore),
+      regionAffinityScore: clamp01(regionAffinity.score),
       popularityScore: clamp01(popularityScore),
       latencyScore: clamp01(latencyScore),
       capabilityMatch: clamp01(capabilityMatch),
@@ -596,6 +610,7 @@ function rankListings(
       breakdown.priceScore * weights.priceScore +
       breakdown.qualityScore * weights.qualityScore +
       breakdown.trustScore * weights.trustScore +
+      (breakdown.regionAffinityScore ?? 0) * 0.05 +
       breakdown.popularityScore * weights.popularityScore +
       breakdown.latencyScore * weights.latencyScore +
       breakdown.capabilityMatch * weights.capabilityMatch
@@ -608,6 +623,7 @@ function rankListings(
     if (breakdown.priceScore > 0.7 && intent.entities.maxPriceUsdc) reasons.push(`Within budget at $${listing.currentPriceUsdc.toFixed(6)}/call`);
     if (breakdown.qualityScore > 0.8) reasons.push(`High quality score: ${(listing.qualityScore * 100).toFixed(0)}%`);
     if (breakdown.trustScore > 0.85) reasons.push(`Stable execution trust: ${(listing.trustScore * 100).toFixed(0)}%`);
+    if ((breakdown.regionAffinityScore ?? 0) >= 0.7 && regionAffinity.reason) reasons.push(regionAffinity.reason);
     if (breakdown.popularityScore > 0.7) reasons.push(`Popular: ${listing.totalCalls.toLocaleString()} total calls`);
     if (breakdown.latencyScore > 0.8) reasons.push(`Fast: ${listing.avgLatencyMs}ms average latency`);
     if (breakdown.capabilityMatch > 0.7 && intent.entities.capabilities.length > 0) reasons.push("Matches required capabilities");
@@ -824,6 +840,7 @@ function semanticResultsToMatches(
       priceScore: clamp01(priceScore),
       qualityScore: clamp01(result.qualityScore),
       trustScore: clamp01(result.trustScore),
+      regionAffinityScore: clamp01(result.regionAffinityScore ?? 0),
       popularityScore: clamp01(popularityScore),
       latencyScore: clamp01(latencyScore),
       capabilityMatch: clamp01(capabilityMatch),
@@ -846,6 +863,9 @@ function semanticResultsToMatches(
     }
     if (result.trustScore >= 0.85) {
       matchReasons.push(`Stable execution trust: ${(result.trustScore * 100).toFixed(0)}%`);
+    }
+    if ((result.regionAffinityScore ?? 0) >= 0.7 && result.regionAffinityReason) {
+      matchReasons.push(result.regionAffinityReason);
     }
     if (result.avgLatencyMs > 0 && scoreBreakdown.latencyScore >= 0.8) {
       matchReasons.push(`Fast: ${result.avgLatencyMs}ms average latency`);
@@ -874,12 +894,15 @@ function semanticResultsToMatches(
       status: "ACTIVE",
       providerName: result.providerName,
       providerId: result.providerId,
+      availabilityRegions: result.availabilityRegions,
+      domainMetadata: result.domainMetadata as Prisma.JsonValue | null,
     };
 
     const score = clamp01(
       scoreBreakdown.textRelevance * 0.55 +
       scoreBreakdown.qualityScore * 0.10 +
       scoreBreakdown.trustScore * 0.15 +
+      (scoreBreakdown.regionAffinityScore ?? 0) * 0.05 +
       scoreBreakdown.categoryMatch * 0.10 +
       scoreBreakdown.capabilityMatch * 0.10 +
       scoreBreakdown.priceScore * 0.05 +
@@ -935,7 +958,7 @@ export async function POST(req: NextRequest) {
   // 3. Fallback path for environments without embeddings or when semantic search yields nothing.
   if (allMatches.length === 0) {
     const listings = await loadListings(metadataFilters);
-    allMatches = rankListings(listings, intent);
+    allMatches = rankListings(listings, intent, metadataFilters);
   }
 
   const filteredMatches = allMatches.filter((m) => m.score >= 0.15);

@@ -17,6 +17,8 @@
 import type { Prisma } from "@prisma/client";
 import type { SemanticSearchResult, PriorityMode } from "./embeddings";
 import { computeExplorationBonus } from "./cold-start-explorer";
+import { computeRegionAffinity } from "./region-affinity";
+import type { MetadataFilters } from "./metadata-filters";
 
 // ─── Capability Tiers ────────────────────────────────────────
 
@@ -141,6 +143,7 @@ export function deterministicRank(
   results: SemanticSearchResult[],
   query: string,
   priorityMode: PriorityMode = "balanced",
+  metadataFilters?: MetadataFilters,
 ): SemanticSearchResult[] {
   if (results.length === 0) return [];
 
@@ -171,9 +174,14 @@ export function deterministicRank(
       totalImpressions,
     );
     const demandGapBoost = activeDemandGapBoost(result);
-    const withinTierScore = tiebreaker + explorationBonus + demandGapBoost;
+    const regionAffinity = computeRegionAffinity({
+      availabilityRegion: metadataFilters?.availabilityRegion,
+      availabilityRegions: result.availabilityRegions,
+      domainMetadata: result.domainMetadata,
+    });
+    const withinTierScore = tiebreaker + explorationBonus + demandGapBoost + regionAffinity.score * 0.08;
 
-    return { result, tierRank, providerMatch, trustRank, withinTierScore };
+    return { result, tierRank, providerMatch, trustRank, withinTierScore, regionAffinity };
   });
 
   // Lexicographic sort: tier → provider match → trust band → trust score → tiebreaker
@@ -186,8 +194,10 @@ export function deterministicRank(
   });
 
   // Update composite scores to reflect the deterministic ranking
-  return scored.map(({ result, tierRank, providerMatch, trustRank, withinTierScore }, index) => ({
+  return scored.map(({ result, tierRank, providerMatch, trustRank, withinTierScore, regionAffinity }, index) => ({
     ...result,
+    regionAffinityScore: regionAffinity.score,
+    regionAffinityReason: regionAffinity.reason,
     compositeScore:
       tierRank * 100 +
       providerMatch * 10 +

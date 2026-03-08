@@ -98,6 +98,7 @@ export interface RouteMatch {
     priceScore: number;
     qualityScore: number;
     trustScore?: number;
+    regionAffinityScore?: number;
     popularityScore: number;
     latencyScore: number;
     capabilityMatch: number;

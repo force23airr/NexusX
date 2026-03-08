@@ -96,6 +96,9 @@ export {
 
 export {
   ABUSE_BLOCK_STATE_HASH_KEY,
+  getAbuseBlockRedisKey,
+  getAbuseCounterRedisKey,
+  getAbuseHashField,
   isAbuseBlockExpired,
   parseAbuseBlockState,
   serializeAbuseBlockState,
@@ -125,6 +128,12 @@ export {
   type CircuitInspectionSummary,
   type SharedCircuitState,
 } from "./circuit-breaker-state";
+
+export {
+  computeRegionAffinity,
+  inferRegionBucket,
+  type RegionAffinityResult,
+} from "./region-affinity";
 
 export {
   persistExecutionReceipt,

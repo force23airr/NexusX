@@ -191,6 +191,7 @@ export class NexusXAgent {
       trustScore: Number((m.listing as Record<string, unknown>)?.trustScore ?? 0),
       trustState: readOptionalString((m.listing as Record<string, unknown>)?.trustState) as
         "trusted" | "degraded" | "high_risk" | "unproven" | undefined,
+      regionAffinityScore: Number((m.scoreBreakdown as Record<string, unknown> | undefined)?.regionAffinityScore ?? 0),
       score: Number(m.score ?? 0),
       matchReasons: Array.isArray(m.matchReasons) ? m.matchReasons.map(String) : [],
     }));

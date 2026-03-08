@@ -52,11 +52,14 @@ export interface SemanticSearchResult {
   uptimePercent: number;
   totalCalls: number;
   providerName: string;
+  availabilityRegions: string[];
   discoveryImpressions: number;
   publishedAt: Date | null;
   domainMetadata: Prisma.JsonValue | null;
   trustScore: number;
   trustState: "trusted" | "degraded" | "high_risk" | "unproven";
+  regionAffinityScore?: number;
+  regionAffinityReason?: string | null;
   similarity: number;
   compositeScore: number;
   fallbackReason?: FallbackReason;
@@ -300,6 +303,7 @@ interface VectorSearchRow {
   uptimePercent: number;
   totalCalls: bigint;
   providerName: string;
+  availabilityRegions: string[];
   discoveryImpressions: number;
   publishedAt: Date | null;
   domainMetadata: Prisma.JsonValue | null;
@@ -364,6 +368,7 @@ async function vectorSearch(
       COALESCE(qs.uptime_percent::float, 99.0)          AS "uptimePercent",
       l.total_calls                                     AS "totalCalls",
       u.display_name                                    AS "providerName",
+      l.availability_regions                            AS "availabilityRegions",
       l.discovery_impressions                           AS "discoveryImpressions",
       l.published_at                                    AS "publishedAt",
       l.domain_metadata                                 AS "domainMetadata",
@@ -508,6 +513,7 @@ function rerank(
       uptimePercent: row.uptimePercent,
       totalCalls: Number(row.totalCalls),
       providerName: row.providerName,
+      availabilityRegions: row.availabilityRegions,
       discoveryImpressions: row.discoveryImpressions,
       publishedAt: row.publishedAt,
       domainMetadata: row.domainMetadata,
@@ -652,7 +658,7 @@ export async function searchListings(
     // First do standard rerank to get SemanticSearchResult with hybrid boosts
     const withBoosts = rerank(enriched, query, priorityMode);
     // Then apply deterministic tier-based sorting
-    reranked = deterministicRank(withBoosts, query, priorityMode);
+    reranked = deterministicRank(withBoosts, query, priorityMode, options?.metadataFilters);
   } else {
     reranked = rerank(enriched, query, priorityMode);
   }
