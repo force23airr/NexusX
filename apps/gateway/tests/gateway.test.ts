@@ -16,6 +16,7 @@ import { RateLimiter } from "../src/middleware/rateLimiter";
 import { BillingService } from "../src/services/billingService";
 import { RouteResolver } from "../src/services/routeResolver";
 import { CircuitBreakerService } from "../src/services/circuitBreaker";
+import { AbuseMonitor } from "../src/services/abuseMonitor";
 import type {
   ListingRoute,
   DemandSignalEvent,
@@ -127,6 +128,32 @@ function createCircuitBreakerRedisMock() {
     async get(key: string) {
       cleanupExpired();
       return stringStore.get(key)?.value ?? null;
+    },
+    async incr(key: string) {
+      cleanupExpired();
+      const current = stringStore.get(key);
+      const nextValue = (current ? Number(current.value) : 0) + 1;
+      stringStore.set(key, {
+        value: String(nextValue),
+        expiresAt: current?.expiresAt ?? Date.now() + 60_000,
+      });
+      return nextValue;
+    },
+    async pexpire(key: string, ttlMs: number) {
+      cleanupExpired();
+      const current = stringStore.get(key);
+      if (!current) return 0;
+      stringStore.set(key, {
+        value: current.value,
+        expiresAt: Date.now() + ttlMs,
+      });
+      return 1;
+    },
+    async pttl(key: string) {
+      cleanupExpired();
+      const current = stringStore.get(key);
+      if (!current) return -2;
+      return Math.max(0, current.expiresAt - Date.now());
     },
     async hget(key: string, field: string) {
       return hashStore.get(key)?.get(field) ?? null;
@@ -574,6 +601,29 @@ describe("CircuitBreakerService", () => {
     expect(sharedState.state).toBe("open");
     expect(sharedState.retryAfterMs).toBeGreaterThan(0);
     vi.useRealTimers();
+  });
+});
+
+describe("AbuseMonitor", () => {
+  it("shares auth abuse blocks across monitor instances when backed by Redis", async () => {
+    const redis = createCircuitBreakerRedisMock();
+    const monitorA = new AbuseMonitor({
+      auth: { threshold: 2, windowMs: 60_000, blockMs: 120_000 },
+    }, redis as any);
+    const monitorB = new AbuseMonitor({
+      auth: { threshold: 2, windowMs: 60_000, blockMs: 120_000 },
+    }, redis as any);
+
+    await monitorA.recordAuthFailure("127.0.0.1", "invalid_api_key");
+    expect((await monitorB.checkBlock("auth", "127.0.0.1")).blocked).toBe(false);
+
+    await monitorA.recordAuthFailure("127.0.0.1", "invalid_api_key");
+    const blocked = await monitorB.checkBlock("auth", "127.0.0.1");
+    expect(blocked.blocked).toBe(true);
+    expect(blocked.retryAfterMs).toBeGreaterThan(0);
+
+    monitorA.destroy();
+    monitorB.destroy();
   });
 });
 

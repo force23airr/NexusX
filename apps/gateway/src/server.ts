@@ -22,6 +22,7 @@ import { CredentialService } from "./services/credentialService";
 import { PriceWebSocketServer } from "./services/priceWebSocket";
 import { ReliabilityAggregator } from "./services/reliability-aggregator";
 import { CircuitBreakerService } from "./services/circuitBreaker";
+import { AbuseMonitor } from "./services/abuseMonitor";
 import { createProxyRoute, extractListingSlug } from "./routes/proxy";
 import { createBundleSessionRoutes } from "./routes/bundle-sessions";
 import { createHealthRoutes } from "./routes/health";
@@ -159,6 +160,18 @@ export function createGatewayApp(
     ? new ReliabilityAggregator(deps.redis)
     : undefined;
   const credentialService = new CredentialService();
+  const abuseMonitor = new AbuseMonitor({
+    auth: {
+      threshold: cfg.authAbuseThreshold,
+      windowMs: cfg.authAbuseWindowMs,
+      blockMs: cfg.authAbuseBlockMs,
+    },
+    payment: {
+      threshold: cfg.paymentAbuseThreshold,
+      windowMs: cfg.paymentAbuseWindowMs,
+      blockMs: cfg.paymentAbuseBlockMs,
+    },
+  }, deps.redis);
   const circuitBreaker = new CircuitBreakerService({
     enabled: cfg.circuitBreakerEnabled,
     failureThreshold: cfg.circuitBreakerFailureThreshold,
@@ -200,7 +213,7 @@ export function createGatewayApp(
   }
 
   // ─── Auth + payment middleware ───
-  const authMiddleware = createAuthMiddleware(deps.lookupApiKey, deps.touchApiKey);
+  const authMiddleware = createAuthMiddleware(deps.lookupApiKey, deps.touchApiKey, abuseMonitor);
 
   // Bundle session lifecycle endpoints (API key auth).
   if (deps.registerBundleSession && deps.lookupBundleSession && deps.finalizeBundleSession) {
@@ -254,6 +267,7 @@ export function createGatewayApp(
       emitSignal: deps.emitDemandSignal,
       gatewayConfig: cfg,
       redis: deps.redis,
+      abuseMonitor,
     });
 
     app.use(
@@ -293,6 +307,7 @@ export function createGatewayApp(
   // ─── Cleanup function ───
   function cleanup(): void {
     rateLimiter.destroy();
+    abuseMonitor.destroy();
     routeResolver.destroy();
     console.log("[Gateway] Cleaned up resources.");
   }

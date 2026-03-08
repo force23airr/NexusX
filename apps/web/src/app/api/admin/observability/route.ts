@@ -3,10 +3,13 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/auth";
 import { getServerRedis } from "@/lib/serverRedis";
 import {
+  ABUSE_BLOCK_STATE_HASH_KEY,
   CIRCUIT_BREAKER_STATE_HASH_KEY,
   GATEWAY_LISTING_DEGRADATION_VERSION_KEY,
   GATEWAY_PRICING_VERSION_KEY,
   GATEWAY_ROUTE_VERSION_KEY,
+  parseAbuseBlockState,
+  summarizeAbuseBlockStates,
   getControlPlaneVersionMap,
   getPlatformObservabilitySnapshot,
   parseSharedCircuitState,
@@ -21,6 +24,7 @@ function parseWindowHours(value: string | null): number {
 
 type CircuitBreakerBackend = "redis" | "unavailable" | "error";
 type RateLimitBackend = "shared_redis" | "local_fallback" | "error";
+type AbuseBackend = "redis" | "unavailable" | "error";
 
 export async function GET(req: NextRequest) {
   const user = await getCurrentUser();
@@ -68,10 +72,25 @@ export async function GET(req: NextRequest) {
     message: "Redis is unavailable. Gateway instances may fall back to local rate limiting.",
   };
 
+  let abuseProtection: {
+    backend: AbuseBackend;
+    totalTracked: number;
+    totalAuthBlocks: number;
+    totalPaymentBlocks: number;
+    items: ReturnType<typeof summarizeAbuseBlockStates>["items"];
+  } = {
+    backend: "unavailable",
+    totalTracked: 0,
+    totalAuthBlocks: 0,
+    totalPaymentBlocks: 0,
+    items: [],
+  };
+
   if (redis) {
     try {
-      const [rawStates] = await Promise.all([
+      const [rawStates, rawAbuseStates] = await Promise.all([
         redis.hgetall(CIRCUIT_BREAKER_STATE_HASH_KEY),
+        redis.hgetall(ABUSE_BLOCK_STATE_HASH_KEY),
         redis.ping(),
       ]);
       const parsedStates = Object.fromEntries(
@@ -79,10 +98,19 @@ export async function GET(req: NextRequest) {
           .map(([slug, raw]) => [slug, parseSharedCircuitState(raw)])
           .filter((entry): entry is [string, NonNullable<ReturnType<typeof parseSharedCircuitState>>] => Boolean(entry[1])),
       );
+      const parsedAbuseStates = Object.fromEntries(
+        Object.entries(rawAbuseStates)
+          .map(([field, raw]) => [field, parseAbuseBlockState(raw)])
+          .filter((entry): entry is [string, NonNullable<ReturnType<typeof parseAbuseBlockState>>] => Boolean(entry[1])),
+      );
 
       circuitBreakers = {
         backend: "redis",
         ...summarizeSharedCircuitStates(parsedStates),
+      };
+      abuseProtection = {
+        backend: "redis",
+        ...summarizeAbuseBlockStates(parsedAbuseStates),
       };
       rateLimiting = {
         backend: "shared_redis",
@@ -95,6 +123,13 @@ export async function GET(req: NextRequest) {
         totalTracked: 0,
         totalOpen: 0,
         totalHalfOpen: 0,
+        items: [],
+      };
+      abuseProtection = {
+        backend: "error",
+        totalTracked: 0,
+        totalAuthBlocks: 0,
+        totalPaymentBlocks: 0,
         items: [],
       };
       rateLimiting = {
@@ -114,5 +149,6 @@ export async function GET(req: NextRequest) {
     },
     circuitBreakers,
     rateLimiting,
+    abuseProtection,
   });
 }

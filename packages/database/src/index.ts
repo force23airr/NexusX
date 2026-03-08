@@ -95,6 +95,19 @@ export {
 } from "./api-key-utils";
 
 export {
+  ABUSE_BLOCK_STATE_HASH_KEY,
+  isAbuseBlockExpired,
+  parseAbuseBlockState,
+  serializeAbuseBlockState,
+  summarizeAbuseBlockStates,
+  type AbuseBlockScope,
+  type AbuseBlockReason,
+  type AbuseBlockState,
+  type AbuseBlockSnapshot,
+  type AbuseBlockSummary,
+} from "./abuse-state";
+
+export {
   CIRCUIT_BREAKER_STATE_HASH_KEY,
   CIRCUIT_BREAKER_PROBE_PREFIX,
   DEFAULT_MANUAL_BREAKER_COOLDOWN_MS,

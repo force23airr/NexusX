@@ -581,6 +581,12 @@ startGateway(deps, {
   circuitBreakerEnabled: process.env.CIRCUIT_BREAKER_ENABLED !== "false",
   circuitBreakerFailureThreshold: parseInt(process.env.CIRCUIT_BREAKER_FAILURE_THRESHOLD || "5", 10),
   circuitBreakerCooldownMs: parseInt(process.env.CIRCUIT_BREAKER_COOLDOWN_MS || "30000", 10),
+  authAbuseThreshold: parseInt(process.env.AUTH_ABUSE_THRESHOLD || "12", 10),
+  authAbuseWindowMs: parseInt(process.env.AUTH_ABUSE_WINDOW_MS || "300000", 10),
+  authAbuseBlockMs: parseInt(process.env.AUTH_ABUSE_BLOCK_MS || "900000", 10),
+  paymentAbuseThreshold: parseInt(process.env.PAYMENT_ABUSE_THRESHOLD || "4", 10),
+  paymentAbuseWindowMs: parseInt(process.env.PAYMENT_ABUSE_WINDOW_MS || "600000", 10),
+  paymentAbuseBlockMs: parseInt(process.env.PAYMENT_ABUSE_BLOCK_MS || "1800000", 10),
 }, priceWs);
 
 async function loadFinalizedResult(

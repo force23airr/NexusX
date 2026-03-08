@@ -11,6 +11,7 @@ import { randomUUID, randomBytes } from "crypto";
 import type { Request, Response, NextFunction } from "express";
 import { extractApiKeyPrefix, hashApiKey, isValidApiKeyFormat, verifyApiKeyHash } from "@nexusx/database";
 import type { RequestContext } from "../types";
+import type { AbuseMonitor } from "../services/abuseMonitor";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -48,7 +49,8 @@ export type ApiKeyTouchFn = (keyId: string) => Promise<void>;
  */
 export function createAuthMiddleware(
   lookupKey: ApiKeyLookupFn,
-  touchKey: ApiKeyTouchFn
+  touchKey: ApiKeyTouchFn,
+  abuseMonitor?: AbuseMonitor,
 ) {
   return async function authMiddleware(
     req: Request,
@@ -56,6 +58,21 @@ export function createAuthMiddleware(
     next: NextFunction
   ): Promise<void> {
     const requestId = randomUUID();
+    const clientIdentity = getClientIdentity(req);
+
+    if (abuseMonitor) {
+      const blockState = await abuseMonitor.checkBlock("auth", clientIdentity);
+      if (blockState.blocked) {
+        res.setHeader("Retry-After", Math.ceil(blockState.retryAfterMs / 1000).toString());
+        res.status(429).json({
+          error: "AUTH_TEMPORARILY_BLOCKED",
+          message: "Too many invalid authentication attempts from this client.",
+          requestId,
+          retryAfterMs: blockState.retryAfterMs,
+        });
+        return;
+      }
+    }
 
     // ─── Extract API key ───
     const authHeader = req.headers["authorization"];
@@ -80,6 +97,7 @@ export function createAuthMiddleware(
 
     // ─── Extract prefix (first 8 chars) for lookup ───
     if (!isValidApiKeyFormat(rawKey)) {
+      void abuseMonitor?.recordAuthFailure(clientIdentity, "invalid_api_key");
       res.status(401).json({
         error: "INVALID_KEY",
         message: "Malformed API key.",
@@ -90,6 +108,7 @@ export function createAuthMiddleware(
 
     const prefix = extractApiKeyPrefix(rawKey);
     if (!prefix) {
+      void abuseMonitor?.recordAuthFailure(clientIdentity, "invalid_api_key");
       res.status(401).json({
         error: "INVALID_KEY",
         message: "Malformed API key.",
@@ -113,6 +132,7 @@ export function createAuthMiddleware(
     }
 
     if (!record) {
+      void abuseMonitor?.recordAuthFailure(clientIdentity, "invalid_api_key");
       res.status(401).json({
         error: "INVALID_KEY",
         message: "API key not recognized.",
@@ -123,6 +143,7 @@ export function createAuthMiddleware(
 
     // ─── Verify full hash (timing-safe) ───
     if (!verifyApiKeyHash(rawKey, record.keyHash)) {
+      void abuseMonitor?.recordAuthFailure(clientIdentity, "invalid_api_key");
       res.status(401).json({
         error: "INVALID_KEY",
         message: "API key not recognized.",
@@ -156,6 +177,7 @@ export function createAuthMiddleware(
       const clientIp = req.ip || req.socket.remoteAddress || "";
 
       if (!record.allowedIps.includes(clientIp)) {
+        void abuseMonitor?.recordAuthFailure(clientIdentity, "ip_restricted");
         res.status(403).json({
           error: "IP_RESTRICTED",
           message: "Request from unauthorized IP address.",
@@ -185,6 +207,11 @@ export function createAuthMiddleware(
 
     next();
   };
+}
+
+function getClientIdentity(req: Request): string {
+  const candidate = req.ip || req.socket.remoteAddress || "unknown";
+  return candidate.trim() || "unknown";
 }
 
 /**

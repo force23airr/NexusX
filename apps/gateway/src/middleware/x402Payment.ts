@@ -21,6 +21,7 @@ import type { RouteResolver } from "../services/routeResolver";
 import { X402Adapter } from "../services/x402Adapter";
 import type { RequestContext, DemandSignalEvent, GatewayConfig } from "../types";
 import type Redis from "ioredis";
+import type { AbuseMonitor } from "../services/abuseMonitor";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -31,6 +32,7 @@ export interface X402MiddlewareConfig {
   emitSignal: (signal: DemandSignalEvent) => void;
   gatewayConfig: GatewayConfig;
   redis?: Redis;
+  abuseMonitor?: AbuseMonitor;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -45,7 +47,7 @@ export interface X402MiddlewareConfig {
  * current auction price as the payment requirement.
  */
 export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
-  const { routeResolver, emitSignal, gatewayConfig, redis } = config;
+  const { routeResolver, emitSignal, gatewayConfig, redis, abuseMonitor } = config;
 
   const adapter = new X402Adapter({
     facilitatorUrl: gatewayConfig.x402FacilitatorUrl,
@@ -76,6 +78,7 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
     }
 
     const requestId = randomUUID();
+    const clientIdentity = getClientIdentity(req);
 
     // ─── Skip if x402 is disabled ───
     if (!gatewayConfig.x402Enabled) {
@@ -122,6 +125,27 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
         requestId,
       });
       return;
+    }
+
+    if (abuseMonitor) {
+      const blockState = await abuseMonitor.checkBlock("payment", clientIdentity);
+      if (blockState.blocked) {
+        setGatewayFailureHeaders({
+          requestId,
+          listingSlug,
+          failureClass: "payment_abuse_blocked",
+          retryable: true,
+          billingDecision: "not_charged",
+        });
+        res.setHeader("Retry-After", Math.ceil(blockState.retryAfterMs / 1000).toString());
+        res.status(429).json({
+          error: "PAYMENT_ABUSE_BLOCKED",
+          message: "Too many invalid or replayed payment attempts from this client.",
+          requestId,
+          retryAfterMs: blockState.retryAfterMs,
+        });
+        return;
+      }
     }
 
     // ─── Resolve listing route (get current auction price) ───
@@ -222,6 +246,7 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
         const dedupKey = `nexusx:x402:seen:${paymentHash}`;
         const wasNew = await redis.set(dedupKey, requestId, "EX", 300, "NX");
         if (!wasNew) {
+          void abuseMonitor?.recordPaymentAbuse(clientIdentity, "payment_replay", listingSlug);
           setGatewayFailureHeaders({
             requestId,
             listingSlug,
@@ -246,6 +271,7 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
     const verifyResult = await adapter.verifyPayment(paymentHeader, requirement);
 
     if (!verifyResult.valid) {
+      void abuseMonitor?.recordPaymentAbuse(clientIdentity, "payment_invalid", listingSlug);
       setGatewayFailureHeaders({
         requestId,
         listingSlug,
@@ -289,4 +315,9 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
 
     next();
   };
+}
+
+function getClientIdentity(req: Request): string {
+  const candidate = req.ip || req.socket.remoteAddress || "unknown";
+  return candidate.trim() || "unknown";
 }

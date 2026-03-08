@@ -297,6 +297,18 @@ export interface GatewayConfig {
   circuitBreakerFailureThreshold: number;
   /** Cooldown period before allowing a half-open probe request. */
   circuitBreakerCooldownMs: number;
+  /** Auth failures from one client before temporary shared blocking. */
+  authAbuseThreshold: number;
+  /** Auth abuse rolling window in milliseconds. */
+  authAbuseWindowMs: number;
+  /** Auth abuse block duration in milliseconds. */
+  authAbuseBlockMs: number;
+  /** Payment abuse events from one client before temporary shared blocking. */
+  paymentAbuseThreshold: number;
+  /** Payment abuse rolling window in milliseconds. */
+  paymentAbuseWindowMs: number;
+  /** Payment abuse block duration in milliseconds. */
+  paymentAbuseBlockMs: number;
 }
 
 export const DEFAULT_GATEWAY_CONFIG: GatewayConfig = {
@@ -317,4 +329,10 @@ export const DEFAULT_GATEWAY_CONFIG: GatewayConfig = {
   circuitBreakerEnabled: true,
   circuitBreakerFailureThreshold: 5,
   circuitBreakerCooldownMs: 30_000,
+  authAbuseThreshold: 12,
+  authAbuseWindowMs: 5 * 60 * 1000,
+  authAbuseBlockMs: 15 * 60 * 1000,
+  paymentAbuseThreshold: 4,
+  paymentAbuseWindowMs: 10 * 60 * 1000,
+  paymentAbuseBlockMs: 30 * 60 * 1000,
 };

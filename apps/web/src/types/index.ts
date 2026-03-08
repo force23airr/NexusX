@@ -267,6 +267,31 @@ export interface ThrottleObservability {
   topBuyers: ThrottledBuyer[];
 }
 
+export interface AbuseBlockSnapshot {
+  scope: "auth" | "payment";
+  subjectKey: string;
+  reason: "invalid_api_key" | "ip_restricted" | "payment_replay" | "payment_invalid";
+  listingSlug: string | null;
+  triggerCount: number;
+  retryAfterMs: number;
+  blockedUntil: string;
+  updatedAt: string;
+}
+
+export interface AbuseProtectionSnapshot {
+  backend: "redis" | "unavailable" | "error";
+  totalTracked: number;
+  totalAuthBlocks: number;
+  totalPaymentBlocks: number;
+  items: AbuseBlockSnapshot[];
+}
+
+export interface RateLimitingHealthSnapshot {
+  backend: "shared_redis" | "local_fallback" | "error";
+  status: "ok" | "warn" | "critical";
+  message: string;
+}
+
 export interface PipelineHealth {
   status: "ok" | "warn" | "critical";
   pendingCount: number;
@@ -283,6 +308,8 @@ export interface PlatformObservability {
   settlement: PipelineHealth;
   discovery: DiscoveryObservability;
   throttling: ThrottleObservability;
+  rateLimiting?: RateLimitingHealthSnapshot;
+  abuseProtection?: AbuseProtectionSnapshot;
 }
 
 export interface ProviderObservability {

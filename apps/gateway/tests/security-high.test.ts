@@ -107,6 +107,7 @@ function createMockDeps(overrides?: Partial<GatewayDependencies>): {
 
 function createMockRedis() {
   const store = new Map<string, { value: string; expiresAt: number }>();
+  const hashStore = new Map<string, Map<string, string>>();
 
   return {
     store,
@@ -114,29 +115,76 @@ function createMockRedis() {
       async (
         key: string,
         value: string,
-        exFlag?: string,
+        ttlFlag?: string,
         ttl?: number,
         nxFlag?: string
       ) => {
-        // SET key value EX ttl NX
-        if (exFlag === "EX" && nxFlag === "NX") {
+        if ((ttlFlag === "EX" || ttlFlag === "PX") && nxFlag === "NX") {
           const existing = store.get(key);
           if (existing && existing.expiresAt > Date.now()) {
             return null; // Key already exists — NX fails.
           }
           store.set(key, {
             value,
-            expiresAt: Date.now() + (ttl ?? 300) * 1000,
+            expiresAt: Date.now() + (ttlFlag === "PX" ? (ttl ?? 300_000) : (ttl ?? 300) * 1000),
           });
+          return "OK";
+        }
+        if (ttlFlag === "PX") {
+          store.set(key, { value, expiresAt: Date.now() + (ttl ?? 300_000) });
           return "OK";
         }
         store.set(key, { value, expiresAt: Infinity });
         return "OK";
       }
     ),
-    // Unused stubs so ioredis type checks pass.
-    get: vi.fn(async () => null),
-    del: vi.fn(async () => 0),
+    get: vi.fn(async (key: string) => {
+      const entry = store.get(key);
+      if (!entry || entry.expiresAt <= Date.now()) {
+        store.delete(key);
+        return null;
+      }
+      return entry.value;
+    }),
+    incr: vi.fn(async (key: string) => {
+      const entry = store.get(key);
+      const nextValue = (entry ? Number(entry.value) : 0) + 1;
+      store.set(key, {
+        value: String(nextValue),
+        expiresAt: entry?.expiresAt ?? Date.now() + 60_000,
+      });
+      return nextValue;
+    }),
+    pexpire: vi.fn(async (key: string, ttlMs: number) => {
+      const entry = store.get(key);
+      if (!entry) return 0;
+      store.set(key, {
+        value: entry.value,
+        expiresAt: Date.now() + ttlMs,
+      });
+      return 1;
+    }),
+    pttl: vi.fn(async (key: string) => {
+      const entry = store.get(key);
+      if (!entry || entry.expiresAt <= Date.now()) {
+        store.delete(key);
+        return -2;
+      }
+      return Math.max(0, entry.expiresAt - Date.now());
+    }),
+    hset: vi.fn(async (key: string, field: string, value: string) => {
+      const bucket = hashStore.get(key) ?? new Map<string, string>();
+      bucket.set(field, value);
+      hashStore.set(key, bucket);
+      return 1;
+    }),
+    del: vi.fn(async (...keys: string[]) => {
+      let count = 0;
+      for (const key of keys) {
+        if (store.delete(key)) count += 1;
+      }
+      return count;
+    }),
     quit: vi.fn(async () => "OK"),
     disconnect: vi.fn(),
     status: "ready" as const,
