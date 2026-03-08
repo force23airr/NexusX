@@ -184,6 +184,7 @@ export interface ProviderAnalytics {
   qualityScore: number;
   priceHistory: { timestamp: string; price: number }[];
   callVolume: { timestamp: string; calls: number }[];
+  regionalLatency?: RegionalLatencySnapshot[];
   observability?: DiscoveryObservability;
   trust?: {
     listing: ListingTrustSnapshot;
@@ -241,6 +242,15 @@ export interface DiscoveryObservability {
   x402SettledExecutions: number;
   x402PendingExecutions: number;
   lastAcceptedAt: string | null;
+}
+
+export interface RegionalLatencySnapshot {
+  region: string;
+  executionCount: number;
+  successCount: number;
+  successRate: number;
+  avgLatencyMs: number | null;
+  lastSeenAt: string | null;
 }
 
 export interface ThrottledListing {

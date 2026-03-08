@@ -84,6 +84,15 @@ export async function POST(req: NextRequest) {
   const imported: { id: string; slug: string; name: string }[] = [];
   const skipped: { name: string; reason: string }[] = [];
 
+  const toUniqueUpper = (values?: string[]) =>
+    Array.from(
+      new Set(
+        (values || [])
+          .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+          .map((value) => value.trim().toUpperCase()),
+      ),
+    );
+
   for (const cap of manifest.capabilities) {
     // Resolve category
     const categoryId = categoryMap.get(cap.category) ?? fallbackCategory?.id;
@@ -109,6 +118,9 @@ export async function POST(req: NextRequest) {
       const capabilityTags = Array.from(
         new Set([...(cap.capabilityTags || []), ...(cap.tags || []), ...cap.intents]),
       );
+      const latencyRegions = toUniqueUpper(cap.latencyRegions);
+      const routingRegions = toUniqueUpper(cap.routingRegions);
+      const edgeRegions = toUniqueUpper(cap.edgeRegions);
       const listingData = await extractListingWriteData({
         name: cap.name,
         description: cap.description,
@@ -133,6 +145,15 @@ export async function POST(req: NextRequest) {
           manifestProvider: manifest.provider.name,
           manifestVersion: manifest.version,
           endpoint: cap.endpoint ?? null,
+          ...(latencyRegions.length > 0 || routingRegions.length > 0 || edgeRegions.length > 0
+            ? {
+                nexusxRouting: {
+                  ...(latencyRegions.length > 0 ? { latencyRegions } : {}),
+                  ...(routingRegions.length > 0 ? { routingRegions } : {}),
+                  ...(edgeRegions.length > 0 ? { edgeRegions } : {}),
+                },
+              }
+            : {}),
         },
         sampleRequest: cap.sampleRequest ? JSON.parse(JSON.stringify(cap.sampleRequest)) : undefined,
         sampleResponse: cap.sampleResponse ? JSON.parse(JSON.stringify(cap.sampleResponse)) : undefined,

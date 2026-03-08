@@ -19,6 +19,10 @@ export interface RequestContext {
   requestId: string;
   /** Timestamp when the request entered the gateway. */
   receivedAt: number;
+  /** ISO country code inferred from trusted ingress headers, if available. */
+  callerCountry?: string | null;
+  /** Macro region bucket inferred from callerCountry, if available. */
+  callerRegionBucket?: string | null;
   /** Auth mode used for this request. */
   authMode?: "api_key" | "x402";
   /** Whether this request is in validated sandbox mode (set by middleware, not from raw header). */
@@ -103,6 +107,8 @@ export interface ExecutionReceiptRecord {
   listingSlug: string;
   buyerId?: string | null;
   payerAddress?: string | null;
+  callerCountry?: string | null;
+  callerRegionBucket?: string | null;
   authMode: "API_KEY" | "X402";
   billingMode: "INDIVIDUAL" | "BUNDLE_STEP";
   outcome: ExecutionReceiptOutcome;

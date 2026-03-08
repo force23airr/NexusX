@@ -657,6 +657,8 @@ model ExecutionReceipt {
   listingSlug      String                   @map("listing_slug")
   buyerId          String?                  @map("buyer_id") @db.Uuid
   payerAddress     String?                  @map("payer_address")
+  callerCountry    String?                  @map("caller_country")
+  callerRegionBucket String?                @map("caller_region_bucket")
   authMode         ExecutionAuthMode        @map("auth_mode")
   billingMode      TransactionBillingMode   @default(INDIVIDUAL) @map("billing_mode")
   outcome          ExecutionReceiptOutcome
@@ -682,6 +684,8 @@ model ExecutionReceipt {
   updatedAt        DateTime                 @updatedAt @map("updated_at")
 
   @@index([listingId, createdAt])
+  @@index([listingId, callerRegionBucket, createdAt])
+  @@index([listingId, callerCountry, createdAt])
   @@index([buyerId, createdAt])
   @@index([queryLogId])
   @@index([outcome, createdAt])

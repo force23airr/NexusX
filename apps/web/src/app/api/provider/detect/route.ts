@@ -128,6 +128,75 @@ function unique(values: Array<string | undefined | null>): string[] {
   );
 }
 
+function uniqueUpper(values: Array<string | undefined | null>): string[] {
+  return Array.from(
+    new Set(
+      values
+        .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+        .map((value) => value.trim().toUpperCase()),
+    ),
+  );
+}
+
+function buildRoutingMetadata(input: {
+  base?: Record<string, unknown>;
+  latencyRegions?: string[];
+  routingRegions?: string[];
+  edgeRegions?: string[];
+}): Record<string, unknown> | undefined {
+  const base = { ...(input.base || {}) };
+  const latencyRegions = uniqueUpper(input.latencyRegions || []);
+  const routingRegions = uniqueUpper(input.routingRegions || []);
+  const edgeRegions = uniqueUpper(input.edgeRegions || []);
+
+  if (latencyRegions.length === 0 && routingRegions.length === 0 && edgeRegions.length === 0) {
+    return Object.keys(base).length > 0 ? base : undefined;
+  }
+
+  const existingRouting =
+    typeof base.nexusxRouting === "object" && base.nexusxRouting && !Array.isArray(base.nexusxRouting)
+      ? (base.nexusxRouting as Record<string, unknown>)
+      : {};
+
+  base.nexusxRouting = {
+    ...existingRouting,
+    ...(latencyRegions.length > 0 ? { latencyRegions } : {}),
+    ...(routingRegions.length > 0 ? { routingRegions } : {}),
+    ...(edgeRegions.length > 0 ? { edgeRegions } : {}),
+  };
+
+  return base;
+}
+
+function readExtensionStringArray(source: Record<string, unknown>, key: string): string[] {
+  const value = source[key];
+  if (!Array.isArray(value)) return [];
+  return uniqueUpper(value.filter((entry): entry is string => typeof entry === "string"));
+}
+
+function extractSpecRoutingMetadata(spec: Record<string, unknown>): {
+  latencyRegions: string[];
+  routingRegions: string[];
+  edgeRegions: string[];
+} {
+  const rootLatency = readExtensionStringArray(spec, "x-nexusx-latency-regions");
+  const rootRouting = readExtensionStringArray(spec, "x-nexusx-routing-regions");
+  const rootEdge = readExtensionStringArray(spec, "x-nexusx-edge-regions");
+  const servers = Array.isArray(spec.servers) ? spec.servers : [];
+  const serverRecords = servers.filter(
+    (entry): entry is Record<string, unknown> => typeof entry === "object" && entry !== null && !Array.isArray(entry),
+  );
+  const serverLatency = serverRecords.flatMap((server) => readExtensionStringArray(server, "x-nexusx-latency-regions"));
+  const serverRouting = serverRecords.flatMap((server) => readExtensionStringArray(server, "x-nexusx-routing-regions"));
+  const serverEdge = serverRecords.flatMap((server) => readExtensionStringArray(server, "x-nexusx-edge-regions"));
+
+  return {
+    latencyRegions: uniqueUpper([...rootLatency, ...serverLatency]),
+    routingRegions: uniqueUpper([...rootRouting, ...serverRouting]),
+    edgeRegions: uniqueUpper([...rootEdge, ...serverEdge]),
+  };
+}
+
 // ─── Synthesize a marketplace description from spec info ───
 
 function synthesizeDescription(
@@ -222,6 +291,17 @@ function extractFromManifest(
     );
   }
 
+  const domainMetadata = buildRoutingMetadata({
+    base: {
+      ...(cap.domainMetadata || {}),
+      manifestSourceUrl: sourceUrl,
+      manifestCapabilityCount: totalCapabilities,
+    },
+    latencyRegions: cap.latencyRegions,
+    routingRegions: cap.routingRegions,
+    edgeRegions: cap.edgeRegions,
+  });
+
   return {
     detected: true,
     name: cap.name,
@@ -243,11 +323,7 @@ function extractFromManifest(
     capabilityTags: cap.capabilityTags || unique([...(cap.tags || []), ...cap.intents]),
     inputModalities: cap.inputModalities || [],
     outputModalities: cap.outputModalities || [],
-    domainMetadata: {
-      ...(cap.domainMetadata || {}),
-      manifestSourceUrl: sourceUrl,
-      manifestCapabilityCount: totalCapabilities,
-    },
+    domainMetadata,
     healthCheckStatus: null as { ok: boolean; latencyMs: number } | null,
     warnings,
   };
@@ -378,6 +454,7 @@ function extractFromSpec(spec: Record<string, unknown>, sourceUrl: string): Dete
   const tags = inferTags(spec, endpoints);
   const description = synthesizeDescription(rawDescription, name, endpoints);
   const capabilityTags = unique([...tags, ...endpoints.flatMap((endpoint) => endpoint.tags)]);
+  const routingMetadata = extractSpecRoutingMetadata(spec);
   const modalities = inferModalities({
     spec,
     endpoints,
@@ -408,13 +485,18 @@ function extractFromSpec(spec: Record<string, unknown>, sourceUrl: string): Dete
     capabilityTags,
     inputModalities: modalities.inputModalities,
     outputModalities: modalities.outputModalities,
-    domainMetadata: {
-      detection: {
-        source: "openapi",
-        endpointCount: endpoints.length,
-        inferredFromSpec: true,
+    domainMetadata: buildRoutingMetadata({
+      base: {
+        detection: {
+          source: "openapi",
+          endpointCount: endpoints.length,
+          inferredFromSpec: true,
+        },
       },
-    },
+      latencyRegions: routingMetadata.latencyRegions,
+      routingRegions: routingMetadata.routingRegions,
+      edgeRegions: routingMetadata.edgeRegions,
+    }),
     healthCheckStatus: null as { ok: boolean; latencyMs: number } | null,
     warnings: [] as string[],
   };

@@ -14,6 +14,8 @@ export interface ExecutionReceiptRecord {
   listingSlug: string;
   buyerId?: string | null;
   payerAddress?: string | null;
+  callerCountry?: string | null;
+  callerRegionBucket?: string | null;
   authMode: ExecutionAuthMode;
   billingMode: TransactionBillingMode;
   outcome: ExecutionReceiptOutcome;
@@ -93,6 +95,8 @@ export async function persistExecutionReceipt(
       listingSlug: record.listingSlug,
       buyerId: record.buyerId ?? null,
       payerAddress: record.payerAddress ?? null,
+      callerCountry: sanitizeNullableString(record.callerCountry, 8),
+      callerRegionBucket: sanitizeNullableString(record.callerRegionBucket, 32),
       authMode: record.authMode,
       billingMode: record.billingMode,
       outcome: record.outcome,
@@ -121,6 +125,8 @@ export async function persistExecutionReceipt(
       listingSlug: record.listingSlug,
       buyerId: record.buyerId ?? null,
       payerAddress: record.payerAddress ?? null,
+      callerCountry: sanitizeNullableString(record.callerCountry, 8),
+      callerRegionBucket: sanitizeNullableString(record.callerRegionBucket, 32),
       authMode: record.authMode,
       billingMode: record.billingMode,
       outcome: record.outcome,

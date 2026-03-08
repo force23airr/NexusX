@@ -68,6 +68,15 @@ export interface ProviderObservabilitySnapshot {
   discovery: DiscoveryConversionSnapshot;
 }
 
+export interface RegionalLatencySnapshot {
+  region: string;
+  executionCount: number;
+  successCount: number;
+  successRate: number;
+  avgLatencyMs: number | null;
+  lastSeenAt: string | null;
+}
+
 export interface TrustPenaltyBreakdown {
   successPenalty: number;
   upstreamFailurePenalty: number;
@@ -126,6 +135,36 @@ function mapGroupCount<T extends { listingId: string | null; _count: { _all: num
     rows
       .filter((row): row is T & { listingId: string } => typeof row.listingId === "string")
       .map((row) => [row.listingId, row._count._all]),
+  );
+}
+
+function mapNullableStringCount<T extends { callerRegionBucket: string | null; _count: { _all: number } }>(
+  rows: T[],
+): Map<string, number> {
+  return new Map(
+    rows
+      .filter((row): row is T & { callerRegionBucket: string } => typeof row.callerRegionBucket === "string" && row.callerRegionBucket.length > 0)
+      .map((row) => [row.callerRegionBucket, row._count._all]),
+  );
+}
+
+function mapNullableStringAverage<T extends { callerRegionBucket: string | null; _avg: { latencyMs: number | null } }>(
+  rows: T[],
+): Map<string, number | null> {
+  return new Map(
+    rows
+      .filter((row): row is T & { callerRegionBucket: string } => typeof row.callerRegionBucket === "string" && row.callerRegionBucket.length > 0)
+      .map((row) => [row.callerRegionBucket, row._avg.latencyMs]),
+  );
+}
+
+function mapNullableStringTimestamp<T extends { callerRegionBucket: string | null; _max: { createdAt: Date | null } }>(
+  rows: T[],
+): Map<string, Date | null> {
+  return new Map(
+    rows
+      .filter((row): row is T & { callerRegionBucket: string } => typeof row.callerRegionBucket === "string" && row.callerRegionBucket.length > 0)
+      .map((row) => [row.callerRegionBucket, row._max.createdAt ?? null]),
   );
 }
 
@@ -770,6 +809,76 @@ export async function getProviderObservabilitySnapshot(
       lastAcceptedAt: lastAccepted?.selectedAt?.toISOString() ?? null,
     },
   };
+}
+
+export async function getListingRegionalLatencySnapshot(
+  prisma: PrismaClient,
+  input: {
+    listingId: string;
+    windowHours?: number;
+  },
+): Promise<RegionalLatencySnapshot[]> {
+  const windowHours = input.windowHours ?? 24 * 7;
+  const since = new Date(Date.now() - windowHours * 60 * 60 * 1000);
+  const where: Prisma.ExecutionReceiptWhereInput = {
+    listingId: input.listingId,
+    createdAt: { gte: since },
+    sandbox: false,
+    callerRegionBucket: { not: null },
+    outcome: { in: ["SUCCESS", "FAILED"] },
+  };
+
+  const [totals, successes, averages, lastSeen] = await Promise.all([
+    prisma.executionReceipt.groupBy({
+      by: ["callerRegionBucket"],
+      where,
+      _count: { _all: true },
+    }),
+    prisma.executionReceipt.groupBy({
+      by: ["callerRegionBucket"],
+      where: {
+        ...where,
+        outcome: "SUCCESS",
+      },
+      _count: { _all: true },
+    }),
+    prisma.executionReceipt.groupBy({
+      by: ["callerRegionBucket"],
+      where: {
+        ...where,
+        outcome: "SUCCESS",
+        latencyMs: { not: null },
+      },
+      _avg: { latencyMs: true },
+    }),
+    prisma.executionReceipt.groupBy({
+      by: ["callerRegionBucket"],
+      where,
+      _max: { createdAt: true },
+    }),
+  ]);
+
+  const totalMap = mapNullableStringCount(totals);
+  const successMap = mapNullableStringCount(successes);
+  const averageMap = mapNullableStringAverage(averages);
+  const lastSeenMap = mapNullableStringTimestamp(lastSeen);
+
+  return Array.from(totalMap.entries())
+    .map(([region, executionCount]) => {
+      const successCount = successMap.get(region) ?? 0;
+      return {
+        region,
+        executionCount,
+        successCount,
+        successRate: executionCount > 0 ? successCount / executionCount : 0,
+        avgLatencyMs: averageMap.get(region) ?? null,
+        lastSeenAt: lastSeenMap.get(region)?.toISOString() ?? null,
+      };
+    })
+    .sort((a, b) => {
+      if (b.executionCount !== a.executionCount) return b.executionCount - a.executionCount;
+      return (a.avgLatencyMs ?? Number.MAX_SAFE_INTEGER) - (b.avgLatencyMs ?? Number.MAX_SAFE_INTEGER);
+    });
 }
 
 export async function getListingTrustSnapshots(

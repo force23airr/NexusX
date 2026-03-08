@@ -45,6 +45,9 @@ export interface NexusXManifestCapability {
   capabilityTags?: string[];
   inputModalities?: string[];
   outputModalities?: string[];
+  latencyRegions?: string[];
+  routingRegions?: string[];
+  edgeRegions?: string[];
   domainMetadata?: Record<string, unknown>;
   sampleRequest?: Record<string, unknown>;
   sampleResponse?: Record<string, unknown>;
@@ -127,6 +130,9 @@ export function validateManifest(data: unknown): ValidationResult {
       validateOptionalStringArray(c.capabilityTags, `${prefix}.capabilityTags`, errors);
       validateOptionalStringArray(c.inputModalities, `${prefix}.inputModalities`, errors);
       validateOptionalStringArray(c.outputModalities, `${prefix}.outputModalities`, errors);
+      validateOptionalStringArray(c.latencyRegions, `${prefix}.latencyRegions`, errors);
+      validateOptionalStringArray(c.routingRegions, `${prefix}.routingRegions`, errors);
+      validateOptionalStringArray(c.edgeRegions, `${prefix}.edgeRegions`, errors);
       if (c.domainMetadata !== undefined && (!c.domainMetadata || typeof c.domainMetadata !== "object" || Array.isArray(c.domainMetadata))) {
         errors.push(`${prefix}.domainMetadata must be a JSON object`);
       }

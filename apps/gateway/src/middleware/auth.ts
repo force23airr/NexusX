@@ -12,6 +12,7 @@ import type { Request, Response, NextFunction } from "express";
 import { extractApiKeyPrefix, hashApiKey, isValidApiKeyFormat, verifyApiKeyHash } from "@nexusx/database";
 import type { RequestContext } from "../types";
 import type { AbuseMonitor } from "../services/abuseMonitor";
+import { extractClientRegion } from "../utils/clientRegion";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -188,6 +189,7 @@ export function createAuthMiddleware(
     }
 
     // ─── Attach context ───
+    const clientRegion = extractClientRegion(req);
     const ctx: RequestContext = {
       buyerId: record.userId,
       buyerAddress: record.walletAddress,
@@ -195,6 +197,8 @@ export function createAuthMiddleware(
       rateLimitRpm: record.rateLimitRpm,
       requestId,
       receivedAt: Date.now(),
+      callerCountry: clientRegion.callerCountry,
+      callerRegionBucket: clientRegion.callerRegionBucket,
       authMode: "api_key",
     };
 

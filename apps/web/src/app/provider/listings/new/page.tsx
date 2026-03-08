@@ -6,6 +6,8 @@ import { provider, marketplace } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import McpPreviewPanel from "@/components/provider/McpPreviewPanel";
 import DiscoveryMetadataFields, {
+  buildDiscoveryDomainMetadata,
+  extractRoutingMetadata,
   parseDomainMetadataText,
   stringifyDomainMetadata,
 } from "@/components/provider/DiscoveryMetadataFields";
@@ -89,6 +91,9 @@ interface WizardFormData {
   capabilityTags: string[];
   inputModalities: string[];
   outputModalities: string[];
+  latencyRegions: string[];
+  routingRegions: string[];
+  edgeRegions: string[];
   domainMetadataText: string;
   endpoints: DetectEndpoint[];
   inputSchemaFields: InputSchemaField[];
@@ -126,6 +131,9 @@ const INITIAL_STATE: WizardFormData = {
   capabilityTags: [],
   inputModalities: [],
   outputModalities: [],
+  latencyRegions: [],
+  routingRegions: [],
+  edgeRegions: [],
   domainMetadataText: "",
   endpoints: [],
   inputSchemaFields: [],
@@ -141,6 +149,7 @@ function wizardReducer(state: WizardFormData, action: WizardAction): WizardFormD
       return { ...state, [action.field]: action.value };
     case "SET_DETECTION_RESULT": {
       const r = action.result;
+      const routingMetadata = extractRoutingMetadata(r.domainMetadata);
       let categoryId = state.categoryId;
       if (r.suggestedCategorySlug) {
         const match = action.categories.find((c) => c.slug === r.suggestedCategorySlug);
@@ -185,6 +194,15 @@ function wizardReducer(state: WizardFormData, action: WizardAction): WizardFormD
         outputModalities: r.outputModalities && r.outputModalities.length > 0
           ? Array.from(new Set([...state.outputModalities, ...r.outputModalities]))
           : state.outputModalities,
+        latencyRegions: routingMetadata.latencyRegions.length > 0
+          ? Array.from(new Set([...state.latencyRegions, ...routingMetadata.latencyRegions]))
+          : state.latencyRegions,
+        routingRegions: routingMetadata.routingRegions.length > 0
+          ? Array.from(new Set([...state.routingRegions, ...routingMetadata.routingRegions]))
+          : state.routingRegions,
+        edgeRegions: routingMetadata.edgeRegions.length > 0
+          ? Array.from(new Set([...state.edgeRegions, ...routingMetadata.edgeRegions]))
+          : state.edgeRegions,
         domainMetadataText: state.domainMetadataText || stringifyDomainMetadata(
           r.domainMetadata || {
             detection: {
@@ -538,7 +556,12 @@ export default function CreateListingPage() {
         try { sampleResponse = JSON.parse(form.sampleResponse); }
         catch { /* skip invalid */ }
       }
-      const domainMetadata = parseDomainMetadataText(form.domainMetadataText);
+      const domainMetadata = buildDiscoveryDomainMetadata({
+        domainMetadataText: form.domainMetadataText,
+        latencyRegions: form.latencyRegions,
+        routingRegions: form.routingRegions,
+        edgeRegions: form.edgeRegions,
+      });
 
       await provider.createListing({
         name: form.name,
@@ -906,18 +929,21 @@ export default function CreateListingPage() {
                       <p className="text-2xs text-zinc-500 mb-4">
                         Structured metadata makes your API discoverable to agents by region, capability, compliance, and modality.
                       </p>
-                      <DiscoveryMetadataFields
-                        value={{
-                          tags: form.tags,
-                          intents: form.intents,
-                          availabilityRegions: form.availabilityRegions,
-                          restrictedRegions: form.restrictedRegions,
-                          complianceTags: form.complianceTags,
-                          capabilityTags: form.capabilityTags,
-                          inputModalities: form.inputModalities,
-                          outputModalities: form.outputModalities,
-                          domainMetadataText: form.domainMetadataText,
-                        }}
+                        <DiscoveryMetadataFields
+                          value={{
+                            tags: form.tags,
+                            intents: form.intents,
+                            availabilityRegions: form.availabilityRegions,
+                            restrictedRegions: form.restrictedRegions,
+                            complianceTags: form.complianceTags,
+                            capabilityTags: form.capabilityTags,
+                            inputModalities: form.inputModalities,
+                            outputModalities: form.outputModalities,
+                            latencyRegions: form.latencyRegions,
+                            routingRegions: form.routingRegions,
+                            edgeRegions: form.edgeRegions,
+                            domainMetadataText: form.domainMetadataText,
+                          }}
                         errors={errors}
                         onChange={(field, value) => {
                           setField(field as keyof WizardFormData, value as WizardFormData[keyof WizardFormData]);

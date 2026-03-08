@@ -18,7 +18,8 @@ import type { ListingDetail, ProviderAnalytics, ListingStatus } from "@/types";
 import { ActivationWizard } from "@/components/provider/ActivationWizard";
 import { IntegrationPanel } from "@/components/provider/IntegrationPanel";
 import DiscoveryMetadataFields, {
-  parseDomainMetadataText,
+  buildDiscoveryDomainMetadata,
+  extractRoutingMetadata,
   stringifyDomainMetadata,
 } from "@/components/provider/DiscoveryMetadataFields";
 
@@ -269,6 +270,8 @@ function OverviewTab({
   listing: ListingDetail;
   analytics: ProviderAnalytics | null;
 }) {
+  const routingMetadata = extractRoutingMetadata(listing.domainMetadata);
+  const genericDomainMetadata = stringifyDomainMetadata(listing.domainMetadata);
   return (
     <div className="space-y-6">
       {/* Description */}
@@ -393,6 +396,9 @@ function OverviewTab({
         listing.complianceTags?.length ||
         listing.availabilityRegions?.length ||
         listing.restrictedRegions?.length ||
+        routingMetadata.latencyRegions.length ||
+        routingMetadata.routingRegions.length ||
+        routingMetadata.edgeRegions.length ||
         listing.inputModalities?.length ||
         listing.outputModalities?.length ||
         listing.domainMetadata) && (
@@ -403,16 +409,19 @@ function OverviewTab({
           <MetadataGroup label="Compliance Tags" values={listing.complianceTags ?? []} />
           <MetadataGroup label="Availability Regions" values={listing.availabilityRegions ?? []} emptyLabel="Global" />
           <MetadataGroup label="Restricted Regions" values={listing.restrictedRegions ?? []} />
+          <MetadataGroup label="Latency Regions" values={routingMetadata.latencyRegions} />
+          <MetadataGroup label="Routing Regions" values={routingMetadata.routingRegions} />
+          <MetadataGroup label="Edge Regions" values={routingMetadata.edgeRegions} />
           <MetadataGroup label="Input Modalities" values={listing.inputModalities ?? []} />
           <MetadataGroup label="Output Modalities" values={listing.outputModalities ?? []} />
-          {listing.domainMetadata && (
+          {genericDomainMetadata && (
             <div>
               <p className="text-xs text-zinc-500 mb-1 font-semibold uppercase tracking-wider">
                 Domain Metadata
               </p>
               <pre className="bg-surface-1 border border-surface-4 rounded-lg p-3 overflow-x-auto">
                 <code className="text-xs font-mono text-zinc-300">
-                  {JSON.stringify(listing.domainMetadata, null, 2)}
+                  {genericDomainMetadata}
                 </code>
               </pre>
             </div>
@@ -468,6 +477,7 @@ function SettingsTab({
   onSaved: () => void;
 }) {
   const isEditable = listing.status === "DRAFT" || listing.status === "PAUSED";
+  const routingMetadata = extractRoutingMetadata(listing.domainMetadata);
   const [form, setForm] = useState({
     name: listing.name,
     description: listing.description,
@@ -483,6 +493,9 @@ function SettingsTab({
     capabilityTags: listing.capabilityTags ?? [],
     inputModalities: listing.inputModalities ?? [],
     outputModalities: listing.outputModalities ?? [],
+    latencyRegions: routingMetadata.latencyRegions,
+    routingRegions: routingMetadata.routingRegions,
+    edgeRegions: routingMetadata.edgeRegions,
     domainMetadataText: stringifyDomainMetadata(listing.domainMetadata),
     floorPriceUsdc: listing.floorPriceUsdc.toString(),
     ceilingPriceUsdc: listing.ceilingPriceUsdc?.toString() || "",
@@ -508,7 +521,12 @@ function SettingsTab({
     setSaveMsg(null);
     setFieldErrors({});
     try {
-      const domainMetadata = parseDomainMetadataText(form.domainMetadataText);
+      const domainMetadata = buildDiscoveryDomainMetadata({
+        domainMetadataText: form.domainMetadataText,
+        latencyRegions: form.latencyRegions,
+        routingRegions: form.routingRegions,
+        edgeRegions: form.edgeRegions,
+      });
       await provider.updateListing(listing.id, {
         name: form.name,
         description: form.description,
@@ -633,6 +651,9 @@ function SettingsTab({
             capabilityTags: form.capabilityTags,
             inputModalities: form.inputModalities,
             outputModalities: form.outputModalities,
+            latencyRegions: form.latencyRegions,
+            routingRegions: form.routingRegions,
+            edgeRegions: form.edgeRegions,
             domainMetadataText: form.domainMetadataText,
           }}
           errors={fieldErrors}

@@ -278,7 +278,16 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     queryLogId?: string,
   ): Pick<
     ExecutionReceiptRecord,
-    "requestId" | "queryLogId" | "listingSlug" | "buyerId" | "payerAddress" | "authMode" | "sandbox" | "metadata"
+    | "requestId"
+    | "queryLogId"
+    | "listingSlug"
+    | "buyerId"
+    | "payerAddress"
+    | "callerCountry"
+    | "callerRegionBucket"
+    | "authMode"
+    | "sandbox"
+    | "metadata"
   > {
     return {
       requestId: ctx.requestId,
@@ -286,9 +295,14 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       listingSlug,
       buyerId: ctx.authMode === "api_key" ? ctx.buyerId : null,
       payerAddress: ctx.authMode === "x402" ? ctx.buyerAddress : null,
+      callerCountry: ctx.callerCountry ?? null,
+      callerRegionBucket: ctx.callerRegionBucket ?? null,
       authMode: ctx.authMode === "x402" ? "X402" : "API_KEY",
       sandbox: ctx.isSandbox === true,
-      metadata: {},
+      metadata: {
+        ...(ctx.callerCountry ? { callerCountry: ctx.callerCountry } : {}),
+        ...(ctx.callerRegionBucket ? { callerRegionBucket: ctx.callerRegionBucket } : {}),
+      },
     };
   }
 

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
 import {
+  getListingRegionalLatencySnapshot,
   getListingTrustSnapshots,
   getProviderObservabilitySnapshot,
   getProviderTrustSnapshot,
@@ -116,6 +117,10 @@ export async function GET(
     listingId,
     windowHours,
   });
+  const regionalLatency = await getListingRegionalLatencySnapshot(prisma, {
+    listingId,
+    windowHours,
+  });
   const [listingTrust] = await getListingTrustSnapshots(prisma, {
     listingIds: [listingId],
     windowHours,
@@ -145,6 +150,7 @@ export async function GET(
       timestamp: day,
       calls,
     })),
+    regionalLatency,
     observability: observability.discovery,
     trust: {
       listing: listingTrust,

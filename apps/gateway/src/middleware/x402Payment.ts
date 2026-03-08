@@ -22,6 +22,7 @@ import { X402Adapter } from "../services/x402Adapter";
 import type { RequestContext, DemandSignalEvent, GatewayConfig } from "../types";
 import type Redis from "ioredis";
 import type { AbuseMonitor } from "../services/abuseMonitor";
+import { extractClientRegion } from "../utils/clientRegion";
 
 // ─────────────────────────────────────────────────────────────
 // TYPES
@@ -79,6 +80,7 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
 
     const requestId = randomUUID();
     const clientIdentity = getClientIdentity(req);
+    const clientRegion = extractClientRegion(req);
 
     // ─── Skip if x402 is disabled ───
     if (!gatewayConfig.x402Enabled) {
@@ -101,6 +103,8 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
         rateLimitRpm: 60,
         requestId,
         receivedAt: Date.now(),
+        callerCountry: clientRegion.callerCountry,
+        callerRegionBucket: clientRegion.callerRegionBucket,
         authMode: "x402",
         isSandbox: true,
       };
@@ -297,6 +301,8 @@ export function createX402PaymentMiddleware(config: X402MiddlewareConfig) {
       rateLimitRpm: route.capacityPerMinute,
       requestId,
       receivedAt: Date.now(),
+      callerCountry: clientRegion.callerCountry,
+      callerRegionBucket: clientRegion.callerRegionBucket,
       authMode: "x402",
       x402DeferredPayment: {
         paymentHeader,
