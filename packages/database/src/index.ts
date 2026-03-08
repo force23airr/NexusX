@@ -77,8 +77,10 @@ export {
 // ─── Control Plane ───
 export {
   GATEWAY_ROUTE_VERSION_KEY,
+  GATEWAY_PRICING_VERSION_KEY,
   GATEWAY_LISTING_DEGRADATION_VERSION_KEY,
   getControlPlaneVersion,
+  getControlPlaneVersionMap,
   bumpControlPlaneVersion,
 } from "./control-plane";
 
@@ -95,9 +97,14 @@ export {
 export {
   CIRCUIT_BREAKER_STATE_HASH_KEY,
   CIRCUIT_BREAKER_PROBE_PREFIX,
+  DEFAULT_MANUAL_BREAKER_COOLDOWN_MS,
+  MIN_MANUAL_BREAKER_COOLDOWN_MS,
+  MAX_MANUAL_BREAKER_COOLDOWN_MS,
+  createManualOpenCircuitState,
   getCircuitProbeKey,
   inspectSharedCircuitState,
   isSharedCircuitStateExpired,
+  normalizeManualBreakerCooldownMs,
   parseSharedCircuitState,
   serializeSharedCircuitState,
   summarizeSharedCircuitStates,

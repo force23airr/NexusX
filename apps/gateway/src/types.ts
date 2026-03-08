@@ -134,6 +134,7 @@ export interface PersistedExecutionReceiptRef {
 /** Resolved listing details for proxying. */
 export interface ListingRoute {
   listingId: string;
+  slug: string;
   providerId: string;
   providerAddress: string;
   baseUrl: string;

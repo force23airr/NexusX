@@ -9,8 +9,10 @@ import { Prisma, PrismaClient } from "@prisma/client";
 import Redis from "ioredis";
 import {
   GATEWAY_LISTING_DEGRADATION_VERSION_KEY,
+  GATEWAY_PRICING_VERSION_KEY,
   GATEWAY_ROUTE_VERSION_KEY,
   bumpControlPlaneVersion,
+  getControlPlaneVersionMap,
   markQueryLogSelected,
   persistExecutionReceipt,
 } from "@nexusx/database";
@@ -73,6 +75,7 @@ const deps: GatewayDependencies = {
     if (!listing || listing.status !== "ACTIVE") return null;
     return {
       listingId: listing.id,
+      slug: listing.slug,
       providerId: listing.providerId,
       providerAddress: listing.provider.providerProfile?.payoutAddress ?? "",
       baseUrl: listing.baseUrl,
@@ -99,6 +102,7 @@ const deps: GatewayDependencies = {
     if (!listing) return null;
     return {
       listingId: listing.id,
+      slug: listing.slug,
       providerId: listing.providerId,
       providerAddress: listing.provider.providerProfile?.payoutAddress ?? "",
       baseUrl: listing.baseUrl,
@@ -164,15 +168,12 @@ const deps: GatewayDependencies = {
   },
 
   loadRouteVersion: async () => {
-    const row = await prisma.platformConfig.findUnique({
-      where: { key: GATEWAY_ROUTE_VERSION_KEY },
-      select: { value: true },
-    });
-    if (!row || typeof row.value !== "object" || Array.isArray(row.value) || row.value === null) {
-      return 0;
-    }
-    const version = (row.value as Record<string, unknown>).version;
-    return typeof version === "number" && Number.isFinite(version) ? Math.trunc(version) : 0;
+    const versions = await getControlPlaneVersionMap(prisma, [
+      GATEWAY_ROUTE_VERSION_KEY,
+      GATEWAY_PRICING_VERSION_KEY,
+    ]);
+
+    return `route:${versions[GATEWAY_ROUTE_VERSION_KEY] ?? 0}|pricing:${versions[GATEWAY_PRICING_VERSION_KEY] ?? 0}`;
   },
 
   bumpListingDegradationVersion: async () => {

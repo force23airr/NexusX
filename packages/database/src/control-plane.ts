@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 
 export const GATEWAY_ROUTE_VERSION_KEY = "gateway.route-version";
+export const GATEWAY_PRICING_VERSION_KEY = "gateway.pricing-version";
 export const GATEWAY_LISTING_DEGRADATION_VERSION_KEY = "gateway.listing-degradation-version";
 
 type PrismaLike = PrismaClient | Prisma.TransactionClient;
@@ -30,6 +31,27 @@ export async function getControlPlaneVersion(
   });
 
   return parseVersion(record?.value);
+}
+
+export async function getControlPlaneVersionMap(
+  prisma: PrismaLike,
+  keys: readonly string[],
+): Promise<Record<string, number>> {
+  if (keys.length === 0) {
+    return {};
+  }
+
+  const records = await prisma.platformConfig.findMany({
+    where: { key: { in: [...keys] } },
+    select: { key: true, value: true },
+  });
+
+  const result = Object.fromEntries(keys.map((key) => [key, 0])) as Record<string, number>;
+  for (const record of records) {
+    result[record.key] = parseVersion(record.value);
+  }
+
+  return result;
 }
 
 export async function bumpControlPlaneVersion(

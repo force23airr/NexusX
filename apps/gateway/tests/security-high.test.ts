@@ -28,6 +28,7 @@ import type {
 
 const TEST_LISTING: ListingRoute = {
   listingId: "lst_sec_001",
+  slug: "test-api",
   providerId: "prv_sec_001",
   providerAddress: "0xSecurityTestProvider",
   baseUrl: "https://upstream.example.com",

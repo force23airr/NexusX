@@ -43,7 +43,7 @@ import type {
 } from "./types";
 import { DEFAULT_GATEWAY_CONFIG } from "./types";
 import type { ApiKeyLookupFn, ApiKeyTouchFn } from "./middleware/auth";
-import type { ListingLookupFn, ListingByIdFn } from "./services/routeResolver";
+import type { ListingLookupFn, ListingByIdFn, RouteVersionLoaderFn } from "./services/routeResolver";
 import type { TransactionPersistFn } from "./services/billingService";
 import type Redis from "ioredis";
 import type { PrismaClient } from "@prisma/client";
@@ -76,8 +76,8 @@ export interface GatewayDependencies {
     listingId: string;
     buyerId?: string;
   }) => Promise<boolean>;
-  /** Shared control plane: current route config version (optional). */
-  loadRouteVersion?: () => Promise<number | null>;
+  /** Shared control plane: current route cache invalidation token (optional). */
+  loadRouteVersion?: RouteVersionLoaderFn;
   /** Shared control plane: bump listing degradation version on global state changes. */
   bumpListingDegradationVersion?: () => Promise<number>;
   /** Runtime health check for the database dependency. */
@@ -147,6 +147,8 @@ export function createGatewayApp(
     deps.lookupListingById,
     cfg.routeCacheTtlMs,
     deps.loadRouteVersion,
+    5_000,
+    deps.redis,
   );
   const billingService = new BillingService(
     deps.persistTransaction,

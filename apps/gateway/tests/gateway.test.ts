@@ -29,6 +29,7 @@ import type {
 
 const TEST_LISTING: ListingRoute = {
   listingId: "lst_001",
+  slug: "test-api",
   providerId: "prv_001",
   providerAddress: "0xProviderWallet",
   baseUrl: "https://httpbin.org",
@@ -117,6 +118,10 @@ function createCircuitBreakerRedisMock() {
   };
 
   return {
+    async get(key: string) {
+      cleanupExpired();
+      return stringStore.get(key)?.value ?? null;
+    },
     async hget(key: string, field: string) {
       return hashStore.get(key)?.get(field) ?? null;
     },
@@ -137,12 +142,31 @@ function createCircuitBreakerRedisMock() {
       if (!bucket) return {};
       return Object.fromEntries(bucket.entries());
     },
-    async set(key: string, value: string, _pxMode: "PX", ttlMs: number, _nxMode: "NX") {
+    async set(key: string, value: string, ...args: Array<string | number>) {
       cleanupExpired();
-      if (stringStore.has(key)) {
+      let ttlMs: number | null = null;
+      let requireNx = false;
+
+      for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
+        if (arg === "PX" && typeof args[i + 1] === "number") {
+          ttlMs = args[i + 1] as number;
+          i += 1;
+          continue;
+        }
+        if (arg === "NX") {
+          requireNx = true;
+        }
+      }
+
+      if (requireNx && stringStore.has(key)) {
         return null;
       }
-      stringStore.set(key, { value, expiresAt: Date.now() + ttlMs });
+
+      stringStore.set(key, {
+        value,
+        expiresAt: Date.now() + (ttlMs ?? 60_000),
+      });
       return "OK" as const;
     },
     async del(...keys: string[]) {
@@ -375,6 +399,56 @@ describe("RouteResolver", () => {
     version = 2;
     await resolver.resolveBySlug("test-api");
     expect(lookupCount).toBe(2);
+  });
+
+  it("shares cached route metadata across resolver instances when backed by Redis", async () => {
+    const redis = createCircuitBreakerRedisMock();
+    let versionToken = "route:1|pricing:1";
+
+    const resolverA = new RouteResolver(
+      async (slug) => {
+        lookupCount++;
+        if (slug === "test-api") return TEST_LISTING;
+        return null;
+      },
+      async (id) => {
+        lookupCount++;
+        if (id === TEST_LISTING.listingId) return TEST_LISTING;
+        return null;
+      },
+      60_000,
+      async () => versionToken,
+      0,
+      redis as any,
+    );
+
+    const resolverB = new RouteResolver(
+      async (slug) => {
+        lookupCount++;
+        if (slug === "test-api") return TEST_LISTING;
+        return null;
+      },
+      async (id) => {
+        lookupCount++;
+        if (id === TEST_LISTING.listingId) return TEST_LISTING;
+        return null;
+      },
+      60_000,
+      async () => versionToken,
+      0,
+      redis as any,
+    );
+
+    await resolverA.resolveBySlug("test-api");
+    await resolverB.resolveBySlug("test-api");
+    expect(lookupCount).toBe(1);
+
+    versionToken = "route:1|pricing:2";
+    await resolverB.resolveBySlug("test-api");
+    expect(lookupCount).toBe(2);
+
+    resolverA.destroy();
+    resolverB.destroy();
   });
 
   it("reports cache stats", () => {

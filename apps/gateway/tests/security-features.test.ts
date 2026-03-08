@@ -34,6 +34,7 @@ import * as path from "path";
 
 const TEST_LISTING: ListingRoute = {
   listingId: "lst_feat_001",
+  slug: "test-api",
   providerId: "prv_feat_001",
   providerAddress: "0xFeatureTestProvider",
   baseUrl: "https://upstream.example.com",
@@ -48,6 +49,7 @@ const TEST_LISTING: ListingRoute = {
 const SANDBOX_LISTING: ListingRoute = {
   ...TEST_LISTING,
   listingId: "lst_sandbox_001",
+  slug: "sandbox-api",
   isSandbox: true,
 };
 

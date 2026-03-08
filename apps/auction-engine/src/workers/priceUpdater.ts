@@ -14,7 +14,10 @@
 
 import { PrismaClient } from "@prisma/client";
 import Redis from "ioredis";
-import { bumpControlPlaneVersion } from "@nexusx/database";
+import {
+  bumpControlPlaneVersion,
+  GATEWAY_PRICING_VERSION_KEY,
+} from "@nexusx/database";
 import { getPricingEngine } from "../services/pricingEngine";
 import { GROWTH_CONFIG } from "../config/weights";
 import type {
@@ -203,7 +206,7 @@ export class PriceUpdater {
       }
 
       if (updatedCount > 0) {
-        await bumpControlPlaneVersion(this.prisma);
+        await bumpControlPlaneVersion(this.prisma, GATEWAY_PRICING_VERSION_KEY);
       }
 
       const elapsed = Date.now() - startMs;

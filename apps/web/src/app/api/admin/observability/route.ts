@@ -5,7 +5,9 @@ import { getServerRedis } from "@/lib/serverRedis";
 import {
   CIRCUIT_BREAKER_STATE_HASH_KEY,
   GATEWAY_LISTING_DEGRADATION_VERSION_KEY,
-  getControlPlaneVersion,
+  GATEWAY_PRICING_VERSION_KEY,
+  GATEWAY_ROUTE_VERSION_KEY,
+  getControlPlaneVersionMap,
   getPlatformObservabilitySnapshot,
   parseSharedCircuitState,
   summarizeSharedCircuitStates,
@@ -31,10 +33,13 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url);
   const windowHours = parseWindowHours(searchParams.get("windowHours"));
-  const [snapshot, routeVersion, degradationVersion, redis] = await Promise.all([
+  const [snapshot, versions, redis] = await Promise.all([
     getPlatformObservabilitySnapshot(prisma, { windowHours }),
-    getControlPlaneVersion(prisma),
-    getControlPlaneVersion(prisma, GATEWAY_LISTING_DEGRADATION_VERSION_KEY),
+    getControlPlaneVersionMap(prisma, [
+      GATEWAY_ROUTE_VERSION_KEY,
+      GATEWAY_PRICING_VERSION_KEY,
+      GATEWAY_LISTING_DEGRADATION_VERSION_KEY,
+    ]),
     getServerRedis(),
   ]);
 
@@ -79,8 +84,9 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ...snapshot,
     controlPlane: {
-      routeVersion,
-      degradationVersion,
+      routeVersion: versions[GATEWAY_ROUTE_VERSION_KEY] ?? 0,
+      pricingVersion: versions[GATEWAY_PRICING_VERSION_KEY] ?? 0,
+      degradationVersion: versions[GATEWAY_LISTING_DEGRADATION_VERSION_KEY] ?? 0,
     },
     circuitBreakers,
   });

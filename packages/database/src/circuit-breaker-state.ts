@@ -1,5 +1,8 @@
 export const CIRCUIT_BREAKER_STATE_HASH_KEY = "nexusx:circuit-breaker:state";
 export const CIRCUIT_BREAKER_PROBE_PREFIX = "nexusx:circuit-breaker:probe:";
+export const DEFAULT_MANUAL_BREAKER_COOLDOWN_MS = 5 * 60 * 1000;
+export const MIN_MANUAL_BREAKER_COOLDOWN_MS = 15 * 1000;
+export const MAX_MANUAL_BREAKER_COOLDOWN_MS = 30 * 60 * 1000;
 
 export interface SharedCircuitState {
   consecutiveFailures: number;
@@ -130,5 +133,35 @@ export function summarizeSharedCircuitStates(
     totalOpen,
     totalHalfOpen,
     items: items.slice(0, limit),
+  };
+}
+
+export function normalizeManualBreakerCooldownMs(value: number | null | undefined): number {
+  if (!Number.isFinite(value)) {
+    return DEFAULT_MANUAL_BREAKER_COOLDOWN_MS;
+  }
+
+  return Math.min(
+    MAX_MANUAL_BREAKER_COOLDOWN_MS,
+    Math.max(MIN_MANUAL_BREAKER_COOLDOWN_MS, Math.trunc(value as number)),
+  );
+}
+
+export function createManualOpenCircuitState(input?: {
+  cooldownMs?: number | null;
+  now?: number;
+  consecutiveFailures?: number;
+  ttlMs?: number;
+}): SharedCircuitState {
+  const now = input?.now ?? Date.now();
+  const cooldownMs = normalizeManualBreakerCooldownMs(input?.cooldownMs);
+  const openUntil = now + cooldownMs;
+
+  return {
+    consecutiveFailures: Math.max(1, Math.trunc(input?.consecutiveFailures ?? 1)),
+    openUntil,
+    probeInFlightUntil: null,
+    expiresAt: now + Math.max(input?.ttlMs ?? cooldownMs * 2, 10 * 60 * 1000),
+    updatedAt: now,
   };
 }
