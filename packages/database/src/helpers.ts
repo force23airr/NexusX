@@ -9,6 +9,10 @@
 // ═══════════════════════════════════════════════════════════════
 
 import type { PrismaClient, Prisma } from "@prisma/client";
+import {
+  buildDiscoverableListingWhere,
+  buildExecutableListingWhere,
+} from "./public-supply";
 
 // ─────────────────────────────────────────────────────────────
 // GATEWAY: API Key Lookups
@@ -70,8 +74,8 @@ export async function lookupListingBySlug(
   prisma: PrismaClient,
   slug: string
 ) {
-  const listing = await prisma.listing.findUnique({
-    where: { slug },
+  const listing = await prisma.listing.findFirst({
+    where: buildExecutableListingWhere({ slug }),
     include: {
       provider: {
         include: { wallet: true },
@@ -108,8 +112,8 @@ export async function lookupListingById(
   prisma: PrismaClient,
   id: string
 ) {
-  const listing = await prisma.listing.findUnique({
-    where: { id },
+  const listing = await prisma.listing.findFirst({
+    where: buildExecutableListingWhere({ id }),
     include: {
       provider: {
         include: { wallet: true },
@@ -227,7 +231,7 @@ export async function loadActiveListingsForIndex(
   prisma: PrismaClient
 ) {
   const listings = await prisma.listing.findMany({
-    where: { status: "ACTIVE" },
+    where: buildDiscoverableListingWhere(),
     include: {
       category: true,
       provider: true,

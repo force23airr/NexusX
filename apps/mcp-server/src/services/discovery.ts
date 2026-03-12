@@ -11,6 +11,8 @@ import type { PrismaClient } from "@prisma/client";
 import { randomUUID } from "crypto";
 import {
   buildMetadataWhereClause,
+  buildDiscoverableListingWhere,
+  combineListingWhere,
   searchListings,
   hasEmbeddings,
   type EmbeddingConfig,
@@ -49,8 +51,11 @@ export class DiscoveryService {
    */
   async loadListings(metadataFilters?: MetadataFilters): Promise<DiscoveredListing[]> {
     const where = metadataFilters
-      ? buildMetadataWhereClause(metadataFilters)
-      : { status: "ACTIVE" as const };
+      ? combineListingWhere(
+          buildDiscoverableListingWhere(),
+          buildMetadataWhereClause(metadataFilters),
+        )
+      : buildDiscoverableListingWhere();
     const listings = await this.prisma.listing.findMany({
       where,
       include: {
@@ -98,8 +103,8 @@ export class DiscoveryService {
    * Load a single listing by slug.
    */
   async getListing(slug: string): Promise<DiscoveredListing | null> {
-    const l = await this.prisma.listing.findUnique({
-      where: { slug },
+    const l = await this.prisma.listing.findFirst({
+      where: buildDiscoverableListingWhere({ slug }),
       include: {
         category: true,
         provider: true,
@@ -110,7 +115,7 @@ export class DiscoveryService {
       },
     });
 
-    if (!l || l.status !== "ACTIVE") return null;
+    if (!l) return null;
 
     const quality = l.qualitySnapshots[0];
 
@@ -147,7 +152,7 @@ export class DiscoveryService {
   async getCategories(): Promise<CategoryNode[]> {
     const categories = await this.prisma.category.findMany({
       include: {
-        _count: { select: { listings: { where: { status: "ACTIVE" } } } },
+        _count: { select: { listings: { where: buildDiscoverableListingWhere() } } },
       },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
     });

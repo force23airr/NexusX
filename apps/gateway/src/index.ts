@@ -8,6 +8,7 @@
 import { Prisma, PrismaClient } from "@prisma/client";
 import Redis from "ioredis";
 import {
+  buildExecutableListingWhere,
   GATEWAY_LISTING_DEGRADATION_VERSION_KEY,
   GATEWAY_PRICING_VERSION_KEY,
   GATEWAY_ROUTE_VERSION_KEY,
@@ -68,11 +69,11 @@ const deps: GatewayDependencies = {
   },
 
   lookupListingBySlug: async (slug: string) => {
-    const listing = await prisma.listing.findUnique({
-      where: { slug },
+    const listing = await prisma.listing.findFirst({
+      where: buildExecutableListingWhere({ slug }),
       include: { provider: { include: { providerProfile: true } } },
     });
-    if (!listing || listing.status !== "ACTIVE") return null;
+    if (!listing) return null;
     return {
       listingId: listing.id,
       slug: listing.slug,
@@ -95,8 +96,8 @@ const deps: GatewayDependencies = {
   },
 
   lookupListingById: async (id: string) => {
-    const listing = await prisma.listing.findUnique({
-      where: { id },
+    const listing = await prisma.listing.findFirst({
+      where: buildExecutableListingWhere({ id }),
       include: { provider: { include: { providerProfile: true } } },
     });
     if (!listing) return null;
@@ -195,10 +196,9 @@ const deps: GatewayDependencies = {
 
     const uniqueRequested = Array.from(new Set(requestedSlugs));
     const listings = await prisma.listing.findMany({
-      where: {
+      where: buildExecutableListingWhere({
         slug: { in: uniqueRequested },
-        status: "ACTIVE",
-      },
+      }),
       select: {
         id: true,
         slug: true,

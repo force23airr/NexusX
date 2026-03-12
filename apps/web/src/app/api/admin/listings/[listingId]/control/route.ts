@@ -23,6 +23,8 @@ type ControlAction =
   | "suspend"
   | "deprecate"
   | "reindex"
+  | "quarantine_public"
+  | "restore_public"
   | "open_breaker"
   | "close_breaker";
 
@@ -32,6 +34,8 @@ function parseAction(value: unknown): ControlAction | null {
     value === "suspend" ||
     value === "deprecate" ||
     value === "reindex" ||
+    value === "quarantine_public" ||
+    value === "restore_public" ||
     value === "open_breaker" ||
     value === "close_breaker"
     ? value
@@ -74,7 +78,10 @@ export async function POST(
 
   if (!action) {
     return NextResponse.json(
-      { error: "Invalid action. Must be activate, pause, suspend, deprecate, reindex, open_breaker, or close_breaker." },
+      {
+        error:
+          "Invalid action. Must be activate, pause, suspend, deprecate, reindex, quarantine_public, restore_public, open_breaker, or close_breaker.",
+      },
       { status: 400 },
     );
   }
@@ -96,6 +103,10 @@ export async function POST(
       tags: true,
       intents: true,
       capabilityTags: true,
+      supplyTier: true,
+      verificationState: true,
+      verificationReason: true,
+      sourceControlled: true,
     },
   });
 
@@ -439,6 +450,79 @@ export async function POST(
       listingId: listing.id,
       slug: listing.slug,
       status: result.updated.status,
+      controlPlane: {
+        routeVersion: result.routeVersion,
+        degradationVersion: result.degradationVersion,
+      },
+    });
+  }
+
+  if (action === "quarantine_public" || action === "restore_public") {
+    if (!listing.sourceControlled) {
+      return NextResponse.json(
+        { error: "This action only applies to source-controlled public listings." },
+        { status: 409 },
+      );
+    }
+
+    const reason =
+      typeof payload.reason === "string" && payload.reason.trim().length > 0
+        ? payload.reason.trim().slice(0, 500)
+        : null;
+
+    const nextSupplyTier = action === "quarantine_public" ? "PUBLIC_QUARANTINED" : "PUBLIC_VERIFIED";
+    const nextVerificationState = action === "quarantine_public" ? "QUARANTINED" : "VERIFIED";
+    const nextReason = action === "quarantine_public" ? (reason ?? listing.verificationReason ?? "Quarantined by admin") : null;
+
+    const result = await prisma.$transaction(async (tx) => {
+      const updated = await tx.listing.update({
+        where: { id: listing.id },
+        data: {
+          supplyTier: nextSupplyTier,
+          verificationState: nextVerificationState,
+          verificationReason: nextReason,
+        },
+      });
+
+      await tx.auditLog.create({
+        data: {
+          actorId: admin.id,
+          action: "UPDATE",
+          entityType: "listing_public_state",
+          entityId: listing.id,
+          before: {
+            supplyTier: listing.supplyTier,
+            verificationState: listing.verificationState,
+            verificationReason: listing.verificationReason,
+          },
+          after: {
+            supplyTier: nextSupplyTier,
+            verificationState: nextVerificationState,
+            verificationReason: nextReason,
+            action,
+          },
+          ipAddress,
+          userAgent,
+        },
+      });
+
+      const routeVersion = await bumpControlPlaneVersion(tx);
+      const degradationVersion = await bumpControlPlaneVersion(
+        tx,
+        GATEWAY_LISTING_DEGRADATION_VERSION_KEY,
+      );
+
+      return { updated, routeVersion, degradationVersion };
+    });
+
+    return NextResponse.json({
+      ok: true,
+      action,
+      listingId: listing.id,
+      slug: listing.slug,
+      supplyTier: result.updated.supplyTier,
+      verificationState: result.updated.verificationState,
+      verificationReason: result.updated.verificationReason,
       controlPlane: {
         routeVersion: result.routeVersion,
         degradationVersion: result.degradationVersion,

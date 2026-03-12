@@ -136,6 +136,12 @@ export {
 } from "./region-affinity";
 
 export {
+  buildDiscoverableListingWhere,
+  buildExecutableListingWhere,
+  combineListingWhere,
+} from "./public-supply";
+
+export {
   persistExecutionReceipt,
   updateExecutionReceiptSettlement,
   type ExecutionReceiptRecord,

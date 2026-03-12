@@ -16,6 +16,7 @@
 
 import { createHash } from "crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { buildDiscoverableListingWhere, combineListingWhere } from "./public-supply";
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -376,6 +377,8 @@ async function vectorSearch(
     FROM listings l
     JOIN categories c ON c.id = l.category_id
     JOIN users u ON u.id = l.provider_id
+    LEFT JOIN listing_provenances lp ON lp.listing_id = l.id
+    LEFT JOIN public_sources ps ON ps.id = lp.public_source_id
     LEFT JOIN LATERAL (
       SELECT composite_score, median_latency_ms, uptime_percent
       FROM quality_snapshots
@@ -384,6 +387,16 @@ async function vectorSearch(
       LIMIT 1
     ) qs ON true
     WHERE l.status = 'ACTIVE'
+      AND l.supply_tier::text NOT IN ('PUBLIC_UNVERIFIED', 'PUBLIC_QUARANTINED')
+      AND l.verification_state::text NOT IN ('QUARANTINED', 'RETIRED')
+      AND (
+        l.source_controlled = FALSE
+        OR (
+          ps.id IS NOT NULL
+          AND ps.status::text = 'ACTIVE'
+          AND ps.allow_discovery = TRUE
+        )
+      )
       AND l.embedding IS NOT NULL
       AND 1 - (l.embedding <=> ${vectorStr}::vector) >= ${threshold}
       ${extraWhere}
@@ -612,7 +625,10 @@ export async function searchListings(
   let preFilteredIds: string[] | undefined;
   if (options?.metadataFilters) {
     const { buildMetadataWhereClause } = await import("./metadata-filters");
-    const where = buildMetadataWhereClause(options.metadataFilters);
+    const where = combineListingWhere(
+      buildDiscoverableListingWhere(),
+      buildMetadataWhereClause(options.metadataFilters),
+    );
     const candidates = await prisma.listing.findMany({
       where,
       select: { id: true },

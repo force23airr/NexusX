@@ -15,6 +15,7 @@
 import { PrismaClient } from "@prisma/client";
 import Redis from "ioredis";
 import {
+  buildExecutableListingWhere,
   bumpControlPlaneVersion,
   GATEWAY_PRICING_VERSION_KEY,
 } from "@nexusx/database";
@@ -121,7 +122,7 @@ export class PriceUpdater {
 
       // 1. Fetch all active listings
       const listings = await this.prisma.listing.findMany({
-        where: { status: "ACTIVE" },
+        where: buildExecutableListingWhere(),
         select: {
           id: true,
           slug: true,
@@ -377,11 +378,10 @@ export class PriceUpdater {
   ): Promise<SupplyState> {
     // Count competitors in the same category
     const competitorCount = await this.prisma.listing.count({
-      where: {
+      where: buildExecutableListingWhere({
         categoryId,
-        status: "ACTIVE",
         id: { not: listingId },
-      },
+      }),
     });
 
     // Estimate utilization from recent transactions (last 1 minute)

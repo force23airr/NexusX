@@ -19,6 +19,8 @@ import { getUserFromApiKey } from "@/lib/apiKeyAuth";
 import { randomUUID } from "crypto";
 import {
   buildMetadataWhereClause,
+  buildDiscoverableListingWhere,
+  combineListingWhere,
   computeRegionAffinity,
   recordUnmetDemand,
   searchListings,
@@ -394,8 +396,11 @@ function extractEntities(lower: string): ExtractedEntities {
 
 async function loadListings(metadataFilters?: MetadataFilters): Promise<IndexedListing[]> {
   const where = metadataFilters
-    ? buildMetadataWhereClause(metadataFilters)
-    : { status: "ACTIVE" as const };
+    ? combineListingWhere(
+        buildDiscoverableListingWhere(),
+        buildMetadataWhereClause(metadataFilters),
+      )
+    : buildDiscoverableListingWhere();
   const dbListings = await prisma.listing.findMany({
     where,
     include: {

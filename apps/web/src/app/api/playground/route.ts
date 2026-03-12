@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { buildExecutableListingWhere, combineListingWhere } from "@nexusx/database";
 import { prisma } from "@/lib/prisma";
 import { assertSafeHttpUrl, safeFetch } from "@/lib/ssrf";
 
@@ -79,13 +80,15 @@ export async function POST(req: NextRequest) {
 
   const origin = parsedUrl.origin;
   const matchingListing = await prisma.listing.findFirst({
-    where: {
-      OR: [
-        { baseUrl: { startsWith: origin } },
-        { sandboxUrl: { startsWith: origin } },
-      ],
-      status: "ACTIVE",
-    },
+    where: combineListingWhere(
+      buildExecutableListingWhere(),
+      {
+        OR: [
+          { baseUrl: { startsWith: origin } },
+          { sandboxUrl: { startsWith: origin } },
+        ],
+      },
+    ),
     select: { id: true },
   });
 

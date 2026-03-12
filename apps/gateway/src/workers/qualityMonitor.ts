@@ -9,6 +9,7 @@
 // ═══════════════════════════════════════════════════════════════
 
 import type { PrismaClient } from "@prisma/client";
+import { buildExecutableListingWhere } from "@nexusx/database";
 import type { ReliabilityAggregator, ReliabilityScore } from "../services/reliability-aggregator";
 import { assertSafeHttpUrl, safeFetch } from "../utils/ssrf";
 
@@ -80,7 +81,7 @@ export class QualityMonitorWorker {
 
     try {
       const listings = await this.prisma.listing.findMany({
-        where: { status: "ACTIVE" },
+        where: buildExecutableListingWhere(),
         select: {
           id: true,
           slug: true,

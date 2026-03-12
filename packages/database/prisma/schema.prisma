@@ -46,6 +46,43 @@ enum ListingStatus {
   DEPRECATED
 }
 
+enum ListingSupplyTier {
+  PROVIDER_VERIFIED
+  PUBLIC_VERIFIED
+  PUBLIC_UNVERIFIED
+  PUBLIC_QUARANTINED
+}
+
+enum ListingVerificationState {
+  NONE
+  INGESTED
+  VERIFIED
+  DEGRADED
+  QUARANTINED
+  RETIRED
+}
+
+enum PublicSourceType {
+  GITHUB_REPO
+  MANIFEST_CATALOG
+  API_DIRECTORY
+  MANUAL_CURATED
+}
+
+enum PublicSourceStatus {
+  ACTIVE
+  PAUSED
+  DISABLED
+  BLOCKED
+}
+
+enum ListingProvenanceKind {
+  PROVIDER_DIRECT
+  PROVIDER_IMPORTED_MANIFEST
+  PUBLIC_SOURCE
+  BAZAAR_IMPORT
+}
+
 enum ListingType {
   REST_API
   GRAPHQL_API
@@ -285,6 +322,10 @@ model Listing {
   description String
   listingType ListingType   @map("listing_type")
   status      ListingStatus @default(DRAFT)
+  supplyTier  ListingSupplyTier @default(PROVIDER_VERIFIED) @map("supply_tier")
+  verificationState ListingVerificationState @default(VERIFIED) @map("verification_state")
+  verificationReason String? @map("verification_reason")
+  sourceControlled Boolean @default(false) @map("source_controlled")
 
   // Endpoint configuration
   baseUrl        String  @map("base_url")
@@ -365,10 +406,13 @@ model Listing {
   providerMetrics           ProviderMetricRaw[]
   bundleProviderSettlements BundleProviderSettlement[]
   x402Settlements           X402SettlementRecord[]
+  provenance                ListingProvenance?
 
   @@index([providerId])
   @@index([categoryId])
   @@index([status])
+  @@index([supplyTier, status])
+  @@index([verificationState, status])
   @@index([listingType])
   @@index([currentPriceUsdc])
   @@index([totalCalls])
@@ -382,6 +426,63 @@ model Listing {
   @@index([createdAt])
   @@index([sourceType, sourceResourceUrl])
   @@map("listings")
+}
+
+/// Curated external source registry for trusted public/open API supply.
+/// Operators manage these sources before any ingestion jobs run.
+model PublicSource {
+  id                  String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                String
+  slug                String           @unique
+  sourceType          PublicSourceType @map("source_type")
+  baseUrl             String?          @map("base_url")
+  catalogUrl          String           @map("catalog_url")
+  ownerName           String?          @map("owner_name")
+  ownerUrl            String?          @map("owner_url")
+  license             String?
+  attributionRequired Boolean          @default(false) @map("attribution_required")
+  termsUrl            String?          @map("terms_url")
+  notes               String?
+  status              PublicSourceStatus @default(ACTIVE)
+  allowDiscovery      Boolean          @default(true) @map("allow_discovery")
+  allowExecution      Boolean          @default(true) @map("allow_execution")
+  lastSyncedAt        DateTime?        @map("last_synced_at")
+  lastError           String?          @map("last_error")
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+
+  provenances ListingProvenance[]
+
+  @@index([status])
+  @@index([sourceType])
+  @@index([allowDiscovery, allowExecution])
+  @@map("public_sources")
+}
+
+/// Explicit provenance for a listing. This is the source-of-truth link between
+/// a listing and the origin it came from.
+model ListingProvenance {
+  id              String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId       String               @unique @map("listing_id") @db.Uuid
+  kind            ListingProvenanceKind
+  publicSourceId  String?              @map("public_source_id") @db.Uuid
+  externalId      String?              @map("external_id")
+  externalUrl     String?              @map("external_url")
+  externalVersion String?              @map("external_version")
+  importedAt      DateTime             @default(now()) @map("imported_at")
+  lastSeenAt      DateTime?            @map("last_seen_at")
+  attribution     String?
+  usageNotes      String?              @map("usage_notes")
+  createdAt       DateTime             @default(now()) @map("created_at")
+  updatedAt       DateTime             @updatedAt @map("updated_at")
+
+  listing      Listing      @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  publicSource PublicSource? @relation(fields: [publicSourceId], references: [id], onDelete: SetNull)
+
+  @@index([publicSourceId])
+  @@index([kind])
+  @@index([externalUrl])
+  @@map("listing_provenances")
 }
 
 // ─────────────────────────────────────────────────────────────

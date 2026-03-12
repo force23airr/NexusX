@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
+import { buildDiscoverableListingWhere } from "@nexusx/database";
 import { prisma } from "@/lib/prisma";
 
 
 export async function GET() {
   const listings = await prisma.listing.findMany({
-    where: { status: "ACTIVE" },
+    where: buildDiscoverableListingWhere(),
     select: {
       id: true,
       slug: true,

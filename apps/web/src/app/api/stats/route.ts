@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { buildDiscoverableListingWhere } from "@nexusx/database";
 import { prisma } from "@/lib/prisma";
 
 export async function GET() {
@@ -14,11 +15,11 @@ export async function GET() {
     categoryListingCounts,
   ] = await Promise.all([
     // 1. Total active listings
-    prisma.listing.count({ where: { status: "ACTIVE" } }),
+    prisma.listing.count({ where: buildDiscoverableListingWhere() }),
 
     // 2. Aggregate calls + revenue
     prisma.listing.aggregate({
-      where: { status: "ACTIVE" },
+      where: buildDiscoverableListingWhere(),
       _sum: { totalCalls: true, totalRevenue: true },
     }),
 
@@ -35,7 +36,7 @@ export async function GET() {
 
     // 5. Top 5 listings by totalCalls
     prisma.listing.findMany({
-      where: { status: "ACTIVE" },
+      where: buildDiscoverableListingWhere(),
       orderBy: { totalCalls: "desc" },
       take: 5,
       include: {
@@ -50,7 +51,7 @@ export async function GET() {
       where: { isActive: true },
       include: {
         listings: {
-          where: { status: "ACTIVE" },
+          where: buildDiscoverableListingWhere(),
           orderBy: { totalCalls: "desc" },
           take: 4,
           include: {
@@ -64,7 +65,7 @@ export async function GET() {
     // 7. Accurate listing counts per category
     prisma.listing.groupBy({
       by: ["categoryId"],
-      where: { status: "ACTIVE" },
+      where: buildDiscoverableListingWhere(),
       _count: true,
     }),
   ]);

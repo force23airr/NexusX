@@ -1,4 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { ListingType } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
+import {
+  buildDiscoverableListingWhere,
+  combineListingWhere,
+} from "@nexusx/database";
 import { prisma } from "@/lib/prisma";
 
 
@@ -11,13 +17,22 @@ export async function GET(req: NextRequest) {
   const page = parseInt(searchParams.get("page") || "1", 10);
   const pageSize = parseInt(searchParams.get("pageSize") || "20", 10);
 
-  const where: any = { status: "ACTIVE" };
-  if (category) where.category = { slug: category };
-  if (type) where.listingType = type;
+  const filters: Prisma.ListingWhereInput = {};
+  if (category) filters.category = { slug: category };
+  if (type) {
+    if (!Object.values(ListingType).includes(type as ListingType)) {
+      return NextResponse.json({ error: "Invalid listing type" }, { status: 400 });
+    }
+    filters.listingType = type as ListingType;
+  }
   if (sectorsParam) {
     const sectorTags = sectorsParam.split(",").map((s) => `sector:${s}`);
-    where.tags = { hasSome: sectorTags };
+    filters.tags = { hasSome: sectorTags };
   }
+  const where = combineListingWhere(
+    buildDiscoverableListingWhere(),
+    filters,
+  );
 
   const orderBy: any =
     sort === "price_asc"
