@@ -62,6 +62,19 @@ enum ListingVerificationState {
   RETIRED
 }
 
+enum ListingRiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum ListingSideEffectLevel {
+  READ_ONLY
+  REVERSIBLE
+  IRREVERSIBLE
+}
+
 enum PublicSourceType {
   GITHUB_REPO
   MANIFEST_CATALOG
@@ -333,6 +346,12 @@ model Listing {
   docsUrl        String? @map("docs_url")
   sandboxUrl     String? @map("sandbox_url")
   authType       String  @default("api_key") @map("auth_type")
+  authSchemes    String[] @default([]) @map("auth_schemes")
+  interactionModes String[] @default([]) @map("interaction_modes")
+  humanApprovalRequired Boolean @default(false) @map("human_approval_required")
+  noHealthProbe  Boolean @default(false) @map("no_health_probe")
+  riskLevel      ListingRiskLevel @default(LOW) @map("risk_level")
+  sideEffectLevel ListingSideEffectLevel @default(READ_ONLY) @map("side_effect_level")
 
   // Pricing (provider-configured bounds)
   floorPriceUsdc   Decimal  @map("floor_price_usdc") @db.Decimal(18, 6)
@@ -377,6 +396,12 @@ model Listing {
   discoveryImpressions Int @default(0) @map("discovery_impressions")
   discoveryClicks      Int @default(0) @map("discovery_clicks")
 
+  // Listing readiness contract
+  readinessScore     Int      @default(0) @map("readiness_score")
+  readinessIssues    String[] @default([]) @map("readiness_issues")
+  readinessWarnings  String[] @default([]) @map("readiness_warnings")
+  readinessUpdatedAt DateTime? @map("readiness_updated_at")
+
   // Aggregate counters (denormalized for query performance)
   totalCalls   BigInt  @default(0) @map("total_calls")
   totalRevenue Decimal @default(0) @map("total_revenue") @db.Decimal(18, 6)
@@ -413,6 +438,8 @@ model Listing {
   @@index([status])
   @@index([supplyTier, status])
   @@index([verificationState, status])
+  @@index([riskLevel, status])
+  @@index([status, readinessScore])
   @@index([listingType])
   @@index([currentPriceUsdc])
   @@index([totalCalls])

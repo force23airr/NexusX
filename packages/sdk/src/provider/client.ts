@@ -368,6 +368,18 @@ export class NexusXProvider {
         throw new Error("domainMetadata must be a plain JSON object.");
       }
     }
+    if (input.authSchemes && input.authSchemes.length === 0) {
+      throw new Error("authSchemes cannot be an empty array when provided.");
+    }
+    if (input.interactionModes && input.interactionModes.length === 0) {
+      throw new Error("interactionModes cannot be an empty array when provided.");
+    }
+    if (input.humanApprovalRequired !== undefined && typeof input.humanApprovalRequired !== "boolean") {
+      throw new Error("humanApprovalRequired must be a boolean.");
+    }
+    if (input.noHealthProbe !== undefined && typeof input.noHealthProbe !== "boolean") {
+      throw new Error("noHealthProbe must be a boolean.");
+    }
   }
 
   private validateMetricReport(report: HealthMetricReport): void {

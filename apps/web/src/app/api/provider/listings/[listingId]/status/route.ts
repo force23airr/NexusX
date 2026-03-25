@@ -6,7 +6,10 @@ import {
   bumpControlPlaneVersion,
   enqueueActivationEvent,
 } from "@nexusx/database";
-import { validateActivationReadiness } from "@/lib/providerListing";
+import {
+  buildListingReadinessWriteData,
+  evaluateListingReadiness,
+} from "@/lib/providerListing";
 
 // ─────────────────────────────────────────────────────────────
 // POST /api/provider/listings/[listingId]/status
@@ -56,28 +59,53 @@ export async function POST(
       );
     }
 
-    const readinessErrors = await validateActivationReadiness({
+    const readiness = await evaluateListingReadiness({
+      listingType: listing.listingType,
       baseUrl: listing.baseUrl,
       healthCheckUrl: listing.healthCheckUrl,
       sandboxUrl: listing.sandboxUrl,
       docsUrl: listing.docsUrl,
+      authType: listing.authType,
+      authSchemes: listing.authSchemes,
+      interactionModes: listing.interactionModes,
+      humanApprovalRequired: listing.humanApprovalRequired,
+      noHealthProbe: listing.noHealthProbe,
+      riskLevel: listing.riskLevel,
+      sideEffectLevel: listing.sideEffectLevel,
       description: listing.description,
       tags: listing.tags,
       intents: listing.intents,
       capabilityTags: listing.capabilityTags,
+      inputModalities: listing.inputModalities,
+      outputModalities: listing.outputModalities,
+      availabilityRegions: listing.availabilityRegions,
+      complianceTags: listing.complianceTags,
+      sampleRequest: listing.sampleRequest,
+      sampleResponse: listing.sampleResponse,
+      schemaSpec: listing.schemaSpec,
+      domainMetadata: listing.domainMetadata,
     });
 
-    if (readinessErrors.length > 0) {
+    if (!readiness.readyForActivation) {
+      await prisma.listing.update({
+        where: { id: listingId },
+        data: buildListingReadinessWriteData(readiness),
+      });
       return NextResponse.json(
         {
           error: "Listing is not ready for activation",
-          details: readinessErrors,
+          details: readiness.blockers,
+          warnings: readiness.warnings,
+          readinessScore: readiness.score,
         },
         { status: 422 },
       );
     }
 
-    const data: Record<string, unknown> = { status: "ACTIVE" };
+    const data: Record<string, unknown> = {
+      status: "ACTIVE",
+      ...buildListingReadinessWriteData(readiness),
+    };
     // Set publishedAt on first activation
     if (!listing.publishedAt) {
       data.publishedAt = new Date();

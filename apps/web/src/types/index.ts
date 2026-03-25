@@ -11,6 +11,8 @@
 export type UserRole = "PROVIDER" | "BUYER" | "ADMIN";
 export type ListingType = "REST_API" | "GRAPHQL_API" | "WEBSOCKET" | "DATASET" | "MODEL_INFERENCE" | "COMPOSITE";
 export type ListingStatus = "DRAFT" | "PENDING_REVIEW" | "ACTIVE" | "PAUSED" | "SUSPENDED" | "DEPRECATED";
+export type ListingRiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type ListingSideEffectLevel = "READ_ONLY" | "REVERSIBLE" | "IRREVERSIBLE";
 export type TransactionStatus = "PENDING" | "CONFIRMED" | "FAILED" | "REFUNDED" | "DISPUTED";
 export type SearchPriorityMode = "frugal" | "balanced" | "mission_critical";
 
@@ -24,6 +26,14 @@ export interface ListingDiscoveryMetadata {
   inputModalities?: string[];
   outputModalities?: string[];
   domainMetadata?: Record<string, unknown> | null;
+}
+
+export interface ListingReadinessSnapshot {
+  score: number;
+  readyForActivation: boolean;
+  issues: string[];
+  warnings: string[];
+  updatedAt: string | null;
 }
 
 export interface SearchMetadataFilters {
@@ -83,6 +93,13 @@ export interface Listing extends ListingDiscoveryMetadata {
   trustState?: "trusted" | "degraded" | "high_risk" | "unproven";
   avgLatencyMs: number;
   uptimePercent: number;
+  authSchemes?: string[];
+  interactionModes?: string[];
+  humanApprovalRequired?: boolean;
+  noHealthProbe?: boolean;
+  riskLevel?: ListingRiskLevel;
+  sideEffectLevel?: ListingSideEffectLevel;
+  readiness?: ListingReadinessSnapshot;
   publishedAt: string | null;
   createdAt: string;
 }

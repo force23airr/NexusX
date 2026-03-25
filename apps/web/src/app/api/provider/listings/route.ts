@@ -1,8 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
+import {
+  ListingRiskLevel,
+  ListingSideEffectLevel,
+  ListingType,
+  Prisma,
+} from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
-import { extractListingWriteData } from "@/lib/providerListing";
+import {
+  buildListingReadinessWriteData,
+  evaluateListingReadiness,
+  extractListingWriteData,
+} from "@/lib/providerListing";
 
 
 export async function GET(req: NextRequest) {
@@ -68,7 +77,20 @@ export async function GET(req: NextRequest) {
       capabilityTags: l.capabilityTags,
       inputModalities: l.inputModalities,
       outputModalities: l.outputModalities,
+      authSchemes: l.authSchemes,
+      interactionModes: l.interactionModes,
+      humanApprovalRequired: l.humanApprovalRequired,
+      noHealthProbe: l.noHealthProbe,
+      riskLevel: l.riskLevel,
+      sideEffectLevel: l.sideEffectLevel,
       domainMetadata: l.domainMetadata,
+      readiness: {
+        score: l.readinessScore,
+        readyForActivation: l.readinessIssues.length === 0,
+        issues: l.readinessIssues,
+        warnings: l.readinessWarnings,
+        updatedAt: l.readinessUpdatedAt?.toISOString() ?? null,
+      },
       publishedAt: l.publishedAt?.toISOString() ?? null,
       createdAt: l.createdAt.toISOString(),
     };
@@ -151,37 +173,101 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  const listingType = ((writeData.listingType as string | undefined) ??
+    (body.listingType || "REST_API")) as ListingType;
+  const authType = (writeData.authType as string | undefined) || "api_key";
+  const authSchemes = (writeData.authSchemes as string[] | undefined) ?? [];
+  const interactionModes = (writeData.interactionModes as string[] | undefined) ?? [];
+  const humanApprovalRequired =
+    (writeData.humanApprovalRequired as boolean | undefined) ?? false;
+  const noHealthProbe = (writeData.noHealthProbe as boolean | undefined) ?? false;
+  const riskLevel = (writeData.riskLevel as ListingRiskLevel | undefined) ?? "LOW";
+  const sideEffectLevel =
+    (writeData.sideEffectLevel as ListingSideEffectLevel | undefined) ?? "READ_ONLY";
+  const intents = (writeData.intents as string[] | undefined) ?? [];
+  const availabilityRegions =
+    (writeData.availabilityRegions as string[] | undefined) ?? [];
+  const restrictedRegions =
+    (writeData.restrictedRegions as string[] | undefined) ?? [];
+  const complianceTags = (writeData.complianceTags as string[] | undefined) ?? [];
+  const capabilityTags = (writeData.capabilityTags as string[] | undefined) ?? [];
+  const inputModalities = (writeData.inputModalities as string[] | undefined) ?? [];
+  const outputModalities = (writeData.outputModalities as string[] | undefined) ?? [];
+  const sampleRequest =
+    (writeData.sampleRequest as Prisma.InputJsonValue | undefined) ?? undefined;
+  const sampleResponse =
+    (writeData.sampleResponse as Prisma.InputJsonValue | undefined) ?? undefined;
+  const schemaSpec =
+    (writeData.schemaSpec as Prisma.InputJsonValue | undefined) ?? undefined;
+  const domainMetadata =
+    (writeData.domainMetadata as Prisma.InputJsonValue | null | undefined) ?? undefined;
+
   const createData: Prisma.ListingUncheckedCreateInput = {
     providerId: result.user.id,
     categoryId,
     slug,
     name: (writeData.name as string | undefined) ?? body.name,
     description: (writeData.description as string | undefined) ?? (body.description || ""),
-    listingType: ((writeData.listingType as string | undefined) ?? (body.listingType || "REST_API")) as any,
+    listingType,
     status: "DRAFT",
     baseUrl: writeData.baseUrl as string,
     healthCheckUrl: (writeData.healthCheckUrl as string | null | undefined) ?? null,
     docsUrl: (writeData.docsUrl as string | null | undefined) ?? null,
     sandboxUrl: (writeData.sandboxUrl as string | null | undefined) ?? null,
-    authType: (writeData.authType as string | undefined) || "api_key",
+    authType,
+    authSchemes,
+    interactionModes,
+    humanApprovalRequired,
+    noHealthProbe,
+    riskLevel,
+    sideEffectLevel,
     floorPriceUsdc: Number(writeData.floorPriceUsdc ?? body.floorPriceUsdc),
     ceilingPriceUsdc: (writeData.ceilingPriceUsdc as number | null | undefined) ?? null,
     currentPriceUsdc: Number(writeData.floorPriceUsdc ?? body.floorPriceUsdc),
     capacityPerMinute: Number((writeData.capacityPerMinute ?? body.capacityPerMinute) || 60),
     isUnique: Boolean((writeData.isUnique ?? body.isUnique) || false),
     tags,
-    intents: (writeData.intents as string[] | undefined) ?? [],
-    sampleRequest: (writeData.sampleRequest as Prisma.InputJsonValue | undefined) ?? undefined,
-    sampleResponse: (writeData.sampleResponse as Prisma.InputJsonValue | undefined) ?? undefined,
-    schemaSpec: (writeData.schemaSpec as Prisma.InputJsonValue | undefined) ?? undefined,
-    availabilityRegions: (writeData.availabilityRegions as string[] | undefined) ?? [],
-    restrictedRegions: (writeData.restrictedRegions as string[] | undefined) ?? [],
-    complianceTags: (writeData.complianceTags as string[] | undefined) ?? [],
-    capabilityTags: (writeData.capabilityTags as string[] | undefined) ?? [],
-    inputModalities: (writeData.inputModalities as string[] | undefined) ?? [],
-    outputModalities: (writeData.outputModalities as string[] | undefined) ?? [],
-    domainMetadata: (writeData.domainMetadata as Prisma.InputJsonValue | null | undefined) ?? undefined,
+    intents,
+    sampleRequest,
+    sampleResponse,
+    schemaSpec,
+    availabilityRegions,
+    restrictedRegions,
+    complianceTags,
+    capabilityTags,
+    inputModalities,
+    outputModalities,
+    domainMetadata,
   };
+
+  const readiness = await evaluateListingReadiness({
+    listingType,
+    baseUrl: createData.baseUrl,
+    healthCheckUrl: createData.healthCheckUrl,
+    sandboxUrl: createData.sandboxUrl,
+    docsUrl: createData.docsUrl,
+    authType,
+    authSchemes,
+    interactionModes,
+    humanApprovalRequired,
+    noHealthProbe,
+    riskLevel,
+    sideEffectLevel,
+    description: createData.description,
+    tags,
+    intents,
+    capabilityTags,
+    inputModalities,
+    outputModalities,
+    availabilityRegions,
+    complianceTags,
+    sampleRequest,
+    sampleResponse,
+    schemaSpec,
+    domainMetadata,
+  });
+
+  Object.assign(createData, buildListingReadinessWriteData(readiness));
 
   const listing = await prisma.listing.create({
     data: createData,

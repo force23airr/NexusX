@@ -3,7 +3,10 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { requireAdminUser } from "@/lib/auth";
 import { getServerRedis } from "@/lib/serverRedis";
-import { validateActivationReadiness } from "@/lib/providerListing";
+import {
+  buildListingReadinessWriteData,
+  evaluateListingReadiness,
+} from "@/lib/providerListing";
 import {
   CIRCUIT_BREAKER_STATE_HASH_KEY,
   GATEWAY_LISTING_DEGRADATION_VERSION_KEY,
@@ -92,6 +95,7 @@ export async function POST(
       id: true,
       slug: true,
       providerId: true,
+      listingType: true,
       status: true,
       publishedAt: true,
       deprecatedAt: true,
@@ -99,10 +103,25 @@ export async function POST(
       healthCheckUrl: true,
       sandboxUrl: true,
       docsUrl: true,
+      authType: true,
+      authSchemes: true,
+      interactionModes: true,
+      humanApprovalRequired: true,
+      noHealthProbe: true,
+      riskLevel: true,
+      sideEffectLevel: true,
       description: true,
       tags: true,
       intents: true,
       capabilityTags: true,
+      inputModalities: true,
+      outputModalities: true,
+      availabilityRegions: true,
+      complianceTags: true,
+      sampleRequest: true,
+      sampleResponse: true,
+      schemaSpec: true,
+      domainMetadata: true,
       supplyTier: true,
       verificationState: true,
       verificationReason: true,
@@ -245,20 +264,45 @@ export async function POST(
       );
     }
 
-    const readinessErrors = await validateActivationReadiness({
+    const readiness = await evaluateListingReadiness({
+      listingType: listing.listingType,
       baseUrl: listing.baseUrl,
       healthCheckUrl: listing.healthCheckUrl,
       sandboxUrl: listing.sandboxUrl,
       docsUrl: listing.docsUrl,
+      authType: listing.authType,
+      authSchemes: listing.authSchemes,
+      interactionModes: listing.interactionModes,
+      humanApprovalRequired: listing.humanApprovalRequired,
+      noHealthProbe: listing.noHealthProbe,
+      riskLevel: listing.riskLevel,
+      sideEffectLevel: listing.sideEffectLevel,
       description: listing.description,
       tags: listing.tags,
       intents: listing.intents,
       capabilityTags: listing.capabilityTags,
+      inputModalities: listing.inputModalities,
+      outputModalities: listing.outputModalities,
+      availabilityRegions: listing.availabilityRegions,
+      complianceTags: listing.complianceTags,
+      sampleRequest: listing.sampleRequest,
+      sampleResponse: listing.sampleResponse,
+      schemaSpec: listing.schemaSpec,
+      domainMetadata: listing.domainMetadata,
     });
 
-    if (readinessErrors.length > 0) {
+    if (!readiness.readyForActivation) {
+      await prisma.listing.update({
+        where: { id: listing.id },
+        data: buildListingReadinessWriteData(readiness),
+      });
       return NextResponse.json(
-        { error: "Listing is not ready for activation", details: readinessErrors },
+        {
+          error: "Listing is not ready for activation",
+          details: readiness.blockers,
+          warnings: readiness.warnings,
+          readinessScore: readiness.score,
+        },
         { status: 422 },
       );
     }
@@ -269,6 +313,7 @@ export async function POST(
         data: {
           status: "ACTIVE",
           publishedAt: listing.publishedAt ?? new Date(),
+          ...buildListingReadinessWriteData(readiness),
         },
       });
 

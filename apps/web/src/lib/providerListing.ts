@@ -1,12 +1,183 @@
-import { ListingType } from "@prisma/client";
+import {
+  ListingRiskLevel,
+  ListingSideEffectLevel,
+  ListingType,
+} from "@prisma/client";
 import { assertSafeHttpUrl } from "@/lib/ssrf";
 
 const MAX_ARRAY_ITEMS = 32;
 const ISO_COUNTRY = /^[A-Z]{2}$/;
 const SAFE_TOKEN = /^[a-z0-9][a-z0-9:_./-]{0,63}$/i;
+const READY_DESCRIPTION_MIN_LENGTH = 40;
+
+const DEFAULT_INTERACTION_MODES: Record<ListingType, string[]> = {
+  REST_API: ["sync"],
+  GRAPHQL_API: ["sync"],
+  WEBSOCKET: ["streaming"],
+  DATASET: ["batch"],
+  MODEL_INFERENCE: ["sync"],
+  COMPOSITE: ["sync"],
+};
+
+export interface ListingReadinessInput {
+  listingType: ListingType;
+  baseUrl: string;
+  healthCheckUrl?: string | null;
+  sandboxUrl?: string | null;
+  docsUrl?: string | null;
+  authType?: string | null;
+  authSchemes?: string[];
+  interactionModes?: string[];
+  humanApprovalRequired?: boolean;
+  noHealthProbe?: boolean;
+  riskLevel?: ListingRiskLevel;
+  sideEffectLevel?: ListingSideEffectLevel;
+  description: string;
+  tags: string[];
+  intents: string[];
+  capabilityTags?: string[];
+  inputModalities?: string[];
+  outputModalities?: string[];
+  availabilityRegions?: string[];
+  complianceTags?: string[];
+  sampleRequest?: unknown | null;
+  sampleResponse?: unknown | null;
+  schemaSpec?: unknown | null;
+  domainMetadata?: unknown | null;
+}
+
+export interface ListingReadinessReport {
+  score: number;
+  readyForActivation: boolean;
+  blockers: string[];
+  warnings: string[];
+  normalized: {
+    authSchemes: string[];
+    interactionModes: string[];
+    humanApprovalRequired: boolean;
+    noHealthProbe: boolean;
+    riskLevel: ListingRiskLevel;
+    sideEffectLevel: ListingSideEffectLevel;
+  };
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasJsonContent(value: unknown): boolean {
+  if (value === null || value === undefined) return false;
+  if (Array.isArray(value)) return value.length > 0;
+  if (isPlainObject(value)) return Object.keys(value).length > 0;
+  if (typeof value === "string") return value.trim().length > 0;
+  return true;
+}
+
+function mergeSchemaSpecValue(
+  existing: unknown,
+  patch: Record<string, unknown>,
+): Record<string, unknown> {
+  const base = isPlainObject(existing) ? { ...existing } : {};
+  return { ...base, ...patch };
+}
+
+function deriveAuthSchemes(
+  authType: string | null | undefined,
+  authSchemes: string[] | undefined,
+): string[] {
+  if (authSchemes && authSchemes.length > 0) {
+    return authSchemes;
+  }
+  const fallback = typeof authType === "string" ? authType.trim().toLowerCase() : "";
+  return fallback ? [fallback] : [];
+}
+
+function inferInteractionModes(
+  listingType: ListingType,
+  interactionModes: string[] | undefined,
+  schemaSpec: unknown,
+): string[] {
+  if (interactionModes && interactionModes.length > 0) {
+    return interactionModes;
+  }
+
+  const inferred = new Set(DEFAULT_INTERACTION_MODES[listingType]);
+  if (isPlainObject(schemaSpec)) {
+    if (Array.isArray(schemaSpec.operations)) {
+      for (const operation of schemaSpec.operations) {
+        if (!isPlainObject(operation)) continue;
+        if (typeof operation.mode === "string" && operation.mode.trim()) {
+          inferred.add(operation.mode.trim().toLowerCase());
+        }
+      }
+    }
+
+    if (isPlainObject(schemaSpec.endpoint)) {
+      const endpointMode = schemaSpec.endpoint.mode;
+      if (typeof endpointMode === "string" && endpointMode.trim()) {
+        inferred.add(endpointMode.trim().toLowerCase());
+      }
+    }
+  }
+
+  return Array.from(inferred);
+}
+
+function countOperationContracts(schemaSpec: unknown): number {
+  if (!isPlainObject(schemaSpec)) return 0;
+
+  let count = 0;
+  if (Array.isArray(schemaSpec.operations)) {
+    for (const operation of schemaSpec.operations) {
+      if (!isPlainObject(operation)) continue;
+      const name = typeof operation.name === "string" ? operation.name.trim() : "";
+      const method = typeof operation.method === "string" ? operation.method.trim() : "";
+      const path = typeof operation.path === "string" ? operation.path.trim() : "";
+      const operationId =
+        typeof operation.operationId === "string" ? operation.operationId.trim() : "";
+      if (name || operationId || (method && path)) {
+        count++;
+      }
+    }
+  }
+
+  if (isPlainObject(schemaSpec.endpoint)) {
+    const path = typeof schemaSpec.endpoint.path === "string" ? schemaSpec.endpoint.path.trim() : "";
+    const method = typeof schemaSpec.endpoint.method === "string" ? schemaSpec.endpoint.method.trim() : "";
+    if (path || method) {
+      count += 1;
+    }
+  }
+
+  return count;
+}
+
+function computeListingReadinessScore(input: {
+  hasDiscoveryIntent: boolean;
+  hasCapabilityTags: boolean;
+  hasModalities: boolean;
+  hasExecutionExamples: boolean;
+  hasDocs: boolean;
+  hasHealthStrategy: boolean;
+  hasAvailabilitySignals: boolean;
+  hasComplianceSignals: boolean;
+  hasDomainMetadata: boolean;
+  hasHumanApprovalPolicy: boolean;
+}): number {
+  let score = 0;
+
+  if (input.hasDiscoveryIntent) score += 15;
+  if (input.hasCapabilityTags) score += 15;
+  if (input.hasModalities) score += 15;
+  if (input.hasExecutionExamples) score += 20;
+  if (input.hasHealthStrategy) score += 10;
+  if (input.hasDocs) score += 10;
+  if (input.hasAvailabilitySignals) score += 5;
+  if (input.hasComplianceSignals) score += 5;
+  if (input.hasDomainMetadata) score += 2;
+  if (input.hasHumanApprovalPolicy) score += 3;
+
+  return Math.max(0, Math.min(100, score));
 }
 
 export function sanitizeStringArray(
@@ -81,6 +252,8 @@ export async function extractListingWriteData(body: Record<string, unknown>): Pr
   const arrayFields = {
     tags: sanitizeStringArray(body.tags, { maxItems: 24, tokenPattern: SAFE_TOKEN }),
     intents: sanitizeStringArray(body.intents, { maxItems: 24, tokenPattern: SAFE_TOKEN }),
+    authSchemes: sanitizeStringArray(body.authSchemes, { maxItems: 8, tokenPattern: SAFE_TOKEN }),
+    interactionModes: sanitizeStringArray(body.interactionModes, { maxItems: 8, tokenPattern: SAFE_TOKEN }),
     availabilityRegions: sanitizeStringArray(body.availabilityRegions, { maxItems: 24, uppercase: true, tokenPattern: ISO_COUNTRY }),
     restrictedRegions: sanitizeStringArray(body.restrictedRegions, { maxItems: 24, uppercase: true, tokenPattern: ISO_COUNTRY }),
     complianceTags: sanitizeStringArray(body.complianceTags, { maxItems: 24, tokenPattern: SAFE_TOKEN }),
@@ -93,6 +266,40 @@ export async function extractListingWriteData(body: Record<string, unknown>): Pr
     if (value !== undefined) {
       data[field] = value;
     }
+  }
+
+  if (body.humanApprovalRequired !== undefined) {
+    if (typeof body.humanApprovalRequired !== "boolean") {
+      throw new Error("humanApprovalRequired must be a boolean");
+    }
+    data.humanApprovalRequired = body.humanApprovalRequired;
+  }
+
+  if (body.noHealthProbe !== undefined) {
+    if (typeof body.noHealthProbe !== "boolean") {
+      throw new Error("noHealthProbe must be a boolean");
+    }
+    data.noHealthProbe = body.noHealthProbe;
+  }
+
+  if (body.riskLevel !== undefined) {
+    if (
+      typeof body.riskLevel !== "string" ||
+      !Object.values(ListingRiskLevel).includes(body.riskLevel as ListingRiskLevel)
+    ) {
+      throw new Error("Invalid riskLevel");
+    }
+    data.riskLevel = body.riskLevel;
+  }
+
+  if (body.sideEffectLevel !== undefined) {
+    if (
+      typeof body.sideEffectLevel !== "string" ||
+      !Object.values(ListingSideEffectLevel).includes(body.sideEffectLevel as ListingSideEffectLevel)
+    ) {
+      throw new Error("Invalid sideEffectLevel");
+    }
+    data.sideEffectLevel = body.sideEffectLevel;
   }
 
   if (body.domainMetadata !== undefined) {
@@ -177,16 +384,31 @@ export async function extractListingWriteData(body: Record<string, unknown>): Pr
   }
 
   if (body.sampleRequest !== undefined) {
-    data.sampleRequest = body.sampleRequest ?? undefined;
+    data.sampleRequest = body.sampleRequest === null ? null : body.sampleRequest;
   }
   if (body.sampleResponse !== undefined) {
-    data.sampleResponse = body.sampleResponse ?? undefined;
+    data.sampleResponse = body.sampleResponse === null ? null : body.sampleResponse;
   }
+
+  if (body.schemaSpec !== undefined) {
+    if (body.schemaSpec === null || body.schemaSpec === "") {
+      data.schemaSpec = null;
+    } else if (isPlainObject(body.schemaSpec)) {
+      data.schemaSpec = body.schemaSpec;
+    } else {
+      throw new Error("schemaSpec must be a plain JSON object");
+    }
+  }
+
   if (body.videoUrl !== undefined) {
     if (body.videoUrl === null || body.videoUrl === "") {
-      data.schemaSpec = undefined;
+      if (data.schemaSpec === undefined) {
+        data.schemaSpec = null;
+      }
     } else if (typeof body.videoUrl === "string") {
-      data.schemaSpec = { videoUrl: body.videoUrl.trim() };
+      data.schemaSpec = mergeSchemaSpecValue(data.schemaSpec, {
+        videoUrl: body.videoUrl.trim(),
+      });
     } else {
       throw new Error("videoUrl must be a string");
     }
@@ -195,17 +417,37 @@ export async function extractListingWriteData(body: Record<string, unknown>): Pr
   return data;
 }
 
-export async function validateActivationReadiness(listing: {
-  baseUrl: string;
-  healthCheckUrl?: string | null;
-  sandboxUrl?: string | null;
-  docsUrl?: string | null;
-  description: string;
-  tags: string[];
-  intents: string[];
-  capabilityTags?: string[];
-}): Promise<string[]> {
-  const errors: string[] = [];
+export function buildListingReadinessWriteData(report: ListingReadinessReport): Record<string, unknown> {
+  return {
+    authSchemes: report.normalized.authSchemes,
+    interactionModes: report.normalized.interactionModes,
+    humanApprovalRequired: report.normalized.humanApprovalRequired,
+    noHealthProbe: report.normalized.noHealthProbe,
+    riskLevel: report.normalized.riskLevel,
+    sideEffectLevel: report.normalized.sideEffectLevel,
+    readinessScore: report.score,
+    readinessIssues: report.blockers,
+    readinessWarnings: report.warnings,
+    readinessUpdatedAt: new Date(),
+  };
+}
+
+export async function evaluateListingReadiness(
+  listing: ListingReadinessInput,
+): Promise<ListingReadinessReport> {
+  const blockers: string[] = [];
+  const warnings: string[] = [];
+
+  const authSchemes = deriveAuthSchemes(listing.authType, listing.authSchemes);
+  const interactionModes = inferInteractionModes(
+    listing.listingType,
+    listing.interactionModes,
+    listing.schemaSpec,
+  );
+  const humanApprovalRequired = Boolean(listing.humanApprovalRequired);
+  const noHealthProbe = Boolean(listing.noHealthProbe);
+  const riskLevel = listing.riskLevel ?? "LOW";
+  const sideEffectLevel = listing.sideEffectLevel ?? "READ_ONLY";
 
   for (const [label, value] of [
     ["baseUrl", listing.baseUrl],
@@ -217,19 +459,121 @@ export async function validateActivationReadiness(listing: {
     try {
       await assertSafeHttpUrl(value);
     } catch (error) {
-      errors.push(`${label}: ${error instanceof Error ? error.message : "invalid URL"}`);
+      blockers.push(`${label}: ${error instanceof Error ? error.message : "invalid URL"}`);
     }
   }
 
-  if (listing.description.trim().length < 20) {
-    errors.push("description must be at least 20 characters before activation");
+  if (listing.description.trim().length < READY_DESCRIPTION_MIN_LENGTH) {
+    blockers.push(
+      `description must be at least ${READY_DESCRIPTION_MIN_LENGTH} characters before activation`,
+    );
   }
 
-  const discoverySignals =
-    listing.tags.length + listing.intents.length + (listing.capabilityTags?.length ?? 0);
-  if (discoverySignals === 0) {
-    errors.push("add tags, intents, or capabilityTags before activation so agents can discover the listing");
+  const hasDiscoveryIntent =
+    listing.tags.length > 0 || listing.intents.length > 0 || (listing.capabilityTags?.length ?? 0) > 0;
+  if (!hasDiscoveryIntent) {
+    blockers.push("add tags, intents, or capabilityTags before activation so agents can discover the listing");
   }
 
-  return errors;
+  if ((listing.capabilityTags?.length ?? 0) === 0) {
+    blockers.push("add at least one capabilityTag so the marketplace can apply hard capability filters");
+  }
+
+  const hasModalities =
+    (listing.inputModalities?.length ?? 0) > 0 &&
+    (listing.outputModalities?.length ?? 0) > 0;
+  if (!hasModalities) {
+    blockers.push("inputModalities and outputModalities are required before activation");
+  }
+
+  if (authSchemes.length === 0) {
+    blockers.push("at least one authScheme is required before activation");
+  }
+
+  if (interactionModes.length === 0) {
+    blockers.push("at least one interactionMode is required before activation");
+  }
+
+  const operationCount = countOperationContracts(listing.schemaSpec);
+  const hasExecutionExamples =
+    (hasJsonContent(listing.sampleRequest) && hasJsonContent(listing.sampleResponse)) ||
+    operationCount > 0;
+  if (!hasExecutionExamples) {
+    blockers.push(
+      "provide sampleRequest and sampleResponse or a schemaSpec operation contract before activation",
+    );
+  }
+
+  const hasHealthStrategy = Boolean(listing.healthCheckUrl) || noHealthProbe;
+  if (!hasHealthStrategy) {
+    blockers.push("provide a healthCheckUrl or explicitly mark noHealthProbe before activation");
+  }
+
+  const requiresApproval =
+    riskLevel === "HIGH" ||
+    riskLevel === "CRITICAL" ||
+    sideEffectLevel === "REVERSIBLE" ||
+    sideEffectLevel === "IRREVERSIBLE";
+  if (requiresApproval && !humanApprovalRequired) {
+    blockers.push(
+      "high-risk or side-effecting listings must set humanApprovalRequired before activation",
+    );
+  }
+
+  if (!listing.docsUrl) {
+    warnings.push("docsUrl is missing; agents and operators will have less context for this listing");
+  }
+
+  if ((listing.availabilityRegions?.length ?? 0) === 0) {
+    warnings.push("availabilityRegions is empty; region-aware routing will assume global availability");
+  }
+
+  if ((listing.complianceTags?.length ?? 0) === 0) {
+    warnings.push("complianceTags is empty; policy-aware routing will have less signal");
+  }
+
+  if (!hasJsonContent(listing.domainMetadata)) {
+    warnings.push("domainMetadata is empty; richer domain-specific routing hints are missing");
+  }
+
+  if (!listing.sandboxUrl && sideEffectLevel !== "READ_ONLY") {
+    warnings.push("sandboxUrl is missing for a side-effecting listing");
+  }
+
+  if (operationCount === 0) {
+    warnings.push("schemaSpec does not define operation contracts; agents will rely on samples only");
+  }
+
+  const score = computeListingReadinessScore({
+    hasDiscoveryIntent,
+    hasCapabilityTags: (listing.capabilityTags?.length ?? 0) > 0,
+    hasModalities,
+    hasExecutionExamples,
+    hasDocs: Boolean(listing.docsUrl),
+    hasHealthStrategy,
+    hasAvailabilitySignals: (listing.availabilityRegions?.length ?? 0) > 0,
+    hasComplianceSignals: (listing.complianceTags?.length ?? 0) > 0,
+    hasDomainMetadata: hasJsonContent(listing.domainMetadata),
+    hasHumanApprovalPolicy: !requiresApproval || humanApprovalRequired,
+  });
+
+  return {
+    score,
+    readyForActivation: blockers.length === 0,
+    blockers,
+    warnings,
+    normalized: {
+      authSchemes,
+      interactionModes,
+      humanApprovalRequired,
+      noHealthProbe,
+      riskLevel,
+      sideEffectLevel,
+    },
+  };
+}
+
+export async function validateActivationReadiness(listing: ListingReadinessInput): Promise<string[]> {
+  const report = await evaluateListingReadiness(listing);
+  return report.blockers;
 }

@@ -43,10 +43,21 @@ export function ActivationWizard({ listing, onActivated, onClose }: Props) {
   const runValidation = useCallback(() => {
     updateStep(0, { status: "running", message: "Validating configuration..." });
 
+    const readiness = listing.readiness;
+    if (readiness && readiness.issues.length > 0) {
+      updateStep(0, {
+        status: "fail",
+        message: `Listing contract is not ready (${readiness.score}/100)`,
+        detail: readiness.issues.join(". "),
+      });
+      return false;
+    }
+
     const issues: string[] = [];
     if (!listing.baseUrl) issues.push("Base URL is required");
-    if (!listing.floorPriceUsdc || listing.floorPriceUsdc <= 0)
+    if (!listing.floorPriceUsdc || listing.floorPriceUsdc <= 0) {
       issues.push("Floor price must be > 0");
+    }
     if (!listing.categorySlug) issues.push("Category is required");
     if (!listing.description) issues.push("Description is required");
 
@@ -61,8 +72,12 @@ export function ActivationWizard({ listing, onActivated, onClose }: Props) {
 
     updateStep(0, {
       status: "pass",
-      message: "Configuration valid",
-      detail: `Base URL: ${listing.baseUrl}`,
+      message: readiness
+        ? `Listing contract ready (${readiness.score}/100)`
+        : "Configuration valid",
+      detail: readiness?.warnings.length
+        ? readiness.warnings.join(". ")
+        : `Base URL: ${listing.baseUrl}`,
     });
     return true;
   }, [listing, updateStep]);

@@ -94,6 +94,17 @@ export type AuthType =
   | "oauth2"
   | "none";
 
+export type ListingRiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+export type ListingSideEffectLevel = "READ_ONLY" | "REVERSIBLE" | "IRREVERSIBLE";
+
+export interface ListingReadinessSnapshot {
+  score: number;
+  readyForActivation: boolean;
+  issues: string[];
+  warnings: string[];
+  updatedAt: string | null;
+}
+
 export interface DiscoveryMetadata {
   /** Broad search tags used during discovery. */
   tags?: string[];
@@ -113,6 +124,18 @@ export interface DiscoveryMetadata {
   outputModalities?: string[];
   /** Optional vertical-specific metadata. */
   domainMetadata?: Record<string, unknown> | null;
+  /** Supported upstream auth schemes. */
+  authSchemes?: string[];
+  /** Execution patterns supported by the API. */
+  interactionModes?: string[];
+  /** Require explicit human approval before high-risk execution. */
+  humanApprovalRequired?: boolean;
+  /** Explicitly opt out of health probing if no stable health endpoint exists. */
+  noHealthProbe?: boolean;
+  /** Provider-declared risk level. */
+  riskLevel?: ListingRiskLevel;
+  /** Side-effect level of the exposed operations. */
+  sideEffectLevel?: ListingSideEffectLevel;
 }
 
 /** Input for creating a new listing. */
@@ -194,6 +217,12 @@ export interface Listing {
   docsUrl: string | null;
   sandboxUrl: string | null;
   authType: string;
+  authSchemes: string[];
+  interactionModes: string[];
+  humanApprovalRequired: boolean;
+  noHealthProbe: boolean;
+  riskLevel: ListingRiskLevel;
+  sideEffectLevel: ListingSideEffectLevel;
   floorPriceUsdc: string;
   ceilingPriceUsdc: string | null;
   currentPriceUsdc: string;
@@ -212,6 +241,7 @@ export interface Listing {
   totalRevenue: string;
   avgRating: string;
   ratingCount: number;
+  readiness: ListingReadinessSnapshot;
   publishedAt: string | null;
   createdAt: string;
   updatedAt?: string;

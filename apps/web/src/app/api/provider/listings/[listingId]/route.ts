@@ -1,7 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
+import {
+  ListingRiskLevel,
+  ListingSideEffectLevel,
+  ListingType,
+  Prisma,
+} from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
-import { extractListingWriteData } from "@/lib/providerListing";
+import {
+  buildListingReadinessWriteData,
+  evaluateListingReadiness,
+  extractListingWriteData,
+} from "@/lib/providerListing";
 
 // ─────────────────────────────────────────────────────────────
 // GET /api/provider/listings/[listingId]
@@ -60,6 +70,12 @@ export async function GET(
     docsUrl: listing.docsUrl,
     sandboxUrl: listing.sandboxUrl,
     authType: listing.authType,
+    authSchemes: listing.authSchemes,
+    interactionModes: listing.interactionModes,
+    humanApprovalRequired: listing.humanApprovalRequired,
+    noHealthProbe: listing.noHealthProbe,
+    riskLevel: listing.riskLevel,
+    sideEffectLevel: listing.sideEffectLevel,
     videoUrl: videoUrl ?? null,
     floorPriceUsdc: Number(listing.floorPriceUsdc),
     currentPriceUsdc: Number(listing.currentPriceUsdc),
@@ -76,6 +92,13 @@ export async function GET(
     inputModalities: listing.inputModalities,
     outputModalities: listing.outputModalities,
     domainMetadata: listing.domainMetadata,
+    readiness: {
+      score: listing.readinessScore,
+      readyForActivation: listing.readinessIssues.length === 0,
+      issues: listing.readinessIssues,
+      warnings: listing.readinessWarnings,
+      updatedAt: listing.readinessUpdatedAt?.toISOString() ?? null,
+    },
     totalCalls: Number(listing.totalCalls),
     totalRevenue: Number(listing.totalRevenue),
     avgRating: Number(listing.avgRating),
@@ -145,6 +168,51 @@ export async function PUT(
       data.currentPriceUsdc = nextFloor;
     }
   }
+
+  const nextListing = {
+    listingType: (data.listingType as ListingType | undefined) ?? listing.listingType,
+    baseUrl: (data.baseUrl as string | undefined) ?? listing.baseUrl,
+    healthCheckUrl:
+      (data.healthCheckUrl as string | null | undefined) ?? listing.healthCheckUrl,
+    sandboxUrl: (data.sandboxUrl as string | null | undefined) ?? listing.sandboxUrl,
+    docsUrl: (data.docsUrl as string | null | undefined) ?? listing.docsUrl,
+    authType: (data.authType as string | undefined) ?? listing.authType,
+    authSchemes: (data.authSchemes as string[] | undefined) ?? listing.authSchemes,
+    interactionModes:
+      (data.interactionModes as string[] | undefined) ?? listing.interactionModes,
+    humanApprovalRequired:
+      (data.humanApprovalRequired as boolean | undefined) ?? listing.humanApprovalRequired,
+    noHealthProbe: (data.noHealthProbe as boolean | undefined) ?? listing.noHealthProbe,
+    riskLevel:
+      (data.riskLevel as ListingRiskLevel | undefined) ?? listing.riskLevel,
+    sideEffectLevel:
+      (data.sideEffectLevel as ListingSideEffectLevel | undefined) ??
+      listing.sideEffectLevel,
+    description: (data.description as string | undefined) ?? listing.description,
+    tags: (data.tags as string[] | undefined) ?? listing.tags,
+    intents: (data.intents as string[] | undefined) ?? listing.intents,
+    capabilityTags:
+      (data.capabilityTags as string[] | undefined) ?? listing.capabilityTags,
+    inputModalities:
+      (data.inputModalities as string[] | undefined) ?? listing.inputModalities,
+    outputModalities:
+      (data.outputModalities as string[] | undefined) ?? listing.outputModalities,
+    availabilityRegions:
+      (data.availabilityRegions as string[] | undefined) ?? listing.availabilityRegions,
+    complianceTags:
+      (data.complianceTags as string[] | undefined) ?? listing.complianceTags,
+    sampleRequest:
+      (data.sampleRequest as Prisma.JsonValue | null | undefined) ?? listing.sampleRequest,
+    sampleResponse:
+      (data.sampleResponse as Prisma.JsonValue | null | undefined) ?? listing.sampleResponse,
+    schemaSpec:
+      (data.schemaSpec as Prisma.JsonValue | null | undefined) ?? listing.schemaSpec,
+    domainMetadata:
+      (data.domainMetadata as Prisma.JsonValue | null | undefined) ?? listing.domainMetadata,
+  };
+
+  const readiness = await evaluateListingReadiness(nextListing);
+  Object.assign(data, buildListingReadinessWriteData(readiness));
 
   const updated = await prisma.listing.update({
     where: { id: listingId },

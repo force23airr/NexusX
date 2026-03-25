@@ -39,7 +39,8 @@ class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
-    public code?: string
+    public code?: string,
+    public details?: unknown
   ) {
     super(message);
     this.name = "ApiError";
@@ -73,10 +74,14 @@ async function apiFetch<T>(
 
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
+    const detailSuffix = Array.isArray(body.details) && body.details.length > 0
+      ? `: ${body.details.join("; ")}`
+      : "";
     throw new ApiError(
-      body.error || `Request failed: ${res.status}`,
+      `${body.error || `Request failed: ${res.status}`}${detailSuffix}`,
       res.status,
-      body.code
+      body.code,
+      body.details
     );
   }
 
@@ -339,6 +344,12 @@ export const provider = {
     docsUrl?: string;
     sandboxUrl?: string;
     authType: string;
+    authSchemes?: string[];
+    interactionModes?: string[];
+    humanApprovalRequired?: boolean;
+    noHealthProbe?: boolean;
+    riskLevel?: "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+    sideEffectLevel?: "READ_ONLY" | "REVERSIBLE" | "IRREVERSIBLE";
     floorPriceUsdc: number;
     ceilingPriceUsdc?: number;
     capacityPerMinute: number;
