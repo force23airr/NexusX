@@ -12,6 +12,7 @@ import {
   evaluateListingReadiness,
   extractListingWriteData,
 } from "@/lib/providerListing";
+import { extractOperationContracts } from "@/lib/listingOperationContracts";
 
 // ─────────────────────────────────────────────────────────────
 // GET /api/provider/listings/[listingId]
@@ -52,6 +53,7 @@ export async function GET(
   const videoUrl = listing.schemaSpec && typeof listing.schemaSpec === "object"
     ? (listing.schemaSpec as Record<string, unknown>).videoUrl as string | undefined
     : undefined;
+  const operationContracts = extractOperationContracts(listing.schemaSpec);
 
   return NextResponse.json({
     id: listing.id,
@@ -85,6 +87,8 @@ export async function GET(
     tags: listing.tags,
     sampleRequest: listing.sampleRequest,
     sampleResponse: listing.sampleResponse,
+    schemaSpec: listing.schemaSpec,
+    operationContracts,
     availabilityRegions: listing.availabilityRegions,
     restrictedRegions: listing.restrictedRegions,
     complianceTags: listing.complianceTags,

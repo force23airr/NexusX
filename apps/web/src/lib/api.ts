@@ -11,6 +11,7 @@ import type {
   Listing,
   ListingDetail,
   ListingDiscoveryMetadata,
+  ListingOperationContract,
   MarketplaceSearchOptions,
   RouteResult,
   Transaction,
@@ -358,6 +359,8 @@ export const provider = {
     isUnique: boolean;
     sampleRequest?: unknown;
     sampleResponse?: unknown;
+    schemaSpec?: Record<string, unknown> | null;
+    operationContracts?: ListingOperationContract[];
   } & ListingDiscoveryMetadata): Promise<{ id: string; slug: string }> {
     return apiFetch("/api/provider/listings", {
       method: "POST",

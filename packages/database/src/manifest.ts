@@ -21,6 +21,22 @@ export interface NexusXManifest {
   capabilities: NexusXManifestCapability[];
 }
 
+export interface NexusXManifestOperation {
+  operationId?: string;
+  name: string;
+  description?: string;
+  method: string;
+  path: string;
+  mode?: string;
+  authScheme?: string;
+  idempotent?: boolean;
+  sideEffect?: boolean;
+  inputSchema?: Record<string, unknown>;
+  outputSchema?: Record<string, unknown>;
+  sampleInput?: Record<string, unknown>;
+  sampleOutput?: Record<string, unknown>;
+}
+
 export interface NexusXManifestCapability {
   name: string;
   description: string;
@@ -29,6 +45,7 @@ export interface NexusXManifestCapability {
   category: string; // category slug
   baseUrl: string;
   endpoint?: { method: string; path: string };
+  operations?: NexusXManifestOperation[];
   healthCheckUrl?: string;
   docsUrl?: string;
   authType?: string;
@@ -133,6 +150,29 @@ export function validateManifest(data: unknown): ValidationResult {
       validateOptionalStringArray(c.latencyRegions, `${prefix}.latencyRegions`, errors);
       validateOptionalStringArray(c.routingRegions, `${prefix}.routingRegions`, errors);
       validateOptionalStringArray(c.edgeRegions, `${prefix}.edgeRegions`, errors);
+      if (c.operations !== undefined) {
+        if (!Array.isArray(c.operations)) {
+          errors.push(`${prefix}.operations must be an array`);
+        } else {
+          c.operations.forEach((operation, operationIndex) => {
+            const operationPrefix = `${prefix}.operations[${operationIndex}]`;
+            if (!operation || typeof operation !== "object" || Array.isArray(operation)) {
+              errors.push(`${operationPrefix} must be an object`);
+              return;
+            }
+            const op = operation as Record<string, unknown>;
+            if (typeof op.name !== "string" || !op.name.trim()) {
+              errors.push(`${operationPrefix}.name must be a non-empty string`);
+            }
+            if (typeof op.method !== "string" || !op.method.trim()) {
+              errors.push(`${operationPrefix}.method must be a non-empty string`);
+            }
+            if (typeof op.path !== "string" || !op.path.trim()) {
+              errors.push(`${operationPrefix}.path must be a non-empty string`);
+            }
+          });
+        }
+      }
       if (c.domainMetadata !== undefined && (!c.domainMetadata || typeof c.domainMetadata !== "object" || Array.isArray(c.domainMetadata))) {
         errors.push(`${prefix}.domainMetadata must be a JSON object`);
       }

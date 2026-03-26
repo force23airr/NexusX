@@ -380,6 +380,19 @@ export class NexusXProvider {
     if (input.noHealthProbe !== undefined && typeof input.noHealthProbe !== "boolean") {
       throw new Error("noHealthProbe must be a boolean.");
     }
+    if (input.operationContracts !== undefined) {
+      if (!Array.isArray(input.operationContracts)) {
+        throw new Error("operationContracts must be an array.");
+      }
+      for (const [index, operation] of input.operationContracts.entries()) {
+        if (!operation.name || !operation.name.trim()) {
+          throw new Error(`operationContracts[${index}].name is required.`);
+        }
+        if (!operation.method || !operation.path) {
+          throw new Error(`operationContracts[${index}] must include method and path.`);
+        }
+      }
+    }
   }
 
   private validateMetricReport(report: HealthMetricReport): void {

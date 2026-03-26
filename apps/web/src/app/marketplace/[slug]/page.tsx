@@ -53,9 +53,25 @@ export default function ListingDetailPage() {
       .getListingDetail(slug)
       .then((data) => {
         setListing(data);
-        setPgUrl(data.sandboxUrl || data.baseUrl);
-        if (data.sampleRequest) {
-          setPgBody(JSON.stringify(data.sampleRequest, null, 2));
+        const primaryOperation = data.operationContracts?.[0];
+        if (primaryOperation) {
+          try {
+            const operationUrl = new URL(primaryOperation.path, data.sandboxUrl || data.baseUrl);
+            setPgUrl(operationUrl.toString());
+          } catch {
+            setPgUrl(data.sandboxUrl || data.baseUrl);
+          }
+          setPgMethod(primaryOperation.method);
+          if (primaryOperation.sampleInput) {
+            setPgBody(JSON.stringify(primaryOperation.sampleInput, null, 2));
+          } else if (data.sampleRequest) {
+            setPgBody(JSON.stringify(data.sampleRequest, null, 2));
+          }
+        } else {
+          setPgUrl(data.sandboxUrl || data.baseUrl);
+          if (data.sampleRequest) {
+            setPgBody(JSON.stringify(data.sampleRequest, null, 2));
+          }
         }
       })
       .catch((err) => setError(err.message))
@@ -488,6 +504,38 @@ export default function ListingDetailPage() {
           )}
         </div>
       )}
+
+      {listing.operationContracts?.length ? (
+        <div className="card p-5">
+          <h4 className="text-sm font-semibold text-zinc-300 mb-3">Operation Contracts</h4>
+          <div className="space-y-3">
+            {listing.operationContracts.map((operation) => (
+              <div
+                key={operation.operationId}
+                className="rounded-lg border border-surface-4 bg-surface-2 px-4 py-3"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-zinc-200">{operation.name}</span>
+                  <span className="rounded-md border border-surface-4 bg-surface-1 px-2 py-0.5 text-2xs text-zinc-500 font-mono">
+                    {operation.method} {operation.path}
+                  </span>
+                  <span className="rounded-md border border-surface-4 bg-surface-1 px-2 py-0.5 text-2xs text-zinc-500">
+                    {operation.mode}
+                  </span>
+                  {operation.authScheme && (
+                    <span className="rounded-md border border-surface-4 bg-surface-1 px-2 py-0.5 text-2xs text-zinc-500">
+                      {operation.authScheme}
+                    </span>
+                  )}
+                </div>
+                {operation.description && (
+                  <p className="mt-2 text-sm text-zinc-400">{operation.description}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

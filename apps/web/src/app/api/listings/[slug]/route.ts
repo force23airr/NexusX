@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { extractOperationContracts } from "@/lib/listingOperationContracts";
 
 
 export async function GET(
@@ -30,6 +31,7 @@ export async function GET(
 
   const quality = listing.qualitySnapshots[0];
   const schemaSpec = (listing.schemaSpec as Record<string, unknown>) || {};
+  const operationContracts = extractOperationContracts(listing.schemaSpec);
 
   const priceHistory = listing.priceSnapshots
     .map((ps) => ({
@@ -74,6 +76,7 @@ export async function GET(
     videoUrl: (schemaSpec.videoUrl as string) || null,
     sampleRequest: listing.sampleRequest,
     sampleResponse: listing.sampleResponse,
+    operationContracts,
     priceHistory,
   };
 

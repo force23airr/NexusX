@@ -12,11 +12,17 @@ import DiscoveryMetadataFields, {
   stringifyDomainMetadata,
 } from "@/components/provider/DiscoveryMetadataFields";
 import ListingContractFields from "@/components/provider/ListingContractFields";
+import ListingOperationContractsFields from "@/components/provider/ListingOperationContractsFields";
+import {
+  createEmptyOperationContract,
+  mergeOperationContractsIntoSchemaSpec,
+} from "@/lib/listingOperationContracts";
 import type {
   ListingType,
   DetectEndpoint,
   DetectResponse,
   InputSchemaField,
+  ListingOperationContract,
   ListingRiskLevel,
   ListingSideEffectLevel,
 } from "@/types";
@@ -116,6 +122,7 @@ interface WizardFormData {
   authType: string;
   sampleRequest: string;
   sampleResponse: string;
+  operationContracts: ListingOperationContract[];
   authSchemes: string[];
   interactionModes: string[];
   humanApprovalRequired: boolean;
@@ -162,6 +169,7 @@ const INITIAL_STATE: WizardFormData = {
   authType: "api_key",
   sampleRequest: "",
   sampleResponse: "",
+  operationContracts: [],
   authSchemes: ["api_key"],
   interactionModes: ["sync"],
   humanApprovalRequired: false,
@@ -222,6 +230,10 @@ function wizardReducer(state: WizardFormData, action: WizardAction): WizardFormD
         authType: nextAuthType,
         sampleRequest: r.sampleRequest ? JSON.stringify(r.sampleRequest, null, 2) : state.sampleRequest,
         sampleResponse: r.sampleResponse ? JSON.stringify(r.sampleResponse, null, 2) : state.sampleResponse,
+        operationContracts:
+          r.operationContracts.length > 0 && state.operationContracts.length === 0
+            ? r.operationContracts
+            : state.operationContracts,
         authSchemes:
           detectedAuthSchemes.length > 0 &&
           (state.authSchemes.length === 0 || sameTokens(state.authSchemes, currentInferredAuthSchemes))
@@ -622,6 +634,10 @@ export default function CreateListingPage() {
         routingRegions: form.routingRegions,
         edgeRegions: form.edgeRegions,
       });
+      const schemaSpec = mergeOperationContractsIntoSchemaSpec(
+        null,
+        form.operationContracts,
+      );
 
       await provider.createListing({
         name: form.name,
@@ -655,6 +671,8 @@ export default function CreateListingPage() {
         isUnique: false,
         sampleRequest,
         sampleResponse,
+        schemaSpec,
+        operationContracts: form.operationContracts,
       });
 
       if (form.payoutAddress) {
@@ -1044,6 +1062,23 @@ export default function CreateListingPage() {
                         onChange={(field, value) => {
                           setField(field as keyof WizardFormData, value as WizardFormData[keyof WizardFormData]);
                         }}
+                      />
+                    </div>
+
+                    <div className="pt-2 border-t border-surface-4">
+                      <h3 className="text-sm font-semibold text-zinc-300 mb-1">Operation Contracts</h3>
+                      <p className="text-2xs text-zinc-500 mb-4">
+                        Define the concrete actions agents can execute against this API. Auto-detect will prefill them from your spec when possible.
+                      </p>
+                      <ListingOperationContractsFields
+                        value={form.operationContracts}
+                        onChange={(next) => setField("operationContracts", next)}
+                        onAdd={() =>
+                          setField("operationContracts", [
+                            ...form.operationContracts,
+                            createEmptyOperationContract(form.operationContracts.length),
+                          ])
+                        }
                       />
                     </div>
                   </section>

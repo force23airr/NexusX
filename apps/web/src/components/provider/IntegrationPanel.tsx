@@ -103,6 +103,11 @@ function X402Tab({ listing }: { listing: ListingDetail }) {
 
 function McpTab({ listing }: { listing: ListingDetail }) {
   const toolName = `nexusx_${listing.slug.replace(/-/g, "_")}`;
+  const primaryOperation = listing.operationContracts?.[0];
+  const primaryInput =
+    primaryOperation?.sampleInput ?? listing.sampleRequest ?? { text: "your input here" };
+  const primaryPath = primaryOperation?.path ?? "/";
+  const primaryMethod = primaryOperation?.method ?? "POST";
 
   return (
     <div className="space-y-4">
@@ -123,7 +128,7 @@ function McpTab({ listing }: { listing: ListingDetail }) {
   "tool": "nexusx",
   "arguments": {
     "task": "Use ${listing.name}",
-    "input": ${listing.sampleRequest ? JSON.stringify(listing.sampleRequest, null, 2) : '{ "text": "your input here" }'}
+    "input": ${JSON.stringify(primaryInput, null, 2)}
   }
 }`}</CodeBlock>
       </div>
@@ -135,12 +140,41 @@ function McpTab({ listing }: { listing: ListingDetail }) {
         <CodeBlock language="json">{`{
   "tool": "${toolName}",
   "arguments": {
-    "path": "/",
-    "method": "POST",
-    "body": ${listing.sampleRequest ? JSON.stringify(listing.sampleRequest, null, 2) : '{ "text": "your input here" }'}
+    "path": "${primaryPath}",
+    "method": "${primaryMethod}",
+    "body": ${JSON.stringify(primaryInput, null, 2)}
   }
 }`}</CodeBlock>
       </div>
+
+      {listing.operationContracts?.length ? (
+        <div>
+          <h5 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+            Available Operations
+          </h5>
+          <div className="space-y-2">
+            {listing.operationContracts.map((operation) => (
+              <div
+                key={operation.operationId}
+                className="rounded-lg border border-surface-4 bg-surface-2 px-3 py-2"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-zinc-200">{operation.name}</span>
+                  <span className="font-mono text-2xs text-zinc-500">
+                    {operation.method} {operation.path}
+                  </span>
+                  <span className="rounded-md border border-surface-4 bg-surface-1 px-2 py-0.5 text-2xs text-zinc-500">
+                    {operation.mode}
+                  </span>
+                </div>
+                {operation.description && (
+                  <p className="mt-1 text-sm text-zinc-400">{operation.description}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div>
         <h5 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
@@ -166,9 +200,12 @@ function McpTab({ listing }: { listing: ListingDetail }) {
 // ─── cURL / HTTP Tab ───
 
 function CurlTab({ listing }: { listing: ListingDetail }) {
-  const sampleBody = listing.sampleRequest
-    ? JSON.stringify(listing.sampleRequest)
-    : '{"text": "hello"}';
+  const primaryOperation = listing.operationContracts?.[0];
+  const sampleBody = JSON.stringify(
+    primaryOperation?.sampleInput ?? listing.sampleRequest ?? { text: "hello" },
+  );
+  const primaryMethod = primaryOperation?.method ?? "POST";
+  const primaryPath = primaryOperation?.path ?? "";
 
   return (
     <div className="space-y-4">
@@ -183,8 +220,8 @@ function CurlTab({ listing }: { listing: ListingDetail }) {
         <h5 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
           API Key Authentication
         </h5>
-        <CodeBlock language="bash">{`curl -X POST \\
-  https://gateway.nexusx.dev/v1/${listing.slug} \\
+        <CodeBlock language="bash">{`curl -X ${primaryMethod} \\
+  https://gateway.nexusx.dev/v1/${listing.slug}${primaryPath} \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
   -d '${sampleBody}'`}</CodeBlock>
@@ -205,8 +242,8 @@ X-NexusX-Latency-Ms: 45`}</CodeBlock>
         <h5 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
           Sandbox Mode (free, for testing)
         </h5>
-        <CodeBlock language="bash">{`curl -X POST \\
-  https://gateway.nexusx.dev/v1/${listing.slug} \\
+        <CodeBlock language="bash">{`curl -X ${primaryMethod} \\
+  https://gateway.nexusx.dev/v1/${listing.slug}${primaryPath} \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -H "X-NexusX-Sandbox: true" \\
   -H "Content-Type: application/json" \\

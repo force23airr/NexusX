@@ -96,6 +96,7 @@ export type AuthType =
 
 export type ListingRiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type ListingSideEffectLevel = "READ_ONLY" | "REVERSIBLE" | "IRREVERSIBLE";
+export type ListingOperationMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export interface ListingReadinessSnapshot {
   score: number;
@@ -103,6 +104,22 @@ export interface ListingReadinessSnapshot {
   issues: string[];
   warnings: string[];
   updatedAt: string | null;
+}
+
+export interface ListingOperationContract {
+  operationId: string;
+  name: string;
+  description: string;
+  method: ListingOperationMethod;
+  path: string;
+  mode: string;
+  authScheme: string | null;
+  idempotent: boolean;
+  sideEffect: boolean;
+  inputSchema?: Record<string, unknown> | null;
+  outputSchema?: Record<string, unknown> | null;
+  sampleInput?: Record<string, unknown> | null;
+  sampleOutput?: Record<string, unknown> | null;
 }
 
 export interface DiscoveryMetadata {
@@ -181,6 +198,8 @@ export interface CreateListingInput extends DiscoveryMetadata {
   sampleResponse?: Record<string, unknown>;
   /** OpenAPI/JSON Schema spec (JSON). */
   schemaSpec?: Record<string, unknown>;
+  /** Structured action contracts agents can call directly. */
+  operationContracts?: ListingOperationContract[];
 }
 
 /** Input for updating an existing listing. All fields optional. */
@@ -201,6 +220,7 @@ export interface UpdateListingInput extends DiscoveryMetadata {
   sampleRequest?: Record<string, unknown> | null;
   sampleResponse?: Record<string, unknown> | null;
   schemaSpec?: Record<string, unknown> | null;
+  operationContracts?: ListingOperationContract[] | null;
 }
 
 /** Listing as returned by the platform. */
@@ -237,6 +257,10 @@ export interface Listing {
   inputModalities: string[];
   outputModalities: string[];
   domainMetadata: Record<string, unknown> | null;
+  sampleRequest?: Record<string, unknown> | null;
+  sampleResponse?: Record<string, unknown> | null;
+  schemaSpec?: Record<string, unknown> | null;
+  operationContracts?: ListingOperationContract[];
   totalCalls: string;
   totalRevenue: string;
   avgRating: string;

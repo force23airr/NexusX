@@ -13,6 +13,7 @@ export type ListingType = "REST_API" | "GRAPHQL_API" | "WEBSOCKET" | "DATASET" |
 export type ListingStatus = "DRAFT" | "PENDING_REVIEW" | "ACTIVE" | "PAUSED" | "SUSPENDED" | "DEPRECATED";
 export type ListingRiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
 export type ListingSideEffectLevel = "READ_ONLY" | "REVERSIBLE" | "IRREVERSIBLE";
+export type ListingOperationMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 export type TransactionStatus = "PENDING" | "CONFIRMED" | "FAILED" | "REFUNDED" | "DISPUTED";
 export type SearchPriorityMode = "frugal" | "balanced" | "mission_critical";
 
@@ -34,6 +35,22 @@ export interface ListingReadinessSnapshot {
   issues: string[];
   warnings: string[];
   updatedAt: string | null;
+}
+
+export interface ListingOperationContract {
+  operationId: string;
+  name: string;
+  description: string;
+  method: ListingOperationMethod;
+  path: string;
+  mode: string;
+  authScheme: string | null;
+  idempotent: boolean;
+  sideEffect: boolean;
+  inputSchema: Record<string, unknown> | null;
+  outputSchema: Record<string, unknown> | null;
+  sampleInput: Record<string, unknown> | null;
+  sampleOutput: Record<string, unknown> | null;
 }
 
 export interface SearchMetadataFilters {
@@ -100,6 +117,7 @@ export interface Listing extends ListingDiscoveryMetadata {
   riskLevel?: ListingRiskLevel;
   sideEffectLevel?: ListingSideEffectLevel;
   readiness?: ListingReadinessSnapshot;
+  operationContracts?: ListingOperationContract[];
   publishedAt: string | null;
   createdAt: string;
 }
@@ -424,6 +442,7 @@ export interface DetectResponse {
   sampleRequest: Record<string, unknown> | null;
   sampleResponse: Record<string, unknown> | null;
   endpoints: DetectEndpoint[];
+  operationContracts: ListingOperationContract[];
   inputSchemaFields: InputSchemaField[];
   suggestedCategorySlug: string | null;
   tags: string[];
@@ -460,6 +479,8 @@ export interface ListingDetail extends Listing {
   categoryId: string;
   sampleRequest: unknown | null;
   sampleResponse: unknown | null;
+  schemaSpec?: Record<string, unknown> | null;
+  operationContracts?: ListingOperationContract[];
   errorRatePercent: number;
   priceHistory: { timestamp: string; price: number; changePercent: number }[];
 }

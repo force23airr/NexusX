@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { assertSafeHttpUrl, isPrivateHost, safeFetch } from "@/lib/ssrf";
 import { validateManifest } from "@nexusx/database";
+import { buildDetectedOperationContract } from "@/lib/listingOperationContracts";
 
 // ─── Category slug suggestion from spec keywords ───
 
@@ -234,6 +235,7 @@ interface SpecEndpoint {
   method: string;
   summary: string;
   requestSchema: Record<string, unknown> | null;
+  responseSchema: Record<string, unknown> | null;
   tags: string[];
 }
 
@@ -261,6 +263,7 @@ interface DetectionResult {
     summary: string;
     requestSchema: Record<string, unknown> | null;
   }>;
+  operationContracts: Array<ReturnType<typeof buildDetectedOperationContract>>;
   inputSchemaFields: InputSchemaField[];
   suggestedCategorySlug: string | null;
   tags: string[];
@@ -301,6 +304,36 @@ function extractFromManifest(
     routingRegions: cap.routingRegions,
     edgeRegions: cap.edgeRegions,
   });
+  const operationContracts =
+    Array.isArray(cap.operations) && cap.operations.length > 0
+      ? cap.operations.slice(0, 20).map((operation) =>
+          buildDetectedOperationContract({
+            operationId: operation.operationId,
+            name: operation.name,
+            description: operation.description,
+            method: operation.method,
+            path: operation.path,
+            mode: operation.mode,
+            authScheme: operation.authScheme || cap.authType || "api_key",
+            inputSchema: operation.inputSchema || null,
+            outputSchema: operation.outputSchema || null,
+            sampleInput: operation.sampleInput || null,
+            sampleOutput: operation.sampleOutput || null,
+          }),
+        )
+      : cap.endpoint
+        ? [
+            buildDetectedOperationContract({
+              name: cap.name,
+              description: cap.description,
+              method: cap.endpoint.method,
+              path: cap.endpoint.path,
+              authScheme: cap.authType || "api_key",
+              sampleInput: cap.sampleRequest || null,
+              sampleOutput: cap.sampleResponse || null,
+            }),
+          ]
+        : [];
 
   return {
     detected: true,
@@ -314,6 +347,7 @@ function extractFromManifest(
     sampleRequest: cap.sampleRequest || null,
     sampleResponse: cap.sampleResponse || null,
     endpoints: cap.endpoint ? [{ path: cap.endpoint.path, method: cap.endpoint.method, summary: cap.description, requestSchema: null }] : [],
+    operationContracts,
     inputSchemaFields: [] as { name: string; type: string; required: boolean; description: string }[],
     suggestedCategorySlug: cap.category || null,
     tags: cap.tags || [],
@@ -386,6 +420,7 @@ function extractFromSpec(spec: Record<string, unknown>, sourceUrl: string): Dete
 
       // Request schema extraction
       let reqSchema: Record<string, unknown> | null = null;
+      let responseSchema: Record<string, unknown> | null = null;
       if (op.requestBody) {
         const rb = op.requestBody as Record<string, unknown>;
         const content = rb.content as Record<string, Record<string, unknown>> | undefined;
@@ -400,8 +435,28 @@ function extractFromSpec(spec: Record<string, unknown>, sourceUrl: string): Dete
         );
         if (bodyParam?.schema) reqSchema = bodyParam.schema as Record<string, unknown>;
       }
+      if (op.responses) {
+        const responses = op.responses as Record<string, Record<string, unknown>>;
+        const success = responses["200"] || responses["201"] || responses["202"];
+        if (success) {
+          const content = success.content as Record<string, Record<string, unknown>> | undefined;
+          if (content?.["application/json"]?.schema) {
+            responseSchema = content["application/json"].schema as Record<string, unknown>;
+          }
+          if (!responseSchema && success.schema) {
+            responseSchema = success.schema as Record<string, unknown>;
+          }
+        }
+      }
 
-      endpoints.push({ path, method: method.toUpperCase(), summary, requestSchema: reqSchema, tags: opTags });
+      endpoints.push({
+        path,
+        method: method.toUpperCase(),
+        summary,
+        requestSchema: reqSchema,
+        responseSchema,
+        tags: opTags,
+      });
 
       // Health check detection
       if (method.toLowerCase() === "get" && /health/i.test(path) && !healthCheckUrl) {
@@ -425,20 +480,8 @@ function extractFromSpec(spec: Record<string, unknown>, sourceUrl: string): Dete
           }
         }
       }
-      if (method.toLowerCase() === "post" && !sampleResponse && op.responses) {
-        const responses = op.responses as Record<string, Record<string, unknown>>;
-        const success = responses["200"] || responses["201"];
-        if (success) {
-          const content = success.content as Record<string, Record<string, unknown>> | undefined;
-          if (content?.["application/json"]?.schema) {
-            sampleResponse = generateSampleFromSchema(
-              content["application/json"].schema as Record<string, unknown>
-            );
-          }
-          if (!sampleResponse && success.schema) {
-            sampleResponse = generateSampleFromSchema(success.schema as Record<string, unknown>);
-          }
-        }
+      if (method.toLowerCase() === "post" && !sampleResponse && responseSchema) {
+        sampleResponse = generateSampleFromSchema(responseSchema);
       }
     }
   }
@@ -464,6 +507,24 @@ function extractFromSpec(spec: Record<string, unknown>, sourceUrl: string): Dete
     name,
   });
 
+  const operationContracts = endpoints.slice(0, 20).map((endpoint) =>
+    buildDetectedOperationContract({
+      operationId: `${endpoint.method}_${endpoint.path}`,
+      name: endpoint.summary || undefined,
+      description: endpoint.summary,
+      method: endpoint.method,
+      path: endpoint.path,
+      authScheme: authType === "none" ? null : authType,
+      inputSchema: endpoint.requestSchema,
+      outputSchema: endpoint.responseSchema,
+      sampleInput:
+        endpoint.method === "POST" || endpoint.method === "PUT" || endpoint.method === "PATCH"
+          ? generateSampleFromSchema(endpoint.requestSchema || {})
+          : null,
+      sampleOutput: endpoint.responseSchema ? generateSampleFromSchema(endpoint.responseSchema) : null,
+    }),
+  );
+
   return {
     detected: true,
     name,
@@ -475,7 +536,8 @@ function extractFromSpec(spec: Record<string, unknown>, sourceUrl: string): Dete
     listingType,
     sampleRequest,
     sampleResponse,
-    endpoints: endpoints.map(({ tags: _t, ...rest }) => rest),
+    endpoints: endpoints.map(({ tags: _t, responseSchema: _r, ...rest }) => rest),
+    operationContracts,
     inputSchemaFields,
     suggestedCategorySlug,
     tags,
@@ -693,6 +755,7 @@ function fallbackResponse(
     sampleRequest: null,
     sampleResponse: null,
     endpoints: [],
+    operationContracts: [],
     inputSchemaFields: [],
     suggestedCategorySlug: null,
     tags: [],

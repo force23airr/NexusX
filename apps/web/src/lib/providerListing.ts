@@ -4,6 +4,10 @@ import {
   ListingType,
 } from "@prisma/client";
 import { assertSafeHttpUrl } from "@/lib/ssrf";
+import {
+  extractOperationContracts,
+  sanitizeOperationContractsInput,
+} from "@/lib/listingOperationContracts";
 
 const MAX_ARRAY_ITEMS = 32;
 const ISO_COUNTRY = /^[A-Z]{2}$/;
@@ -124,32 +128,16 @@ function inferInteractionModes(
 }
 
 function countOperationContracts(schemaSpec: unknown): number {
-  if (!isPlainObject(schemaSpec)) return 0;
+  const contracts = extractOperationContracts(schemaSpec);
+  if (contracts.length > 0) return contracts.length;
 
-  let count = 0;
-  if (Array.isArray(schemaSpec.operations)) {
-    for (const operation of schemaSpec.operations) {
-      if (!isPlainObject(operation)) continue;
-      const name = typeof operation.name === "string" ? operation.name.trim() : "";
-      const method = typeof operation.method === "string" ? operation.method.trim() : "";
-      const path = typeof operation.path === "string" ? operation.path.trim() : "";
-      const operationId =
-        typeof operation.operationId === "string" ? operation.operationId.trim() : "";
-      if (name || operationId || (method && path)) {
-        count++;
-      }
-    }
+  if (!isPlainObject(schemaSpec) || !isPlainObject(schemaSpec.endpoint)) {
+    return 0;
   }
 
-  if (isPlainObject(schemaSpec.endpoint)) {
-    const path = typeof schemaSpec.endpoint.path === "string" ? schemaSpec.endpoint.path.trim() : "";
-    const method = typeof schemaSpec.endpoint.method === "string" ? schemaSpec.endpoint.method.trim() : "";
-    if (path || method) {
-      count += 1;
-    }
-  }
-
-  return count;
+  const path = typeof schemaSpec.endpoint.path === "string" ? schemaSpec.endpoint.path.trim() : "";
+  const method = typeof schemaSpec.endpoint.method === "string" ? schemaSpec.endpoint.method.trim() : "";
+  return path || method ? 1 : 0;
 }
 
 function computeListingReadinessScore(input: {
@@ -400,6 +388,21 @@ export async function extractListingWriteData(body: Record<string, unknown>): Pr
     }
   }
 
+  if (body.operationContracts !== undefined) {
+    const operationContracts = sanitizeOperationContractsInput(body.operationContracts) ?? [];
+    const baseSchemaSpec = isPlainObject(data.schemaSpec) ? data.schemaSpec : {};
+    if (operationContracts.length > 0) {
+      data.schemaSpec = mergeSchemaSpecValue(baseSchemaSpec, {
+        operations: operationContracts,
+      });
+    } else if (Object.keys(baseSchemaSpec).length > 0) {
+      const { operations: _ignored, ...rest } = baseSchemaSpec;
+      data.schemaSpec = Object.keys(rest).length > 0 ? rest : null;
+    } else {
+      data.schemaSpec = null;
+    }
+  }
+
   if (body.videoUrl !== undefined) {
     if (body.videoUrl === null || body.videoUrl === "") {
       if (data.schemaSpec === undefined) {
@@ -495,6 +498,7 @@ export async function evaluateListingReadiness(
   }
 
   const operationCount = countOperationContracts(listing.schemaSpec);
+  const operationContracts = extractOperationContracts(listing.schemaSpec);
   const hasExecutionExamples =
     (hasJsonContent(listing.sampleRequest) && hasJsonContent(listing.sampleResponse)) ||
     operationCount > 0;
@@ -542,6 +546,17 @@ export async function evaluateListingReadiness(
 
   if (operationCount === 0) {
     warnings.push("schemaSpec does not define operation contracts; agents will rely on samples only");
+  } else if (
+    operationContracts.length > 0 &&
+    operationContracts.every(
+      (operation) =>
+        !hasJsonContent(operation.sampleInput) &&
+        !hasJsonContent(operation.sampleOutput) &&
+        !hasJsonContent(operation.inputSchema) &&
+        !hasJsonContent(operation.outputSchema),
+    )
+  ) {
+    warnings.push("operation contracts are missing sample or schema details; agents will rely on generic payload guesses");
   }
 
   const score = computeListingReadinessScore({

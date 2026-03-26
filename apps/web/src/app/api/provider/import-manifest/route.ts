@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
 import { assertSafeHttpUrl, safeFetch } from "@/lib/ssrf";
-import { extractListingWriteData } from "@/lib/providerListing";
+import {
+  buildListingReadinessWriteData,
+  evaluateListingReadiness,
+  extractListingWriteData,
+} from "@/lib/providerListing";
+import { buildDetectedOperationContract } from "@/lib/listingOperationContracts";
 import { validateManifest } from "@nexusx/database";
 import { Prisma, type ListingType } from "@prisma/client";
 
@@ -121,6 +126,35 @@ export async function POST(req: NextRequest) {
       const latencyRegions = toUniqueUpper(cap.latencyRegions);
       const routingRegions = toUniqueUpper(cap.routingRegions);
       const edgeRegions = toUniqueUpper(cap.edgeRegions);
+      const operationContracts = Array.isArray(cap.operations) && cap.operations.length > 0
+        ? cap.operations.slice(0, 20).map((operation) =>
+            buildDetectedOperationContract({
+              operationId: operation.operationId,
+              name: operation.name,
+              description: operation.description,
+              method: operation.method,
+              path: operation.path,
+              mode: operation.mode,
+              authScheme: operation.authScheme || cap.authType || "api_key",
+              inputSchema: operation.inputSchema || null,
+              outputSchema: operation.outputSchema || null,
+              sampleInput: operation.sampleInput || null,
+              sampleOutput: operation.sampleOutput || null,
+            }),
+          )
+        : cap.endpoint
+          ? [
+              buildDetectedOperationContract({
+                name: cap.name,
+                description: cap.description,
+                method: cap.endpoint.method,
+                path: cap.endpoint.path,
+                authScheme: cap.authType || "api_key",
+                sampleInput: cap.sampleRequest ? JSON.parse(JSON.stringify(cap.sampleRequest)) : null,
+                sampleOutput: cap.sampleResponse ? JSON.parse(JSON.stringify(cap.sampleResponse)) : null,
+              }),
+            ]
+          : [];
       const listingData = await extractListingWriteData({
         name: cap.name,
         description: cap.description,
@@ -157,6 +191,42 @@ export async function POST(req: NextRequest) {
         },
         sampleRequest: cap.sampleRequest ? JSON.parse(JSON.stringify(cap.sampleRequest)) : undefined,
         sampleResponse: cap.sampleResponse ? JSON.parse(JSON.stringify(cap.sampleResponse)) : undefined,
+        operationContracts: operationContracts.length > 0 ? operationContracts : undefined,
+      });
+
+      const listingType = (listingData.listingType as ListingType) ?? ((cap.listingType || "REST_API") as ListingType);
+      const authType = (listingData.authType as string | undefined) ?? cap.authType ?? "api_key";
+      const authSchemes = (listingData.authSchemes as string[] | undefined) ?? [];
+      const interactionModes = (listingData.interactionModes as string[] | undefined) ?? [];
+      const humanApprovalRequired = (listingData.humanApprovalRequired as boolean | undefined) ?? false;
+      const noHealthProbe = (listingData.noHealthProbe as boolean | undefined) ?? false;
+      const riskLevel = (listingData.riskLevel as Prisma.ListingUncheckedCreateInput["riskLevel"]) ?? "LOW";
+      const sideEffectLevel = (listingData.sideEffectLevel as Prisma.ListingUncheckedCreateInput["sideEffectLevel"]) ?? "READ_ONLY";
+      const readiness = await evaluateListingReadiness({
+        listingType,
+        baseUrl: listingData.baseUrl as string,
+        healthCheckUrl: (listingData.healthCheckUrl as string | null | undefined) ?? null,
+        sandboxUrl: (listingData.sandboxUrl as string | null | undefined) ?? null,
+        docsUrl: (listingData.docsUrl as string | null | undefined) ?? null,
+        authType,
+        authSchemes,
+        interactionModes,
+        humanApprovalRequired,
+        noHealthProbe,
+        riskLevel,
+        sideEffectLevel,
+        description: (listingData.description as string) ?? cap.description,
+        tags: (listingData.tags as string[] | undefined) ?? [],
+        intents: (listingData.intents as string[] | undefined) ?? cap.intents,
+        capabilityTags: (listingData.capabilityTags as string[] | undefined) ?? capabilityTags,
+        inputModalities: (listingData.inputModalities as string[] | undefined) ?? (cap.inputModalities || []),
+        outputModalities: (listingData.outputModalities as string[] | undefined) ?? (cap.outputModalities || []),
+        availabilityRegions: (listingData.availabilityRegions as string[] | undefined) ?? (cap.availabilityRegions || []),
+        complianceTags: (listingData.complianceTags as string[] | undefined) ?? (cap.complianceTags || []),
+        sampleRequest: listingData.sampleRequest as Prisma.JsonValue | null | undefined,
+        sampleResponse: listingData.sampleResponse as Prisma.JsonValue | null | undefined,
+        schemaSpec: listingData.schemaSpec as Prisma.JsonValue | null | undefined,
+        domainMetadata: listingData.domainMetadata as Prisma.JsonValue | null | undefined,
       });
 
       const createData: Prisma.ListingUncheckedCreateInput = {
@@ -166,6 +236,7 @@ export async function POST(req: NextRequest) {
         status: "DRAFT",
         currentPriceUsdc: Number(listingData.floorPriceUsdc ?? cap.pricing.floorUsdc),
         isUnique: false,
+        ...buildListingReadinessWriteData(readiness),
         ...listingData,
       } as Prisma.ListingUncheckedCreateInput;
 

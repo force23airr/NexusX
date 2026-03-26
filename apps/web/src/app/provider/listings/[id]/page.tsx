@@ -23,6 +23,12 @@ import DiscoveryMetadataFields, {
   stringifyDomainMetadata,
 } from "@/components/provider/DiscoveryMetadataFields";
 import ListingContractFields from "@/components/provider/ListingContractFields";
+import ListingOperationContractsFields from "@/components/provider/ListingOperationContractsFields";
+import {
+  createEmptyOperationContract,
+  mergeOperationContractsIntoSchemaSpec,
+  summarizeOperationTarget,
+} from "@/lib/listingOperationContracts";
 
 type Tab = "overview" | "settings" | "integration";
 
@@ -493,6 +499,38 @@ function OverviewTab({
         ) : null}
       </div>
 
+      {listing.operationContracts?.length ? (
+        <div className="card p-5 space-y-4">
+          <h3 className="text-sm font-semibold text-zinc-300">Operation Contracts</h3>
+          <div className="space-y-3">
+            {listing.operationContracts.map((operation) => (
+              <div
+                key={operation.operationId}
+                className="rounded-lg border border-surface-4 bg-surface-2 px-4 py-3"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="text-sm font-medium text-zinc-200">{operation.name}</span>
+                  <span className="rounded-md border border-surface-4 bg-surface-1 px-2 py-0.5 text-2xs text-zinc-400 font-mono">
+                    {summarizeOperationTarget(operation)}
+                  </span>
+                  <span className="rounded-md border border-surface-4 bg-surface-1 px-2 py-0.5 text-2xs text-zinc-500">
+                    {operation.mode}
+                  </span>
+                  {operation.authScheme && (
+                    <span className="rounded-md border border-surface-4 bg-surface-1 px-2 py-0.5 text-2xs text-zinc-500">
+                      {operation.authScheme}
+                    </span>
+                  )}
+                </div>
+                {operation.description && (
+                  <p className="mt-2 text-sm text-zinc-400">{operation.description}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {/* Sample Request/Response */}
       {(listing.sampleRequest || listing.sampleResponse) && (
         <div className="card p-5">
@@ -561,6 +599,8 @@ function SettingsTab({
     routingRegions: routingMetadata.routingRegions,
     edgeRegions: routingMetadata.edgeRegions,
     domainMetadataText: stringifyDomainMetadata(listing.domainMetadata),
+    schemaSpecBase: listing.schemaSpec ?? null,
+    operationContracts: listing.operationContracts ?? [],
     authSchemes: listing.authSchemes ?? (listing.authType ? [listing.authType] : []),
     interactionModes: listing.interactionModes ?? [],
     humanApprovalRequired: listing.humanApprovalRequired ?? false,
@@ -575,7 +615,10 @@ function SettingsTab({
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
-  const updateField = (key: string, value: string | string[] | boolean) => {
+  const updateField = (
+    key: string,
+    value: string | string[] | boolean | Record<string, unknown> | null | ListingDetail["operationContracts"],
+  ) => {
     setForm((prev) => ({ ...prev, [key]: value }));
     setSaveMsg(null);
     setFieldErrors((prev) => {
@@ -597,6 +640,10 @@ function SettingsTab({
         routingRegions: form.routingRegions,
         edgeRegions: form.edgeRegions,
       });
+      const schemaSpec = mergeOperationContractsIntoSchemaSpec(
+        form.schemaSpecBase,
+        form.operationContracts ?? [],
+      );
       await provider.updateListing(listing.id, {
         name: form.name,
         description: form.description,
@@ -610,6 +657,8 @@ function SettingsTab({
         noHealthProbe: form.noHealthProbe,
         riskLevel: form.riskLevel,
         sideEffectLevel: form.sideEffectLevel,
+        schemaSpec,
+        operationContracts: form.operationContracts,
         tags: form.tags,
         intents: form.intents,
         availabilityRegions: form.availabilityRegions,
@@ -751,6 +800,22 @@ function SettingsTab({
             sideEffectLevel: form.sideEffectLevel,
           }}
           onChange={(field, value) => updateField(field, value)}
+        />
+      </div>
+
+      <div className="card p-6 space-y-5">
+        <h3 className="text-lg font-semibold text-zinc-100 border-b border-surface-4 pb-3">
+          Operation Contracts
+        </h3>
+        <ListingOperationContractsFields
+          value={form.operationContracts ?? []}
+          onChange={(next) => updateField("operationContracts", next)}
+          onAdd={() =>
+            updateField("operationContracts", [
+              ...(form.operationContracts ?? []),
+              createEmptyOperationContract((form.operationContracts ?? []).length),
+            ])
+          }
         />
       </div>
 
