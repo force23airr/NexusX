@@ -140,6 +140,10 @@ function countOperationContracts(schemaSpec: unknown): number {
   return path || method ? 1 : 0;
 }
 
+function extractTemplateKeys(path: string): string[] {
+  return Array.from(path.matchAll(/\{([^}]+)\}/g), (match) => match[1]);
+}
+
 function computeListingReadinessScore(input: {
   hasDiscoveryIntent: boolean;
   hasCapabilityTags: boolean;
@@ -451,6 +455,7 @@ export async function evaluateListingReadiness(
   const noHealthProbe = Boolean(listing.noHealthProbe);
   const riskLevel = listing.riskLevel ?? "LOW";
   const sideEffectLevel = listing.sideEffectLevel ?? "READ_ONLY";
+  const operationContracts = extractOperationContracts(listing.schemaSpec);
 
   for (const [label, value] of [
     ["baseUrl", listing.baseUrl],
@@ -498,7 +503,6 @@ export async function evaluateListingReadiness(
   }
 
   const operationCount = countOperationContracts(listing.schemaSpec);
-  const operationContracts = extractOperationContracts(listing.schemaSpec);
   const hasExecutionExamples =
     (hasJsonContent(listing.sampleRequest) && hasJsonContent(listing.sampleResponse)) ||
     operationCount > 0;
@@ -557,6 +561,61 @@ export async function evaluateListingReadiness(
     )
   ) {
     warnings.push("operation contracts are missing sample or schema details; agents will rely on generic payload guesses");
+  }
+
+  if (operationContracts.length > 0) {
+    const seenOperationIds = new Set<string>();
+    const seenTargets = new Set<string>();
+
+    for (const operation of operationContracts) {
+      const operationTarget = `${operation.method} ${operation.path}`;
+      if (seenOperationIds.has(operation.operationId)) {
+        blockers.push(`operationContracts contains duplicate operationId "${operation.operationId}"`);
+      } else {
+        seenOperationIds.add(operation.operationId);
+      }
+
+      if (seenTargets.has(operationTarget)) {
+        blockers.push(`operationContracts contains duplicate target "${operationTarget}"`);
+      } else {
+        seenTargets.add(operationTarget);
+      }
+
+      if (operation.authScheme && !authSchemes.includes(operation.authScheme)) {
+        blockers.push(
+          `operation "${operation.name}" declares authScheme "${operation.authScheme}" which is not in listing authSchemes`,
+        );
+      }
+
+      if (operation.mode && !interactionModes.includes(operation.mode)) {
+        blockers.push(
+          `operation "${operation.name}" declares mode "${operation.mode}" which is not in listing interactionModes`,
+        );
+      }
+
+      if (!operation.description) {
+        warnings.push(`operation "${operation.name}" is missing a description`);
+      }
+
+      if (operation.method === "GET" && operation.sideEffect) {
+        warnings.push(`operation "${operation.name}" is GET but marked sideEffect=true`);
+      }
+
+      if (operation.method === "GET" && !operation.idempotent) {
+        warnings.push(`operation "${operation.name}" is GET but marked idempotent=false`);
+      }
+
+      const templateKeys = extractTemplateKeys(operation.path);
+      if (templateKeys.length > 0) {
+        const sampleInput = isPlainObject(operation.sampleInput) ? operation.sampleInput : {};
+        const missingKeys = templateKeys.filter((key) => !(key in sampleInput));
+        if (missingKeys.length > 0) {
+          warnings.push(
+            `operation "${operation.name}" has templated path params without sampleInput values: ${missingKeys.join(", ")}`,
+          );
+        }
+      }
+    }
   }
 
   const score = computeListingReadinessScore({

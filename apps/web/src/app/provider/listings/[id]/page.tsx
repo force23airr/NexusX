@@ -14,7 +14,12 @@ import {
   listingStatusColor,
   listingTypeLabel,
 } from "@/lib/utils";
-import type { ListingDetail, ProviderAnalytics, ListingStatus } from "@/types";
+import type {
+  ListingDetail,
+  OperationVerificationResponse,
+  ProviderAnalytics,
+  ListingStatus,
+} from "@/types";
 import { ActivationWizard } from "@/components/provider/ActivationWizard";
 import { IntegrationPanel } from "@/components/provider/IntegrationPanel";
 import DiscoveryMetadataFields, {
@@ -614,6 +619,8 @@ function SettingsTab({
   const [isSaving, setIsSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [verification, setVerification] = useState<OperationVerificationResponse | null>(null);
 
   const updateField = (
     key: string,
@@ -684,6 +691,20 @@ function SettingsTab({
       setSaveMsg(msg);
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const handleVerifyOperations = async () => {
+    setIsVerifying(true);
+    setSaveMsg(null);
+    try {
+      const result = await provider.verifyOperations(listing.id);
+      setVerification(result);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Operation verification failed";
+      setSaveMsg(msg);
+    } finally {
+      setIsVerifying(false);
     }
   };
 
@@ -804,9 +825,26 @@ function SettingsTab({
       </div>
 
       <div className="card p-6 space-y-5">
-        <h3 className="text-lg font-semibold text-zinc-100 border-b border-surface-4 pb-3">
-          Operation Contracts
-        </h3>
+        <div className="flex items-center justify-between gap-3 border-b border-surface-4 pb-3">
+          <div>
+            <h3 className="text-lg font-semibold text-zinc-100">Operation Contracts</h3>
+            <p className="text-xs text-zinc-500 mt-1">
+              Verify actions through the real gateway path before activation.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleVerifyOperations}
+            disabled={isVerifying || (form.operationContracts ?? []).length === 0}
+            className={cn(
+              "rounded-lg border border-brand-500/20 bg-brand-500/5 px-4 py-2 text-sm font-medium text-brand-300 hover:bg-brand-500/10",
+              (isVerifying || (form.operationContracts ?? []).length === 0) &&
+                "opacity-60 cursor-not-allowed",
+            )}
+          >
+            {isVerifying ? "Verifying..." : "Verify Operations"}
+          </button>
+        </div>
         <ListingOperationContractsFields
           value={form.operationContracts ?? []}
           onChange={(next) => updateField("operationContracts", next)}
@@ -817,6 +855,49 @@ function SettingsTab({
             ])
           }
         />
+
+        {verification ? (
+          <div className="space-y-3 rounded-xl border border-surface-4 bg-surface-2 p-4">
+            <div className="flex flex-wrap gap-2">
+              <VerificationBadge label={`${verification.verifiedCount} verified`} tone="good" />
+              <VerificationBadge label={`${verification.warningCount} warnings`} tone="warn" />
+              <VerificationBadge label={`${verification.failedCount} failed`} tone="bad" />
+              <VerificationBadge label={`${verification.skippedCount} skipped`} tone="neutral" />
+            </div>
+            <div className="space-y-2">
+              {verification.results.map((result) => (
+                <div
+                  key={result.operationId}
+                  className="rounded-lg border border-surface-4 bg-surface-1 px-3 py-3"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-medium text-zinc-200">{result.name}</span>
+                    <span className="font-mono text-2xs text-zinc-500">
+                      {result.method} {result.path}
+                    </span>
+                    <VerificationBadge label={result.outcome} tone={verificationTone(result.outcome)} />
+                    {result.statusCode > 0 && (
+                      <span className="text-2xs text-zinc-500">
+                        HTTP {result.statusCode} · {result.latencyMs}ms
+                      </span>
+                    )}
+                    {result.sandboxUsed && (
+                      <span className="text-2xs text-emerald-300">sandbox</span>
+                    )}
+                  </div>
+                  {result.reason && (
+                    <p className="mt-2 text-sm text-zinc-400">{result.reason}</p>
+                  )}
+                  {result.responsePreview && (
+                    <pre className="mt-2 overflow-x-auto rounded-lg border border-surface-4 bg-surface-2 p-3 text-xs text-zinc-300">
+                      {result.responsePreview}
+                    </pre>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       <div className="card p-6 space-y-5">
@@ -902,6 +983,40 @@ function ContractSummaryRow({
       <p className="text-2xs text-zinc-500 uppercase tracking-wider font-semibold">{label}</p>
       <p className="mt-1 text-sm text-zinc-300">{value}</p>
     </div>
+  );
+}
+
+function verificationTone(outcome: OperationVerificationResponse["results"][number]["outcome"]): "good" | "warn" | "bad" | "neutral" {
+  switch (outcome) {
+    case "verified":
+      return "good";
+    case "warning":
+      return "warn";
+    case "failed":
+      return "bad";
+    default:
+      return "neutral";
+  }
+}
+
+function VerificationBadge({
+  label,
+  tone,
+}: {
+  label: string;
+  tone: "good" | "warn" | "bad" | "neutral";
+}) {
+  const toneClass = {
+    good: "border-emerald-500/20 bg-emerald-500/10 text-emerald-300",
+    warn: "border-amber-500/20 bg-amber-500/10 text-amber-300",
+    bad: "border-red-500/20 bg-red-500/10 text-red-300",
+    neutral: "border-surface-4 bg-surface-2 text-zinc-400",
+  }[tone];
+
+  return (
+    <span className={cn("rounded-md border px-2 py-0.5 text-2xs font-medium", toneClass)}>
+      {label}
+    </span>
   );
 }
 

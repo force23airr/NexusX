@@ -53,6 +53,28 @@ export interface ListingOperationContract {
   sampleOutput: Record<string, unknown> | null;
 }
 
+export interface OperationVerificationResult {
+  operationId: string;
+  name: string;
+  method: ListingOperationMethod;
+  path: string;
+  outcome: "verified" | "warning" | "failed" | "skipped";
+  statusCode: number;
+  latencyMs: number;
+  sandboxUsed: boolean;
+  reason: string | null;
+  responsePreview: string;
+}
+
+export interface OperationVerificationResponse {
+  listingId: string;
+  verifiedCount: number;
+  warningCount: number;
+  failedCount: number;
+  skippedCount: number;
+  results: OperationVerificationResult[];
+}
+
 export interface SearchMetadataFilters {
   availabilityRegion?: string;
   complianceRequired?: string[];

@@ -12,6 +12,7 @@ import type {
   ListingDetail,
   ListingDiscoveryMetadata,
   ListingOperationContract,
+  OperationVerificationResponse,
   MarketplaceSearchOptions,
   RouteResult,
   Transaction,
@@ -410,6 +411,17 @@ export const provider = {
   ): Promise<{ ok: boolean; statusCode: number; latencyMs: number; responsePreview: string; error?: string }> {
     return apiFetch(`/api/provider/listings/${listingId}/test`, {
       method: "POST",
+    });
+  },
+
+  /** Dry-run declared operation contracts through the gateway. */
+  async verifyOperations(
+    listingId: string,
+    operationIds?: string[],
+  ): Promise<OperationVerificationResponse> {
+    return apiFetch(`/api/provider/listings/${listingId}/verify-operations`, {
+      method: "POST",
+      body: JSON.stringify(operationIds?.length ? { operationIds } : {}),
     });
   },
 

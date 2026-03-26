@@ -30,6 +30,7 @@ import type {
   RequestPayoutInput,
   Payout,
   ListingAnalytics,
+  OperationVerificationResponse,
   PaginatedResponse,
 } from "./types";
 
@@ -318,6 +319,18 @@ export class NexusXProvider {
     const res = await this.http.get<ListingAnalytics>(
       `/provider/listings/${listingId}/analytics`,
       params
+    );
+    return res.data;
+  }
+
+  /** Dry-run operation contracts through the NexusX gateway path. */
+  async verifyOperations(
+    listingId: string,
+    operationIds?: string[],
+  ): Promise<OperationVerificationResponse> {
+    const res = await this.http.post<OperationVerificationResponse>(
+      `/provider/listings/${listingId}/verify-operations`,
+      operationIds?.length ? { operationIds } : {},
     );
     return res.data;
   }
