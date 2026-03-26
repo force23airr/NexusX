@@ -22,6 +22,7 @@ import DiscoveryMetadataFields, {
   extractRoutingMetadata,
   stringifyDomainMetadata,
 } from "@/components/provider/DiscoveryMetadataFields";
+import ListingContractFields from "@/components/provider/ListingContractFields";
 
 type Tab = "overview" | "settings" | "integration";
 
@@ -429,6 +430,69 @@ function OverviewTab({
         </div>
       )}
 
+      <div className="card p-5 space-y-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold text-zinc-300">Agent Contract</h3>
+          {listing.readiness && (
+            <span
+              className={cn(
+                "rounded-full px-2.5 py-1 text-xs font-medium",
+                listing.readiness.issues.length === 0
+                  ? "bg-emerald-500/10 text-emerald-300 border border-emerald-500/20"
+                  : "bg-amber-500/10 text-amber-300 border border-amber-500/20"
+              )}
+            >
+              Readiness {listing.readiness.score}%
+            </span>
+          )}
+        </div>
+
+        <MetadataGroup label="Auth Schemes" values={listing.authSchemes ?? []} />
+        <MetadataGroup label="Interaction Modes" values={listing.interactionModes ?? []} />
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+          <ContractSummaryRow label="Risk Level" value={listing.riskLevel ?? "LOW"} />
+          <ContractSummaryRow
+            label="Side-Effect Level"
+            value={listing.sideEffectLevel ?? "READ_ONLY"}
+          />
+          <ContractSummaryRow
+            label="Human Approval"
+            value={listing.humanApprovalRequired ? "Required" : "Not required"}
+          />
+          <ContractSummaryRow
+            label="Health Strategy"
+            value={listing.noHealthProbe ? "No probe" : "Health probe expected"}
+          />
+        </div>
+
+        {listing.readiness?.issues.length ? (
+          <div>
+            <p className="text-xs text-amber-400 mb-2 font-semibold uppercase tracking-wider">
+              Blocking Issues
+            </p>
+            <ul className="space-y-1 text-sm text-amber-300">
+              {listing.readiness.issues.map((issue) => (
+                <li key={issue}>• {issue}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
+        {listing.readiness?.warnings.length ? (
+          <div>
+            <p className="text-xs text-zinc-500 mb-2 font-semibold uppercase tracking-wider">
+              Warnings
+            </p>
+            <ul className="space-y-1 text-sm text-zinc-400">
+              {listing.readiness.warnings.map((warning) => (
+                <li key={warning}>• {warning}</li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+      </div>
+
       {/* Sample Request/Response */}
       {(listing.sampleRequest || listing.sampleResponse) && (
         <div className="card p-5">
@@ -497,6 +561,12 @@ function SettingsTab({
     routingRegions: routingMetadata.routingRegions,
     edgeRegions: routingMetadata.edgeRegions,
     domainMetadataText: stringifyDomainMetadata(listing.domainMetadata),
+    authSchemes: listing.authSchemes ?? (listing.authType ? [listing.authType] : []),
+    interactionModes: listing.interactionModes ?? [],
+    humanApprovalRequired: listing.humanApprovalRequired ?? false,
+    noHealthProbe: listing.noHealthProbe ?? false,
+    riskLevel: listing.riskLevel ?? "LOW",
+    sideEffectLevel: listing.sideEffectLevel ?? "READ_ONLY",
     floorPriceUsdc: listing.floorPriceUsdc.toString(),
     ceilingPriceUsdc: listing.ceilingPriceUsdc?.toString() || "",
     capacityPerMinute: listing.capacityPerMinute.toString(),
@@ -505,7 +575,7 @@ function SettingsTab({
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
 
-  const updateField = (key: string, value: string | string[]) => {
+  const updateField = (key: string, value: string | string[] | boolean) => {
     setForm((prev) => ({ ...prev, [key]: value }));
     setSaveMsg(null);
     setFieldErrors((prev) => {
@@ -534,6 +604,12 @@ function SettingsTab({
         healthCheckUrl: form.healthCheckUrl || null,
         docsUrl: form.docsUrl || null,
         sandboxUrl: form.sandboxUrl || null,
+        authSchemes: form.authSchemes,
+        interactionModes: form.interactionModes,
+        humanApprovalRequired: form.humanApprovalRequired,
+        noHealthProbe: form.noHealthProbe,
+        riskLevel: form.riskLevel,
+        sideEffectLevel: form.sideEffectLevel,
         tags: form.tags,
         intents: form.intents,
         availabilityRegions: form.availabilityRegions,
@@ -663,6 +739,23 @@ function SettingsTab({
 
       <div className="card p-6 space-y-5">
         <h3 className="text-lg font-semibold text-zinc-100 border-b border-surface-4 pb-3">
+          Agent Contract
+        </h3>
+        <ListingContractFields
+          value={{
+            authSchemes: form.authSchemes,
+            interactionModes: form.interactionModes,
+            humanApprovalRequired: form.humanApprovalRequired,
+            noHealthProbe: form.noHealthProbe,
+            riskLevel: form.riskLevel,
+            sideEffectLevel: form.sideEffectLevel,
+          }}
+          onChange={(field, value) => updateField(field, value)}
+        />
+      </div>
+
+      <div className="card p-6 space-y-5">
+        <h3 className="text-lg font-semibold text-zinc-100 border-b border-surface-4 pb-3">
           Pricing (USDC per call)
         </h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -731,6 +824,21 @@ function SettingsTab({
 }
 
 // ─── Field Label (local) ───
+
+function ContractSummaryRow({
+  label,
+  value,
+}: {
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="rounded-lg border border-surface-4 bg-surface-2 px-3 py-2">
+      <p className="text-2xs text-zinc-500 uppercase tracking-wider font-semibold">{label}</p>
+      <p className="mt-1 text-sm text-zinc-300">{value}</p>
+    </div>
+  );
+}
 
 function FieldLabel({ label }: { label: string }) {
   return (

@@ -11,7 +11,15 @@ import DiscoveryMetadataFields, {
   parseDomainMetadataText,
   stringifyDomainMetadata,
 } from "@/components/provider/DiscoveryMetadataFields";
-import type { ListingType, DetectEndpoint, DetectResponse, InputSchemaField } from "@/types";
+import ListingContractFields from "@/components/provider/ListingContractFields";
+import type {
+  ListingType,
+  DetectEndpoint,
+  DetectResponse,
+  InputSchemaField,
+  ListingRiskLevel,
+  ListingSideEffectLevel,
+} from "@/types";
 
 // ─── Constants ───
 
@@ -47,6 +55,31 @@ const CATEGORY_PRICING: Record<string, { floor: number; ceiling: number }> = {
   "datasets": { floor: 0.01, ceiling: 0.10 },
 };
 const DEFAULT_PRICING = { floor: 0.001, ceiling: 0.01 };
+const DEFAULT_INTERACTION_MODES: Record<ListingType, string[]> = {
+  REST_API: ["sync"],
+  GRAPHQL_API: ["sync"],
+  WEBSOCKET: ["streaming"],
+  DATASET: ["batch"],
+  MODEL_INFERENCE: ["sync"],
+  COMPOSITE: ["sync"],
+};
+
+function normalizeContractToken(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, "_");
+}
+
+function inferAuthSchemes(authType?: string): string[] {
+  const normalized = normalizeContractToken(authType ?? "");
+  return normalized ? [normalized] : [];
+}
+
+function inferInteractionModes(listingType: ListingType): string[] {
+  return DEFAULT_INTERACTION_MODES[listingType] ?? ["sync"];
+}
+
+function sameTokens(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
 
 // ─── Detection Stages ───
 
@@ -83,6 +116,12 @@ interface WizardFormData {
   authType: string;
   sampleRequest: string;
   sampleResponse: string;
+  authSchemes: string[];
+  interactionModes: string[];
+  humanApprovalRequired: boolean;
+  noHealthProbe: boolean;
+  riskLevel: ListingRiskLevel;
+  sideEffectLevel: ListingSideEffectLevel;
   tags: string[];
   intents: string[];
   availabilityRegions: string[];
@@ -123,6 +162,12 @@ const INITIAL_STATE: WizardFormData = {
   authType: "api_key",
   sampleRequest: "",
   sampleResponse: "",
+  authSchemes: ["api_key"],
+  interactionModes: ["sync"],
+  humanApprovalRequired: false,
+  noHealthProbe: false,
+  riskLevel: "LOW",
+  sideEffectLevel: "READ_ONLY",
   tags: [],
   intents: [],
   availabilityRegions: [],
@@ -157,20 +202,35 @@ function wizardReducer(state: WizardFormData, action: WizardAction): WizardFormD
       }
       const catSlug = r.suggestedCategorySlug || "";
       const pricing = CATEGORY_PRICING[catSlug] || DEFAULT_PRICING;
+      const nextListingType = (r.listingType as ListingType) || state.listingType;
+      const nextAuthType = r.authType || state.authType;
+      const detectedAuthSchemes = inferAuthSchemes(nextAuthType);
+      const currentInferredAuthSchemes = inferAuthSchemes(state.authType);
+      const currentDefaultInteractionModes = inferInteractionModes(state.listingType);
+      const nextInteractionModes = inferInteractionModes(nextListingType);
 
       return {
         ...state,
         detected: r.detected,
         name: r.name || state.name,
         description: r.description || state.description,
-        listingType: (r.listingType as ListingType) || state.listingType,
+        listingType: nextListingType,
         categoryId,
         baseUrl: r.baseUrl || state.baseUrl,
         healthCheckUrl: r.healthCheckUrl || state.healthCheckUrl,
         docsUrl: r.docsUrl || state.docsUrl,
-        authType: r.authType || state.authType,
+        authType: nextAuthType,
         sampleRequest: r.sampleRequest ? JSON.stringify(r.sampleRequest, null, 2) : state.sampleRequest,
         sampleResponse: r.sampleResponse ? JSON.stringify(r.sampleResponse, null, 2) : state.sampleResponse,
+        authSchemes:
+          detectedAuthSchemes.length > 0 &&
+          (state.authSchemes.length === 0 || sameTokens(state.authSchemes, currentInferredAuthSchemes))
+            ? detectedAuthSchemes
+            : state.authSchemes,
+        interactionModes:
+          state.interactionModes.length === 0 || sameTokens(state.interactionModes, currentDefaultInteractionModes)
+            ? nextInteractionModes
+            : state.interactionModes,
         tags: r.tags && r.tags.length > 0
           ? Array.from(new Set([...state.tags, ...r.tags]))
           : state.tags,
@@ -574,6 +634,12 @@ export default function CreateListingPage() {
         healthCheckUrl: form.healthCheckUrl || undefined,
         docsUrl: form.docsUrl || undefined,
         authType: form.authType,
+        authSchemes: form.authSchemes,
+        interactionModes: form.interactionModes,
+        humanApprovalRequired: form.humanApprovalRequired,
+        noHealthProbe: form.noHealthProbe,
+        riskLevel: form.riskLevel,
+        sideEffectLevel: form.sideEffectLevel,
         floorPriceUsdc: parseFloat(form.floorPrice),
         ceilingPriceUsdc: form.ceilingPrice ? parseFloat(form.ceilingPrice) : undefined,
         capacityPerMinute: parseInt(form.capacityPerMinute, 10) || 60,
@@ -884,7 +950,17 @@ export default function CreateListingPage() {
                         <select
                           className="input-base w-full"
                           value={form.authType}
-                          onChange={(e) => setField("authType", e.target.value)}
+                          onChange={(e) => {
+                            const nextAuthType = e.target.value;
+                            const inferredAuthSchemes = inferAuthSchemes(nextAuthType);
+                            if (
+                              form.authSchemes.length === 0 ||
+                              sameTokens(form.authSchemes, inferAuthSchemes(form.authType))
+                            ) {
+                              setField("authSchemes", inferredAuthSchemes);
+                            }
+                            setField("authType", nextAuthType);
+                          }}
                         >
                           {AUTH_TYPES.map((t) => (
                             <option key={t.value} value={t.value}>{t.label}</option>
@@ -945,6 +1021,26 @@ export default function CreateListingPage() {
                             domainMetadataText: form.domainMetadataText,
                           }}
                         errors={errors}
+                        onChange={(field, value) => {
+                          setField(field as keyof WizardFormData, value as WizardFormData[keyof WizardFormData]);
+                        }}
+                      />
+                    </div>
+
+                    <div className="pt-2 border-t border-surface-4">
+                      <h3 className="text-sm font-semibold text-zinc-300 mb-1">Agent Contract</h3>
+                      <p className="text-2xs text-zinc-500 mb-4">
+                        Define how agents authenticate, invoke, and risk-assess this API. These fields feed the activation readiness gate.
+                      </p>
+                      <ListingContractFields
+                        value={{
+                          authSchemes: form.authSchemes,
+                          interactionModes: form.interactionModes,
+                          humanApprovalRequired: form.humanApprovalRequired,
+                          noHealthProbe: form.noHealthProbe,
+                          riskLevel: form.riskLevel,
+                          sideEffectLevel: form.sideEffectLevel,
+                        }}
                         onChange={(field, value) => {
                           setField(field as keyof WizardFormData, value as WizardFormData[keyof WizardFormData]);
                         }}
