@@ -345,7 +345,7 @@ export class OrchestratorService {
     const candidates = allTools
       .filter(t => t.kind === "listing" && t.listing)
       .map(t => t.listing!)
-      .filter(l => !budgetMax || l.currentPriceUsdc <= budgetMax)
+      .filter(l => budgetMax == null || l.currentPriceUsdc <= budgetMax)
       .filter(l => {
         const searchText = `${l.name} ${l.description} ${l.tags.join(" ")} ${l.categorySlug} ${l.intents.join(" ")}`.toLowerCase();
         return lowerTask.split(/\s+/).some(word => searchText.includes(word));
@@ -392,7 +392,7 @@ export class OrchestratorService {
       const operationFallback = primary.operationFallback.candidates.find(
         (candidate) =>
           candidate.autoExecutable &&
-          (!budgetMax || candidate.currentPriceUsdc <= budgetMax),
+          (budgetMax == null || candidate.currentPriceUsdc <= budgetMax),
       );
       if (operationFallback) {
         const fallbackListing = this.registry
@@ -415,7 +415,7 @@ export class OrchestratorService {
       .filter(t => t.kind === "listing" && t.listing)
       .map(t => t.listing!)
       .filter(l => l.categorySlug === categorySlug && l.slug !== primary.slug)
-      .filter(l => !budgetMax || l.currentPriceUsdc <= budgetMax);
+      .filter(l => budgetMax == null || l.currentPriceUsdc <= budgetMax);
 
     if (alternatives.length === 0) return null;
     return { listing: this.rankByPriority(alternatives, priorityMode)[0] };
