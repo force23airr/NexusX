@@ -74,6 +74,7 @@ export class GatewayClient {
     body?: unknown;
     query?: Record<string, string>;
     queryId?: string;
+    operationId?: string;
     headers?: Record<string, string>;
     bundleSessionId?: string;
     bundleStepIndex?: number;
@@ -87,6 +88,7 @@ export class GatewayClient {
       body,
       query,
       queryId,
+      operationId,
       headers: extraHeaders,
       bundleSessionId,
       bundleStepIndex,
@@ -123,6 +125,9 @@ export class GatewayClient {
     }
     if (queryId) {
       headers["X-NexusX-Query-Id"] = queryId;
+    }
+    if (operationId) {
+      headers["X-NexusX-Operation-Id"] = operationId;
     }
     if (bundleSessionId) {
       headers["X-NexusX-Bundle-Session-Id"] = bundleSessionId;
@@ -181,6 +186,8 @@ export class GatewayClient {
       const requestId = response.headers.get("x-nexusx-request-id") || "";
       const receiptId = response.headers.get("x-nexusx-receipt-id") || "";
       const responseQueryId = response.headers.get("x-nexusx-query-id") || queryId;
+      const responseOperationId =
+        response.headers.get("x-nexusx-operation-id") || operationId;
       const authMode: "api_key" | "x402" =
         response.headers.get("x-nexusx-auth-mode") === "x402" ? "x402" : "api_key";
       const billingMode: "individual" | "bundle_step" =
@@ -228,6 +235,7 @@ export class GatewayClient {
             id: receiptId,
             requestId,
             queryId: responseQueryId,
+            operationId: responseOperationId,
             listingSlug: response.headers.get("x-nexusx-listing") || slug,
             authMode,
             billingMode,

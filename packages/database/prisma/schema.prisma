@@ -822,6 +822,7 @@ model ExecutionReceipt {
   requestId        String                   @unique @map("request_id")
   queryLogId       String?                  @map("query_log_id") @db.Uuid
   listingId        String?                  @map("listing_id") @db.Uuid
+  operationId      String?                  @map("operation_id")
   listingSlug      String                   @map("listing_slug")
   buyerId          String?                  @map("buyer_id") @db.Uuid
   payerAddress     String?                  @map("payer_address")
@@ -852,6 +853,7 @@ model ExecutionReceipt {
   updatedAt        DateTime                 @updatedAt @map("updated_at")
 
   @@index([listingId, createdAt])
+  @@index([listingId, operationId, createdAt])
   @@index([listingId, callerRegionBucket, createdAt])
   @@index([listingId, callerCountry, createdAt])
   @@index([buyerId, createdAt])

@@ -77,6 +77,18 @@ export interface RegionalLatencySnapshot {
   lastSeenAt: string | null;
 }
 
+export interface ListingOperationPerformanceSnapshot {
+  listingId: string;
+  operationId: string;
+  windowHours: number;
+  score: number;
+  executionCount: number;
+  successCount: number;
+  successRate: number;
+  avgLatencyMs: number | null;
+  lastSeenAt: string | null;
+}
+
 export interface TrustPenaltyBreakdown {
   successPenalty: number;
   upstreamFailurePenalty: number;
@@ -126,6 +138,10 @@ function ageMs(value: Date | null | undefined): number | null {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+function compoundMapKey(listingId: string, operationId: string): string {
+  return `${listingId}:${operationId}`;
 }
 
 function mapGroupCount<T extends { listingId: string | null; _count: { _all: number } }>(
@@ -878,6 +894,94 @@ export async function getListingRegionalLatencySnapshot(
     .sort((a, b) => {
       if (b.executionCount !== a.executionCount) return b.executionCount - a.executionCount;
       return (a.avgLatencyMs ?? Number.MAX_SAFE_INTEGER) - (b.avgLatencyMs ?? Number.MAX_SAFE_INTEGER);
+    });
+}
+
+export async function getListingOperationPerformanceSnapshots(
+  prisma: PrismaClient,
+  input: {
+    listingIds: string[];
+    operationIds?: string[];
+    windowHours?: number;
+  },
+): Promise<ListingOperationPerformanceSnapshot[]> {
+  const listingIds = Array.from(new Set(input.listingIds.filter(Boolean)));
+  if (listingIds.length === 0) return [];
+
+  const operationIds = input.operationIds
+    ? Array.from(new Set(input.operationIds.filter(Boolean)))
+    : undefined;
+  const windowHours = input.windowHours ?? DEFAULT_TRUST_WINDOW_HOURS;
+  const since = new Date(Date.now() - windowHours * 60 * 60 * 1000);
+
+  const baseWhere: Prisma.ExecutionReceiptWhereInput = {
+    listingId: { in: listingIds },
+    createdAt: { gte: since },
+    sandbox: false,
+    operationId: operationIds ? { in: operationIds } : { not: null },
+    outcome: { in: ["SUCCESS", "FAILED"] },
+  };
+
+  const [totals, successes] = await Promise.all([
+    prisma.executionReceipt.groupBy({
+      by: ["listingId", "operationId"],
+      where: baseWhere,
+      _count: { _all: true },
+      _avg: { latencyMs: true },
+      _max: { createdAt: true },
+    }),
+    prisma.executionReceipt.groupBy({
+      by: ["listingId", "operationId"],
+      where: {
+        ...baseWhere,
+        outcome: "SUCCESS",
+      },
+      _count: { _all: true },
+    }),
+  ]);
+
+  const successMap = new Map<string, number>();
+  for (const row of successes) {
+    if (!row.listingId || !row.operationId) continue;
+    successMap.set(compoundMapKey(row.listingId, row.operationId), row._count._all);
+  }
+
+  return totals
+    .filter(
+      (
+        row,
+      ): row is typeof row & { listingId: string; operationId: string } =>
+        typeof row.listingId === "string" && typeof row.operationId === "string",
+    )
+    .map((row) => {
+      const key = compoundMapKey(row.listingId, row.operationId);
+      const executionCount = row._count._all;
+      const successCount = successMap.get(key) ?? 0;
+      const successRate = executionCount > 0 ? successCount / executionCount : 0;
+      const smoothedSuccessRate = (successCount + 2) / (executionCount + 3);
+      const avgLatencyMs = row._avg.latencyMs ?? null;
+      const latencyScore =
+        avgLatencyMs === null ? 0.6 : clamp01(1 - avgLatencyMs / 2500);
+      const confidenceBonus = Math.min(executionCount / 20, 1) * 0.05;
+      const score = clamp01(
+        smoothedSuccessRate * 0.75 + latencyScore * 0.20 + confidenceBonus,
+      );
+
+      return {
+        listingId: row.listingId,
+        operationId: row.operationId,
+        windowHours,
+        score,
+        executionCount,
+        successCount,
+        successRate,
+        avgLatencyMs,
+        lastSeenAt: row._max.createdAt?.toISOString() ?? null,
+      };
+    })
+    .sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return b.executionCount - a.executionCount;
     });
 }
 

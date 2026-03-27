@@ -135,6 +135,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       receiptId?: string | null;
       requestId: string;
       queryId?: string;
+      operationId?: string;
       listingSlug: string;
       authMode: "api_key" | "x402";
       billingMode: "individual" | "bundle_step";
@@ -171,6 +172,9 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     res.setHeader("X-NexusX-Latency-Ms", Math.max(0, Math.trunc(input.latencyMs)).toString());
     if (input.queryId) {
       res.setHeader("X-NexusX-Query-Id", input.queryId);
+    }
+    if (input.operationId) {
+      res.setHeader("X-NexusX-Operation-Id", input.operationId);
     }
     if (input.txHash) {
       res.setHeader("X-NexusX-TxHash", input.txHash);
@@ -276,10 +280,12 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     ctx: RequestContext,
     listingSlug: string,
     queryLogId?: string,
+    operationId?: string,
   ): Pick<
     ExecutionReceiptRecord,
     | "requestId"
     | "queryLogId"
+    | "operationId"
     | "listingSlug"
     | "buyerId"
     | "payerAddress"
@@ -292,6 +298,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     return {
       requestId: ctx.requestId,
       queryLogId: queryLogId ?? null,
+      operationId: operationId ?? null,
       listingSlug,
       buyerId: ctx.authMode === "api_key" ? ctx.buyerId : null,
       payerAddress: ctx.authMode === "x402" ? ctx.buyerAddress : null,
@@ -302,6 +309,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       metadata: {
         ...(ctx.callerCountry ? { callerCountry: ctx.callerCountry } : {}),
         ...(ctx.callerRegionBucket ? { callerRegionBucket: ctx.callerRegionBucket } : {}),
+        ...(operationId ? { operationId } : {}),
       },
     };
   }
@@ -314,6 +322,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       body: Record<string, unknown>;
       listingSlug: string;
       queryLogId?: string;
+      operationId?: string;
       billingMode?: "INDIVIDUAL" | "BUNDLE_STEP";
       outcome: "SUCCESS" | "FAILED" | "REJECTED";
       settlementStatus?: "NONE" | "SETTLED" | "PENDING_RECONCILIATION" | "UPSTREAM_FAILED" | "DEFERRED_BUNDLE" | "ABANDONED";
@@ -341,7 +350,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     const retryable = input.retryable ?? false;
     const billingDecision = input.billingDecision ?? "not_charged";
     const receipt = await persistReceipt({
-      ...buildBaseReceipt(input.ctx, input.listingSlug, input.queryLogId),
+      ...buildBaseReceipt(input.ctx, input.listingSlug, input.queryLogId, input.operationId),
       listingId: input.listingId ?? null,
       billingMode: input.billingMode ?? "INDIVIDUAL",
       outcome: input.outcome,
@@ -372,6 +381,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       receiptId: receipt?.id ?? null,
       requestId: input.ctx.requestId,
       queryId: input.queryLogId,
+      operationId: input.operationId,
       listingSlug: input.listingSlug,
       authMode: input.ctx.authMode === "x402" ? "x402" : "api_key",
       billingMode: (input.billingMode ?? "INDIVIDUAL") === "BUNDLE_STEP" ? "bundle_step" : "individual",
@@ -410,7 +420,17 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     }
 
     const discoveryQueryId = parseQueryIdHeader(req.headers["x-nexusx-query-id"]);
+    const requestedOperationId = parseOperationIdHeader(
+      req.headers["x-nexusx-operation-id"],
+    );
     const listingSlug = req.params.listingSlug as string;
+    const sendOperationAwareResponse = (
+      input: Omit<Parameters<typeof sendGatewayResponse>[1], "operationId">,
+    ) =>
+      sendGatewayResponse(res, {
+        ...input,
+        operationId: requestedOperationId,
+      });
 
     // ─── 1. Resolve listing route ───
     let route: ListingRoute | null;
@@ -418,7 +438,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       route = await routeResolver.resolveBySlug(listingSlug);
     } catch (err) {
       console.error("[Proxy] Route resolution error:", err);
-      await sendGatewayResponse(res, {
+      await sendOperationAwareResponse({
         ctx,
         statusCode: 500,
         body: {
@@ -438,7 +458,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     }
 
     if (!route) {
-      await sendGatewayResponse(res, {
+      await sendOperationAwareResponse({
         ctx,
         statusCode: 404,
         body: {
@@ -459,7 +479,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
 
     // ─── 2. Check listing status ───
     if (route.status !== "ACTIVE") {
-      await sendGatewayResponse(res, {
+      await sendOperationAwareResponse({
         ctx,
         statusCode: 503,
         body: {
@@ -486,7 +506,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     if (circuitState && circuitState.state === "open") {
       const retryAfterSeconds = Math.max(1, Math.ceil(circuitState.retryAfterMs / 1000));
       res.setHeader("Retry-After", retryAfterSeconds.toString());
-      await sendGatewayResponse(res, {
+      await sendOperationAwareResponse({
         ctx,
         statusCode: 503,
         body: {
@@ -525,7 +545,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
 
     if (bundleSessionId) {
       if (ctx.authMode === "x402") {
-        await sendGatewayResponse(res, {
+        await sendOperationAwareResponse({
           ctx,
           statusCode: 400,
           body: {
@@ -548,7 +568,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       }
 
       if (!config.lookupBundleSession) {
-        await sendGatewayResponse(res, {
+        await sendOperationAwareResponse({
           ctx,
           statusCode: 503,
           body: {
@@ -572,7 +592,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
 
       bundleStepIndex = parseStepIndex(bundleStepIndexHeader);
       if (bundleStepIndex === undefined) {
-        await sendGatewayResponse(res, {
+        await sendOperationAwareResponse({
           ctx,
           statusCode: 400,
           body: {
@@ -596,7 +616,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
 
       const session = await config.lookupBundleSession(bundleSessionId);
       if (!session) {
-        await sendGatewayResponse(res, {
+        await sendOperationAwareResponse({
           ctx,
           statusCode: 404,
           body: {
@@ -620,7 +640,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       }
 
       if (session.buyerId !== ctx.buyerId) {
-        await sendGatewayResponse(res, {
+        await sendOperationAwareResponse({
           ctx,
           statusCode: 403,
           body: {
@@ -644,7 +664,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       }
 
       if (session.expiresAt && session.expiresAt.getTime() <= Date.now()) {
-        await sendGatewayResponse(res, {
+        await sendOperationAwareResponse({
           ctx,
           statusCode: 409,
           body: {
@@ -669,7 +689,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       }
 
       if (session.status !== "REGISTERED" && session.status !== "IN_PROGRESS") {
-        await sendGatewayResponse(res, {
+        await sendOperationAwareResponse({
           ctx,
           statusCode: 409,
           body: {
@@ -695,7 +715,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
 
       const expectedSlug = session.toolSlugs[bundleStepIndex];
       if (!expectedSlug || expectedSlug !== listingSlug) {
-        await sendGatewayResponse(res, {
+        await sendOperationAwareResponse({
           ctx,
           statusCode: 400,
           body: {
@@ -754,7 +774,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       if (config.circuitBreaker) {
         await config.circuitBreaker.recordResult(listingSlug, 502);
       }
-      await sendGatewayResponse(res, {
+      await sendOperationAwareResponse({
         ctx,
         statusCode: 502,
         body: {
@@ -988,7 +1008,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       settlementStatus,
     });
     const receipt = await persistReceipt({
-      ...buildBaseReceipt(ctx, listingSlug, discoveryQueryId),
+      ...buildBaseReceipt(ctx, listingSlug, discoveryQueryId, requestedOperationId),
       listingId: route.listingId,
       billingMode,
       outcome: receiptOutcome,
@@ -1013,6 +1033,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       metadata: {
         method: req.method,
         upstreamPath,
+        ...(requestedOperationId ? { operationId: requestedOperationId } : {}),
         failureClass: failureContract.failureClass,
         retryable: failureContract.retryable,
         billingDecision: failureContract.billingDecision,
@@ -1029,6 +1050,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       receiptId: receipt?.id ?? null,
       requestId: ctx.requestId,
       queryId: discoveryQueryId,
+      operationId: requestedOperationId,
       listingSlug,
       authMode: ctx.authMode === "x402" ? "x402" : "api_key",
       billingMode: billingMode === "BUNDLE_STEP" ? "bundle_step" : "individual",
@@ -1079,6 +1101,14 @@ function parseQueryIdHeader(header: string | string[] | undefined): string | und
   const value = getHeaderValue(header);
   if (!value) return undefined;
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)
+    ? value
+    : undefined;
+}
+
+function parseOperationIdHeader(header: string | string[] | undefined): string | undefined {
+  const value = getHeaderValue(header);
+  if (!value) return undefined;
+  return /^[a-zA-Z0-9][a-zA-Z0-9:_./-]{0,127}$/.test(value)
     ? value
     : undefined;
 }

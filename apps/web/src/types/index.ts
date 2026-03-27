@@ -103,12 +103,26 @@ export interface OperationVerificationRun {
   createdAt: string;
 }
 
+export interface OperationPerformanceSnapshot {
+  listingId: string;
+  operationId: string;
+  operationName?: string | null;
+  windowHours: number;
+  score: number;
+  executionCount: number;
+  successCount: number;
+  successRate: number;
+  avgLatencyMs: number | null;
+  lastSeenAt: string | null;
+}
+
 export interface OperationDiscoveryMatch {
   operationId: string;
   name: string;
   method: string;
   path: string;
   score: number;
+  executionScore?: number;
   reasons: string[];
 }
 
@@ -198,6 +212,7 @@ export interface RouteMatch {
     latencyScore: number;
     capabilityMatch: number;
     operationMatch: number;
+    operationExecutionScore: number;
   };
   matchReasons: string[];
   matchedOperations?: OperationDiscoveryMatch[];
@@ -291,6 +306,7 @@ export interface ProviderAnalytics {
     summary: OperationVerificationSummary;
     recentRuns: OperationVerificationRun[];
   };
+  operationPerformance?: OperationPerformanceSnapshot[];
 }
 
 export interface TrustPenaltyBreakdown {

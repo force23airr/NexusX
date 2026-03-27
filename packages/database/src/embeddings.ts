@@ -61,6 +61,7 @@ export interface SemanticSearchResult {
   trustScore: number;
   trustState: "trusted" | "degraded" | "high_risk" | "unproven";
   operationMatchScore: number;
+  operationExecutionScore: number;
   matchedOperations: OperationSearchMatch[];
   regionAffinityScore?: number;
   regionAffinityReason?: string | null;
@@ -539,6 +540,7 @@ function rerank(
       publishedAt: row.publishedAt,
       domainMetadata: row.domainMetadata,
       operationMatchScore: operationMatch.score,
+      operationExecutionScore: operationMatch.matches.length > 0 ? 0.5 : 0,
       matchedOperations: operationMatch.matches,
       trustScore,
       trustState: row.trustState ?? "unproven",
@@ -661,7 +663,10 @@ export async function searchListings(
   const diverse = applyDiversityFilter(rawResults);
 
   // 3.5 Trust snapshots for stable final ordering.
-  const { getListingTrustSnapshots } = await import("./observability");
+  const {
+    getListingOperationPerformanceSnapshots,
+    getListingTrustSnapshots,
+  } = await import("./observability");
   const trustSnapshots = await getListingTrustSnapshots(prisma, {
     listingIds: diverse.map((row) => row.listingId),
   });
@@ -678,15 +683,63 @@ export async function searchListings(
   });
 
   // 4. Rerank — use deterministic ranker in hybrid mode, weighted-sum otherwise
+  const withBoosts = rerank(enriched, query, priorityMode);
+  const primaryOperationIds = Array.from(
+    new Set(
+      withBoosts
+        .map((result) => result.matchedOperations[0]?.operationId)
+        .filter((value): value is string => typeof value === "string" && value.length > 0),
+    ),
+  );
+  const operationPerformance =
+    primaryOperationIds.length > 0
+      ? await getListingOperationPerformanceSnapshots(prisma, {
+          listingIds: withBoosts.map((result) => result.listingId),
+          operationIds: primaryOperationIds,
+        })
+      : [];
+  const operationPerformanceMap = new Map(
+    operationPerformance.map((snapshot) => [
+      `${snapshot.listingId}:${snapshot.operationId}`,
+      snapshot,
+    ]),
+  );
+  const withExecutionFeedback = withBoosts
+    .map((result) => {
+      const primaryOperationId = result.matchedOperations[0]?.operationId;
+      const snapshot = primaryOperationId
+        ? operationPerformanceMap.get(`${result.listingId}:${primaryOperationId}`)
+        : undefined;
+      const operationExecutionScore = snapshot?.score ?? result.operationExecutionScore;
+      const matchedOperations = result.matchedOperations.map((match) => {
+        const operationSnapshot = operationPerformanceMap.get(
+          `${result.listingId}:${match.operationId}`,
+        );
+        return {
+          ...match,
+          executionScore: operationSnapshot?.score,
+        };
+      });
+      return {
+        ...result,
+        operationExecutionScore,
+        matchedOperations,
+        compositeScore: result.compositeScore + operationExecutionScore * 0.08,
+      };
+    })
+    .sort((a, b) => b.compositeScore - a.compositeScore);
+
   let reranked: SemanticSearchResult[];
   if (options?.hybrid) {
     const { deterministicRank } = await import("./deterministic-ranker");
-    // First do standard rerank to get SemanticSearchResult with hybrid boosts
-    const withBoosts = rerank(enriched, query, priorityMode);
-    // Then apply deterministic tier-based sorting
-    reranked = deterministicRank(withBoosts, query, priorityMode, options?.metadataFilters);
+    reranked = deterministicRank(
+      withExecutionFeedback,
+      query,
+      priorityMode,
+      options?.metadataFilters,
+    );
   } else {
-    reranked = rerank(enriched, query, priorityMode);
+    reranked = withExecutionFeedback;
   }
 
   // 5. Return top-N

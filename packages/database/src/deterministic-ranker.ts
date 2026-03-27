@@ -190,6 +190,7 @@ export function deterministicRank(
     const withinTierScore =
       tiebreaker +
       result.operationMatchScore * 0.18 +
+      result.operationExecutionScore * 0.16 +
       explorationBonus +
       demandGapBoost +
       regionAffinity.score * 0.08;

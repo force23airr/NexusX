@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
+import { extractOperationContracts } from "@/lib/listingOperationContracts";
 import {
   buildListingOperationVerificationSummary,
+  getListingOperationPerformanceSnapshots,
   getListingOperationVerificationHistory,
   getListingRegionalLatencySnapshot,
   getListingTrustSnapshots,
@@ -30,6 +32,7 @@ export async function GET(
     },
     select: {
       id: true,
+      schemaSpec: true,
       operationVerificationStatus: true,
       lastOperationVerificationAt: true,
       lastSuccessfulOperationVerificationAt: true,
@@ -147,6 +150,15 @@ export async function GET(
       listingId,
       limit: 10,
     });
+  const operationContracts = extractOperationContracts(listing.schemaSpec);
+  const operationNames = new Map(
+    operationContracts.map((operation) => [operation.operationId, operation.name]),
+  );
+  const operationPerformanceSnapshots =
+    await getListingOperationPerformanceSnapshots(prisma, {
+      listingIds: [listingId],
+      windowHours,
+    });
 
   return NextResponse.json({
     period,
@@ -178,5 +190,9 @@ export async function GET(
       summary: operationVerificationSummary,
       recentRuns: operationVerificationRuns,
     },
+    operationPerformance: operationPerformanceSnapshots.map((snapshot) => ({
+      ...snapshot,
+      operationName: operationNames.get(snapshot.operationId) ?? null,
+    })),
   });
 }

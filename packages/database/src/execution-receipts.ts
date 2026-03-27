@@ -11,6 +11,7 @@ export interface ExecutionReceiptRecord {
   requestId: string;
   queryLogId?: string | null;
   listingId?: string | null;
+  operationId?: string | null;
   listingSlug: string;
   buyerId?: string | null;
   payerAddress?: string | null;
@@ -92,6 +93,7 @@ export async function persistExecutionReceipt(
       requestId: record.requestId,
       queryLogId: record.queryLogId ?? null,
       listingId: record.listingId ?? null,
+      operationId: sanitizeNullableString(record.operationId, 128),
       listingSlug: record.listingSlug,
       buyerId: record.buyerId ?? null,
       payerAddress: record.payerAddress ?? null,
@@ -122,6 +124,7 @@ export async function persistExecutionReceipt(
     update: {
       queryLogId: record.queryLogId ?? null,
       listingId: record.listingId ?? null,
+      operationId: sanitizeNullableString(record.operationId, 128),
       listingSlug: record.listingSlug,
       buyerId: record.buyerId ?? null,
       payerAddress: record.payerAddress ?? null,

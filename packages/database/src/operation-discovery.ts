@@ -6,6 +6,7 @@ export interface OperationSearchMatch {
   method: string;
   path: string;
   score: number;
+  executionScore?: number;
   reasons: string[];
 }
 

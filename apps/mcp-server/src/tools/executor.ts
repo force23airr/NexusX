@@ -86,6 +86,7 @@ export class ToolExecutor {
       body,
       query,
       queryId: listing.queryId ?? undefined,
+      operationId: listing.matchedOperations?.[0]?.operationId,
       headers,
     });
 

@@ -172,6 +172,19 @@ export interface OperationVerificationRun {
   createdAt: string;
 }
 
+export interface OperationPerformanceSnapshot {
+  listingId: string;
+  operationId: string;
+  operationName?: string | null;
+  windowHours: number;
+  score: number;
+  executionCount: number;
+  successCount: number;
+  successRate: number;
+  avgLatencyMs: number | null;
+  lastSeenAt: string | null;
+}
+
 export interface DiscoveryMetadata {
   /** Broad search tags used during discovery. */
   tags?: string[];
@@ -464,6 +477,7 @@ export interface ListingAnalytics {
     summary: OperationVerificationSummary;
     recentRuns: OperationVerificationRun[];
   };
+  operationPerformance?: OperationPerformanceSnapshot[];
 }
 
 // ─────────────────────────────────────────────────────────────

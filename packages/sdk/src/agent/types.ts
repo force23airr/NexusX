@@ -74,6 +74,8 @@ export interface CallParams {
   query?: Record<string, string>;
   /** Search query ID to correlate discovery-to-execution conversion. */
   queryId?: string;
+  /** Concrete operation contract ID being executed, when known. */
+  operationId?: string;
   /** Extra headers. */
   headers?: Record<string, string>;
 }
@@ -119,6 +121,7 @@ export interface ExecutionReceiptSummary {
   id: string;
   requestId: string;
   queryId?: string;
+  operationId?: string;
   listingSlug: string;
   authMode: "api_key" | "x402";
   billingMode: "individual" | "bundle_step";
@@ -155,6 +158,8 @@ export interface ChainStep {
   body?: unknown;
   /** Query string parameters. */
   query?: Record<string, string>;
+  /** Concrete operation contract ID for this step, when known. */
+  operationId?: string;
   /** Extra headers. */
   headers?: Record<string, string>;
 }
@@ -186,6 +191,7 @@ export interface SearchMatch {
   trustState?: "trusted" | "degraded" | "high_risk" | "unproven";
   regionAffinityScore?: number;
   operationMatchScore?: number;
+  operationExecutionScore?: number;
   score: number;
   matchReasons: string[];
   matchedOperations?: OperationDiscoveryMatch[];
@@ -197,6 +203,7 @@ export interface OperationDiscoveryMatch {
   method: string;
   path: string;
   score: number;
+  executionScore?: number;
   reasons: string[];
 }
 

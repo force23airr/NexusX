@@ -103,6 +103,7 @@ interface ScoreBreakdown {
   latencyScore: number;
   capabilityMatch: number;
   operationMatch: number;
+  operationExecutionScore: number;
 }
 
 interface RankedMatch {
@@ -625,6 +626,7 @@ function rankListings(
       latencyScore: clamp01(latencyScore),
       capabilityMatch: clamp01(capabilityMatch),
       operationMatch: clamp01(operationMatch.score),
+      operationExecutionScore: 0,
     };
 
     const compositeScore = clamp01(
@@ -878,6 +880,7 @@ function semanticResultsToMatches(
       latencyScore: clamp01(latencyScore),
       capabilityMatch: clamp01(capabilityMatch),
       operationMatch: clamp01(result.operationMatchScore),
+      operationExecutionScore: clamp01(result.operationExecutionScore),
     };
 
     const matchReasons: string[] = [];
@@ -903,6 +906,11 @@ function semanticResultsToMatches(
     }
     if (result.operationMatchScore >= 0.55 && result.matchedOperations[0]) {
       matchReasons.push(`Supports action: ${result.matchedOperations[0].name}`);
+    }
+    if (result.operationExecutionScore >= 0.75 && result.matchedOperations[0]) {
+      matchReasons.push(
+        `Operation execution history is strong for ${result.matchedOperations[0].name}`,
+      );
     }
     if (result.avgLatencyMs > 0 && scoreBreakdown.latencyScore >= 0.8) {
       matchReasons.push(`Fast: ${result.avgLatencyMs}ms average latency`);
@@ -943,6 +951,7 @@ function semanticResultsToMatches(
       scoreBreakdown.categoryMatch * 0.10 +
       scoreBreakdown.capabilityMatch * 0.10 +
       scoreBreakdown.operationMatch * 0.15 +
+      scoreBreakdown.operationExecutionScore * 0.10 +
       scoreBreakdown.priceScore * 0.05 +
       scoreBreakdown.latencyScore * 0.05,
     );

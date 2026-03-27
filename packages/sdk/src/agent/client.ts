@@ -137,6 +137,7 @@ export class NexusXAgent {
         method: step.method,
         body,
         query: step.query,
+        operationId: step.operationId,
         headers: step.headers,
       });
 
@@ -193,6 +194,9 @@ export class NexusXAgent {
         "trusted" | "degraded" | "high_risk" | "unproven" | undefined,
       regionAffinityScore: Number((m.scoreBreakdown as Record<string, unknown> | undefined)?.regionAffinityScore ?? 0),
       operationMatchScore: Number((m.scoreBreakdown as Record<string, unknown> | undefined)?.operationMatch ?? 0),
+      operationExecutionScore: Number(
+        (m.scoreBreakdown as Record<string, unknown> | undefined)?.operationExecutionScore ?? 0,
+      ),
       score: Number(m.score ?? 0),
       matchReasons: Array.isArray(m.matchReasons) ? m.matchReasons.map(String) : [],
       matchedOperations: Array.isArray(m.matchedOperations)
@@ -202,6 +206,7 @@ export class NexusXAgent {
             method: String((op as Record<string, unknown>)?.method ?? ""),
             path: String((op as Record<string, unknown>)?.path ?? ""),
             score: Number((op as Record<string, unknown>)?.score ?? 0),
+            executionScore: Number((op as Record<string, unknown>)?.executionScore ?? 0),
             reasons: Array.isArray((op as Record<string, unknown>)?.reasons)
               ? ((op as Record<string, unknown>).reasons as unknown[]).map(String)
               : [],
@@ -324,6 +329,9 @@ export class NexusXAgent {
     if (params.queryId) {
       headers["X-NexusX-Query-Id"] = params.queryId;
     }
+    if (params.operationId) {
+      headers["X-NexusX-Operation-Id"] = params.operationId;
+    }
 
     const init: RequestInit = { method, headers, signal: AbortSignal.timeout(this.timeoutMs) };
     if (params.body && method !== "GET" && method !== "HEAD") {
@@ -346,6 +354,8 @@ export class NexusXAgent {
       const requestId = response.headers.get("x-nexusx-request-id") || "";
       const receiptId = response.headers.get("x-nexusx-receipt-id") || "";
       const responseQueryId = response.headers.get("x-nexusx-query-id") || params.queryId;
+      const responseOperationId =
+        response.headers.get("x-nexusx-operation-id") || params.operationId;
       const listingFromHeader = response.headers.get("x-nexusx-listing") || slug;
       const authMode = response.headers.get("x-nexusx-auth-mode") === "x402" ? "x402" : "api_key";
       const billingMode =
@@ -387,6 +397,7 @@ export class NexusXAgent {
             id: receiptId,
             requestId,
             queryId: responseQueryId,
+            operationId: responseOperationId,
             listingSlug: listingFromHeader,
             authMode,
             billingMode,

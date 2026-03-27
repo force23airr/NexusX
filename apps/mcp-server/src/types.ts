@@ -50,6 +50,7 @@ export interface DiscoveredListing {
   docsUrl: string | null;
   providerName: string;
   operationMatchScore?: number;
+  operationExecutionScore?: number;
   matchedOperations?: OperationDiscoveryMatch[];
   // Source tracking (for Bazaar-imported listings)
   sourceType: string | null;
@@ -63,6 +64,7 @@ export interface OperationDiscoveryMatch {
   method: string;
   path: string;
   score: number;
+  executionScore?: number;
   reasons: string[];
 }
 
@@ -133,6 +135,7 @@ export interface ExecutionReceiptSummary {
   id: string;
   requestId: string;
   queryId?: string;
+  operationId?: string;
   listingSlug: string;
   authMode: "api_key" | "x402";
   billingMode: "individual" | "bundle_step";

@@ -316,6 +316,7 @@ export class DiscoveryService {
           listing: {
             ...l,
             operationMatchScore: operationMatch.score,
+            operationExecutionScore: 0,
             matchedOperations: operationMatch.matches,
           },
           score,
@@ -412,6 +413,7 @@ export class DiscoveryService {
       avgLatencyMs: r.avgLatencyMs,
       uptimePercent: r.uptimePercent,
       operationMatchScore: r.operationMatchScore,
+      operationExecutionScore: r.operationExecutionScore,
       matchedOperations: r.matchedOperations,
       sampleRequest: null,
       sampleResponse: null,
