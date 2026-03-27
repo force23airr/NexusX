@@ -1,12 +1,36 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
+import {
+  persistListingOperationVerificationRun,
+  type ListingOperationVerificationSummarySnapshot,
+} from "@nexusx/database";
 import { extractOperationContracts } from "@/lib/listingOperationContracts";
+import {
+  buildListingReadinessWriteData,
+  evaluateListingReadiness,
+} from "@/lib/providerListing";
 
 const GATEWAY_URL = process.env.GATEWAY_URL || "http://localhost:3100";
 const PATH_TEMPLATE_PATTERN = /\{([^}]+)\}/g;
 
 type VerificationOutcome = "verified" | "warning" | "failed" | "skipped";
+
+function deriveReadinessVerificationFields(
+  summary: ListingOperationVerificationSummarySnapshot,
+) {
+  return {
+    operationVerificationStatus: summary.rawStatus,
+    lastOperationVerificationAt: summary.lastVerifiedAt
+      ? new Date(summary.lastVerifiedAt)
+      : null,
+    operationVerificationVerifiedCount: summary.verifiedCount,
+    operationVerificationWarningCount: summary.warningCount,
+    operationVerificationFailedCount: summary.failedCount,
+    operationVerificationSkippedCount: summary.skippedCount,
+  };
+}
 
 function resolveOperationPath(
   path: string,
@@ -224,12 +248,68 @@ export async function POST(
     }),
   );
 
+  const verifiedCount = results.filter((result) => result.outcome === "verified").length;
+  const warningCount = results.filter((result) => result.outcome === "warning").length;
+  const failedCount = results.filter((result) => result.outcome === "failed").length;
+  const skippedCount = results.filter((result) => result.outcome === "skipped").length;
+
+  const persisted = await persistListingOperationVerificationRun(prisma, {
+    listingId: listing.id,
+    providerId: result.user.id,
+    verifiedCount,
+    warningCount,
+    failedCount,
+    skippedCount,
+    results: results as unknown as Prisma.InputJsonValue,
+  });
+
+  const readiness = await evaluateListingReadiness({
+    listingType: listing.listingType,
+    baseUrl: listing.baseUrl,
+    healthCheckUrl: listing.healthCheckUrl,
+    sandboxUrl: listing.sandboxUrl,
+    docsUrl: listing.docsUrl,
+    authType: listing.authType,
+    authSchemes: listing.authSchemes,
+    interactionModes: listing.interactionModes,
+    humanApprovalRequired: listing.humanApprovalRequired,
+    noHealthProbe: listing.noHealthProbe,
+    riskLevel: listing.riskLevel,
+    sideEffectLevel: listing.sideEffectLevel,
+    description: listing.description,
+    tags: listing.tags,
+    intents: listing.intents,
+    capabilityTags: listing.capabilityTags,
+    inputModalities: listing.inputModalities,
+    outputModalities: listing.outputModalities,
+    availabilityRegions: listing.availabilityRegions,
+    complianceTags: listing.complianceTags,
+    sampleRequest: listing.sampleRequest,
+    sampleResponse: listing.sampleResponse,
+    schemaSpec: listing.schemaSpec,
+    domainMetadata: listing.domainMetadata,
+    ...deriveReadinessVerificationFields(persisted.summary),
+  });
+
+  await prisma.listing.update({
+    where: { id: listing.id },
+    data: buildListingReadinessWriteData(readiness),
+  });
+
   return NextResponse.json({
     listingId: listing.id,
-    verifiedCount: results.filter((result) => result.outcome === "verified").length,
-    warningCount: results.filter((result) => result.outcome === "warning").length,
-    failedCount: results.filter((result) => result.outcome === "failed").length,
-    skippedCount: results.filter((result) => result.outcome === "skipped").length,
+    verifiedCount,
+    warningCount,
+    failedCount,
+    skippedCount,
+    summary: persisted.summary,
+    run: persisted.run,
+    readiness: {
+      score: readiness.score,
+      readyForActivation: readiness.readyForActivation,
+      issues: readiness.blockers,
+      warnings: readiness.warnings,
+    },
     results,
   });
 }

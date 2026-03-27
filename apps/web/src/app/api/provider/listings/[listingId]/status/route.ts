@@ -84,6 +84,12 @@ export async function POST(
       sampleResponse: listing.sampleResponse,
       schemaSpec: listing.schemaSpec,
       domainMetadata: listing.domainMetadata,
+      operationVerificationStatus: listing.operationVerificationStatus,
+      lastOperationVerificationAt: listing.lastOperationVerificationAt,
+      operationVerificationVerifiedCount: listing.operationVerificationVerifiedCount,
+      operationVerificationWarningCount: listing.operationVerificationWarningCount,
+      operationVerificationFailedCount: listing.operationVerificationFailedCount,
+      operationVerificationSkippedCount: listing.operationVerificationSkippedCount,
     });
 
     if (!readiness.readyForActivation) {

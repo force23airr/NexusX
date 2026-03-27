@@ -149,6 +149,17 @@ export {
   type ExecutionReceiptSettlementUpdate,
 } from "./execution-receipts";
 
+export {
+  OPERATION_VERIFICATION_STALE_HOURS,
+  buildListingOperationVerificationSummary,
+  getListingOperationVerificationHistory,
+  isOperationVerificationStale,
+  persistListingOperationVerificationRun,
+  type ListingOperationVerificationRunSnapshot,
+  type ListingOperationVerificationSummarySnapshot,
+  type PersistListingOperationVerificationInput,
+} from "./operation-verification";
+
 // ─── Operational Observability ───
 export {
   markQueryLogSelected,
@@ -218,6 +229,7 @@ export type {
   Rating,
   QueryLog,
   ExecutionReceipt,
+  ListingOperationVerificationRun,
   PlatformConfig,
   AuditLog,
 } from "@prisma/client";
@@ -227,6 +239,7 @@ export {
   KycStatus,
   ListingStatus,
   ListingType,
+  OperationVerificationStatus,
   DemandSignalType,
   TransactionStatus,
   ExecutionAuthMode,

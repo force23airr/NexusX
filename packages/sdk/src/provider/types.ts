@@ -141,7 +141,35 @@ export interface OperationVerificationResponse {
   warningCount: number;
   failedCount: number;
   skippedCount: number;
+  summary?: OperationVerificationSummary;
+  run?: OperationVerificationRun;
+  readiness?: ListingReadinessSnapshot;
   results: OperationVerificationResult[];
+}
+
+export interface OperationVerificationSummary {
+  status: "NONE" | "VERIFIED" | "WARNING" | "FAILED" | "STALE";
+  rawStatus: "NONE" | "VERIFIED" | "WARNING" | "FAILED";
+  stale: boolean;
+  lastVerifiedAt: string | null;
+  lastSuccessfulVerifiedAt: string | null;
+  verifiedCount: number;
+  warningCount: number;
+  failedCount: number;
+  skippedCount: number;
+  staleAfterHours: number;
+}
+
+export interface OperationVerificationRun {
+  id: string;
+  status: "NONE" | "VERIFIED" | "WARNING" | "FAILED" | "STALE";
+  rawStatus: "NONE" | "VERIFIED" | "WARNING" | "FAILED";
+  stale: boolean;
+  verifiedCount: number;
+  warningCount: number;
+  failedCount: number;
+  skippedCount: number;
+  createdAt: string;
 }
 
 export interface DiscoveryMetadata {
@@ -283,6 +311,7 @@ export interface Listing {
   sampleResponse?: Record<string, unknown> | null;
   schemaSpec?: Record<string, unknown> | null;
   operationContracts?: ListingOperationContract[];
+  operationVerification?: OperationVerificationSummary;
   totalCalls: string;
   totalRevenue: string;
   avgRating: string;
@@ -431,6 +460,10 @@ export interface ListingAnalytics {
   currentPriceUsdc: string;
   demandScore: number;
   qualityScore: number;
+  operationVerification?: {
+    summary: OperationVerificationSummary;
+    recentRuns: OperationVerificationRun[];
+  };
 }
 
 // ─────────────────────────────────────────────────────────────

@@ -5,6 +5,7 @@ import {
   ListingType,
   Prisma,
 } from "@prisma/client";
+import { buildListingOperationVerificationSummary } from "@nexusx/database";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
 import {
@@ -54,6 +55,7 @@ export async function GET(
     ? (listing.schemaSpec as Record<string, unknown>).videoUrl as string | undefined
     : undefined;
   const operationContracts = extractOperationContracts(listing.schemaSpec);
+  const operationVerification = buildListingOperationVerificationSummary(listing);
 
   return NextResponse.json({
     id: listing.id,
@@ -89,6 +91,7 @@ export async function GET(
     sampleResponse: listing.sampleResponse,
     schemaSpec: listing.schemaSpec,
     operationContracts,
+    operationVerification,
     availabilityRegions: listing.availabilityRegions,
     restrictedRegions: listing.restrictedRegions,
     complianceTags: listing.complianceTags,
@@ -213,9 +216,15 @@ export async function PUT(
       (data.schemaSpec as Prisma.JsonValue | null | undefined) ?? listing.schemaSpec,
     domainMetadata:
       (data.domainMetadata as Prisma.JsonValue | null | undefined) ?? listing.domainMetadata,
+    operationVerificationStatus: listing.operationVerificationStatus,
+    lastOperationVerificationAt: listing.lastOperationVerificationAt,
+    operationVerificationVerifiedCount: listing.operationVerificationVerifiedCount,
+    operationVerificationWarningCount: listing.operationVerificationWarningCount,
+    operationVerificationFailedCount: listing.operationVerificationFailedCount,
+    operationVerificationSkippedCount: listing.operationVerificationSkippedCount,
   };
 
-  const readiness = await evaluateListingReadiness(nextListing);
+    const readiness = await evaluateListingReadiness(nextListing);
   Object.assign(data, buildListingReadinessWriteData(readiness));
 
   const updated = await prisma.listing.update({

@@ -122,6 +122,12 @@ export async function POST(
       sampleResponse: true,
       schemaSpec: true,
       domainMetadata: true,
+      operationVerificationStatus: true,
+      lastOperationVerificationAt: true,
+      operationVerificationVerifiedCount: true,
+      operationVerificationWarningCount: true,
+      operationVerificationFailedCount: true,
+      operationVerificationSkippedCount: true,
       supplyTier: true,
       verificationState: true,
       verificationReason: true,
@@ -289,6 +295,12 @@ export async function POST(
       sampleResponse: listing.sampleResponse,
       schemaSpec: listing.schemaSpec,
       domainMetadata: listing.domainMetadata,
+      operationVerificationStatus: listing.operationVerificationStatus,
+      lastOperationVerificationAt: listing.lastOperationVerificationAt,
+      operationVerificationVerifiedCount: listing.operationVerificationVerifiedCount,
+      operationVerificationWarningCount: listing.operationVerificationWarningCount,
+      operationVerificationFailedCount: listing.operationVerificationFailedCount,
+      operationVerificationSkippedCount: listing.operationVerificationSkippedCount,
     });
 
     if (!readiness.readyForActivation) {

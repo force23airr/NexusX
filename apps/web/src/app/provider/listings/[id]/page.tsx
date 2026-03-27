@@ -581,7 +581,7 @@ function SettingsTab({
   onSaved,
 }: {
   listing: ListingDetail;
-  onSaved: () => void;
+  onSaved: () => void | Promise<void>;
 }) {
   const isEditable = listing.status === "DRAFT" || listing.status === "PAUSED";
   const routingMetadata = extractRoutingMetadata(listing.domainMetadata);
@@ -621,6 +621,7 @@ function SettingsTab({
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [isVerifying, setIsVerifying] = useState(false);
   const [verification, setVerification] = useState<OperationVerificationResponse | null>(null);
+  const verificationSummary = verification?.summary ?? listing.operationVerification;
 
   const updateField = (
     key: string,
@@ -682,7 +683,7 @@ function SettingsTab({
         capacityPerMinute: parseInt(form.capacityPerMinute, 10),
       });
       setSaveMsg("Saved successfully");
-      onSaved();
+      await onSaved();
     } catch (err: unknown) {
       if (err instanceof Error && err.message.includes("Domain metadata")) {
         setFieldErrors({ domainMetadataText: err.message });
@@ -700,6 +701,7 @@ function SettingsTab({
     try {
       const result = await provider.verifyOperations(listing.id);
       setVerification(result);
+      await onSaved();
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Operation verification failed";
       setSaveMsg(msg);
@@ -855,6 +857,45 @@ function SettingsTab({
             ])
           }
         />
+
+        {verificationSummary ? (
+          <div className="rounded-xl border border-surface-4 bg-surface-2 p-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <VerificationBadge
+                label={`status: ${verificationSummary.status.toLowerCase()}`}
+                tone={
+                  verificationSummary.status === "VERIFIED"
+                    ? "good"
+                    : verificationSummary.status === "FAILED"
+                      ? "bad"
+                      : verificationSummary.status === "WARNING" ||
+                          verificationSummary.status === "STALE"
+                        ? "warn"
+                        : "neutral"
+                }
+              />
+              <VerificationBadge
+                label={`${verificationSummary.verifiedCount} verified`}
+                tone="good"
+              />
+              <VerificationBadge
+                label={`${verificationSummary.warningCount} warnings`}
+                tone="warn"
+              />
+              <VerificationBadge
+                label={`${verificationSummary.failedCount} failed`}
+                tone="bad"
+              />
+              <VerificationBadge
+                label={`${verificationSummary.skippedCount} skipped`}
+                tone="neutral"
+              />
+            </div>
+            <p className="mt-2 text-xs text-zinc-500">
+              Last verified: {verificationSummary.lastVerifiedAt ?? "never"}
+            </p>
+          </div>
+        ) : null}
 
         {verification ? (
           <div className="space-y-3 rounded-xl border border-surface-4 bg-surface-2 p-4">

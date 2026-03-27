@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
 import {
+  buildListingOperationVerificationSummary,
+  getListingOperationVerificationHistory,
   getListingRegionalLatencySnapshot,
   getListingTrustSnapshots,
   getProviderObservabilitySnapshot,
@@ -26,7 +28,16 @@ export async function GET(
       id: listingId,
       providerId: provider.user.id,
     },
-    select: { id: true },
+    select: {
+      id: true,
+      operationVerificationStatus: true,
+      lastOperationVerificationAt: true,
+      lastSuccessfulOperationVerificationAt: true,
+      operationVerificationVerifiedCount: true,
+      operationVerificationWarningCount: true,
+      operationVerificationFailedCount: true,
+      operationVerificationSkippedCount: true,
+    },
   });
 
   if (!listing) {
@@ -129,6 +140,13 @@ export async function GET(
     providerId: provider.user.id,
     windowHours,
   });
+  const operationVerificationSummary =
+    buildListingOperationVerificationSummary(listing);
+  const operationVerificationRuns =
+    await getListingOperationVerificationHistory(prisma, {
+      listingId,
+      limit: 10,
+    });
 
   return NextResponse.json({
     period,
@@ -155,6 +173,10 @@ export async function GET(
     trust: {
       listing: listingTrust,
       provider: providerTrust,
+    },
+    operationVerification: {
+      summary: operationVerificationSummary,
+      recentRuns: operationVerificationRuns,
     },
   });
 }

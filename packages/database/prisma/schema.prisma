@@ -75,6 +75,13 @@ enum ListingSideEffectLevel {
   IRREVERSIBLE
 }
 
+enum OperationVerificationStatus {
+  NONE
+  VERIFIED
+  WARNING
+  FAILED
+}
+
 enum PublicSourceType {
   GITHUB_REPO
   MANIFEST_CATALOG
@@ -234,6 +241,7 @@ model User {
   subscriptions             Subscription[]
   queryLogs                 QueryLog[]
   auditLogs                 AuditLog[]                 @relation("AuditActor")
+  operationVerificationRuns ListingOperationVerificationRun[]
 
   @@index([email])
   @@index([kycStatus])
@@ -402,6 +410,15 @@ model Listing {
   readinessWarnings  String[] @default([]) @map("readiness_warnings")
   readinessUpdatedAt DateTime? @map("readiness_updated_at")
 
+  // Persistent operation verification summary
+  operationVerificationStatus OperationVerificationStatus @default(NONE) @map("operation_verification_status")
+  lastOperationVerificationAt DateTime? @map("last_operation_verification_at")
+  lastSuccessfulOperationVerificationAt DateTime? @map("last_successful_operation_verification_at")
+  operationVerificationVerifiedCount Int @default(0) @map("operation_verification_verified_count")
+  operationVerificationWarningCount Int @default(0) @map("operation_verification_warning_count")
+  operationVerificationFailedCount Int @default(0) @map("operation_verification_failed_count")
+  operationVerificationSkippedCount Int @default(0) @map("operation_verification_skipped_count")
+
   // Aggregate counters (denormalized for query performance)
   totalCalls   BigInt  @default(0) @map("total_calls")
   totalRevenue Decimal @default(0) @map("total_revenue") @db.Decimal(18, 6)
@@ -432,6 +449,7 @@ model Listing {
   bundleProviderSettlements BundleProviderSettlement[]
   x402Settlements           X402SettlementRecord[]
   provenance                ListingProvenance?
+  operationVerificationRuns ListingOperationVerificationRun[]
 
   @@index([providerId])
   @@index([categoryId])
@@ -440,6 +458,7 @@ model Listing {
   @@index([verificationState, status])
   @@index([riskLevel, status])
   @@index([status, readinessScore])
+  @@index([operationVerificationStatus, lastOperationVerificationAt])
   @@index([listingType])
   @@index([currentPriceUsdc])
   @@index([totalCalls])
@@ -510,6 +529,27 @@ model ListingProvenance {
   @@index([kind])
   @@index([externalUrl])
   @@map("listing_provenances")
+}
+
+model ListingOperationVerificationRun {
+  id            String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  listingId      String                     @map("listing_id") @db.Uuid
+  providerId     String                     @map("provider_id") @db.Uuid
+  status         OperationVerificationStatus @default(NONE)
+  verifiedCount  Int                        @default(0) @map("verified_count")
+  warningCount   Int                        @default(0) @map("warning_count")
+  failedCount    Int                        @default(0) @map("failed_count")
+  skippedCount   Int                        @default(0) @map("skipped_count")
+  results        Json?                      @map("results")
+  createdAt      DateTime                   @default(now()) @map("created_at")
+
+  listing        Listing                    @relation(fields: [listingId], references: [id], onDelete: Cascade)
+  provider       User                       @relation(fields: [providerId], references: [id], onDelete: Cascade)
+
+  @@index([listingId, createdAt])
+  @@index([providerId, createdAt])
+  @@index([status, createdAt])
+  @@map("listing_operation_verification_runs")
 }
 
 // ─────────────────────────────────────────────────────────────

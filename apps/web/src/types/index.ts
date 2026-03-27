@@ -72,7 +72,35 @@ export interface OperationVerificationResponse {
   warningCount: number;
   failedCount: number;
   skippedCount: number;
+  summary?: OperationVerificationSummary;
+  run?: OperationVerificationRun;
+  readiness?: ListingReadinessSnapshot;
   results: OperationVerificationResult[];
+}
+
+export interface OperationVerificationSummary {
+  status: "NONE" | "VERIFIED" | "WARNING" | "FAILED" | "STALE";
+  rawStatus: "NONE" | "VERIFIED" | "WARNING" | "FAILED";
+  stale: boolean;
+  lastVerifiedAt: string | null;
+  lastSuccessfulVerifiedAt: string | null;
+  verifiedCount: number;
+  warningCount: number;
+  failedCount: number;
+  skippedCount: number;
+  staleAfterHours: number;
+}
+
+export interface OperationVerificationRun {
+  id: string;
+  status: "NONE" | "VERIFIED" | "WARNING" | "FAILED" | "STALE";
+  rawStatus: "NONE" | "VERIFIED" | "WARNING" | "FAILED";
+  stale: boolean;
+  verifiedCount: number;
+  warningCount: number;
+  failedCount: number;
+  skippedCount: number;
+  createdAt: string;
 }
 
 export interface SearchMetadataFilters {
@@ -140,6 +168,7 @@ export interface Listing extends ListingDiscoveryMetadata {
   sideEffectLevel?: ListingSideEffectLevel;
   readiness?: ListingReadinessSnapshot;
   operationContracts?: ListingOperationContract[];
+  operationVerification?: OperationVerificationSummary;
   publishedAt: string | null;
   createdAt: string;
 }
@@ -246,6 +275,10 @@ export interface ProviderAnalytics {
   trust?: {
     listing: ListingTrustSnapshot;
     provider: ProviderTrustSnapshot;
+  };
+  operationVerification?: {
+    summary: OperationVerificationSummary;
+    recentRuns: OperationVerificationRun[];
   };
 }
 

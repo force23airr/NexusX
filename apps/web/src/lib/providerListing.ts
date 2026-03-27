@@ -3,6 +3,11 @@ import {
   ListingSideEffectLevel,
   ListingType,
 } from "@prisma/client";
+import {
+  OPERATION_VERIFICATION_STALE_HOURS,
+  isOperationVerificationStale,
+  type ListingOperationVerificationSummarySnapshot,
+} from "@nexusx/database";
 import { assertSafeHttpUrl } from "@/lib/ssrf";
 import {
   extractOperationContracts,
@@ -48,6 +53,12 @@ export interface ListingReadinessInput {
   sampleResponse?: unknown | null;
   schemaSpec?: unknown | null;
   domainMetadata?: unknown | null;
+  operationVerificationStatus?: "NONE" | "VERIFIED" | "WARNING" | "FAILED" | null;
+  lastOperationVerificationAt?: Date | null;
+  operationVerificationVerifiedCount?: number;
+  operationVerificationWarningCount?: number;
+  operationVerificationFailedCount?: number;
+  operationVerificationSkippedCount?: number;
 }
 
 export interface ListingReadinessReport {
@@ -62,6 +73,38 @@ export interface ListingReadinessReport {
     noHealthProbe: boolean;
     riskLevel: ListingRiskLevel;
     sideEffectLevel: ListingSideEffectLevel;
+  };
+}
+
+function getOperationVerificationSummary(
+  listing: ListingReadinessInput,
+): ListingOperationVerificationSummarySnapshot | null {
+  if (
+    listing.operationVerificationStatus === undefined &&
+    listing.lastOperationVerificationAt === undefined &&
+    listing.operationVerificationVerifiedCount === undefined &&
+    listing.operationVerificationWarningCount === undefined &&
+    listing.operationVerificationFailedCount === undefined &&
+    listing.operationVerificationSkippedCount === undefined
+  ) {
+    return null;
+  }
+
+  return {
+    status:
+      listing.operationVerificationStatus ??
+      "NONE",
+    rawStatus:
+      listing.operationVerificationStatus ??
+      "NONE",
+    stale: isOperationVerificationStale(listing.lastOperationVerificationAt),
+    lastVerifiedAt: listing.lastOperationVerificationAt?.toISOString() ?? null,
+    lastSuccessfulVerifiedAt: null,
+    verifiedCount: listing.operationVerificationVerifiedCount ?? 0,
+    warningCount: listing.operationVerificationWarningCount ?? 0,
+    failedCount: listing.operationVerificationFailedCount ?? 0,
+    skippedCount: listing.operationVerificationSkippedCount ?? 0,
+    staleAfterHours: OPERATION_VERIFICATION_STALE_HOURS,
   };
 }
 
@@ -456,6 +499,7 @@ export async function evaluateListingReadiness(
   const riskLevel = listing.riskLevel ?? "LOW";
   const sideEffectLevel = listing.sideEffectLevel ?? "READ_ONLY";
   const operationContracts = extractOperationContracts(listing.schemaSpec);
+  const verificationSummary = getOperationVerificationSummary(listing);
 
   for (const [label, value] of [
     ["baseUrl", listing.baseUrl],
@@ -614,6 +658,30 @@ export async function evaluateListingReadiness(
             `operation "${operation.name}" has templated path params without sampleInput values: ${missingKeys.join(", ")}`,
           );
         }
+      }
+    }
+  }
+
+  if (operationContracts.length > 0) {
+    if (!verificationSummary || verificationSummary.rawStatus === "NONE") {
+      warnings.push(
+        "operation contracts have not been verified through the gateway yet; run Verify Operations before activation",
+      );
+    } else {
+      if (verificationSummary.rawStatus === "FAILED") {
+        blockers.push(
+          "latest operation verification reported failures; fix the broken operations or rerun verification before activation",
+        );
+      } else if (verificationSummary.rawStatus === "WARNING") {
+        warnings.push(
+          "latest operation verification reported warnings or skipped operations; review the verification results before activation",
+        );
+      }
+
+      if (verificationSummary.stale) {
+        warnings.push(
+          "operation verification is stale; rerun Verify Operations to confirm the contract still matches reality",
+        );
       }
     }
   }
