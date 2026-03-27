@@ -122,6 +122,7 @@ export interface ExecutionReceiptSummary {
   requestId: string;
   queryId?: string;
   operationId?: string;
+  fallbackSourceReceiptId?: string;
   listingSlug: string;
   authMode: "api_key" | "x402";
   billingMode: "individual" | "bundle_step";

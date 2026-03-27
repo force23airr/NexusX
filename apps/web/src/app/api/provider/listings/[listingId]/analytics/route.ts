@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getCurrentProvider } from "@/lib/auth";
 import { extractOperationContracts } from "@/lib/listingOperationContracts";
 import {
+  getListingFallbackTelemetry,
   buildListingOperationVerificationSummary,
   getListingOperationPerformanceSnapshots,
   getListingOperationVerificationHistory,
@@ -159,6 +160,10 @@ export async function GET(
       listingIds: [listingId],
       windowHours,
     });
+  const fallbackTelemetry = await getListingFallbackTelemetry(prisma, {
+    listingId,
+    windowHours,
+  });
 
   return NextResponse.json({
     period,
@@ -194,5 +199,15 @@ export async function GET(
       ...snapshot,
       operationName: operationNames.get(snapshot.operationId) ?? null,
     })),
+    fallbackTelemetry: {
+      ...fallbackTelemetry,
+      byOperation: fallbackTelemetry.byOperation.map((snapshot) => ({
+        ...snapshot,
+        operationName:
+          snapshot.operationId
+            ? operationNames.get(snapshot.operationId) ?? null
+            : null,
+      })),
+    },
   });
 }

@@ -218,6 +218,7 @@ export class OrchestratorService {
               method: endpoint.method,
               body: Object.keys(body).length > 0 ? body : undefined,
               operationId: fallback.operationId,
+              fallbackSourceReceiptId: result.metadata?.receiptId,
             });
 
             if (!fallbackResult.isError) {

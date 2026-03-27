@@ -136,6 +136,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       requestId: string;
       queryId?: string;
       operationId?: string;
+      fallbackSourceReceiptId?: string;
       listingSlug: string;
       authMode: "api_key" | "x402";
       billingMode: "individual" | "bundle_step";
@@ -175,6 +176,12 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     }
     if (input.operationId) {
       res.setHeader("X-NexusX-Operation-Id", input.operationId);
+    }
+    if (input.fallbackSourceReceiptId) {
+      res.setHeader(
+        "X-NexusX-Fallback-Source-Receipt-Id",
+        input.fallbackSourceReceiptId,
+      );
     }
     if (input.txHash) {
       res.setHeader("X-NexusX-TxHash", input.txHash);
@@ -281,11 +288,13 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     listingSlug: string,
     queryLogId?: string,
     operationId?: string,
+    fallbackSourceReceiptId?: string,
   ): Pick<
     ExecutionReceiptRecord,
     | "requestId"
     | "queryLogId"
     | "operationId"
+    | "fallbackSourceReceiptId"
     | "listingSlug"
     | "buyerId"
     | "payerAddress"
@@ -299,6 +308,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       requestId: ctx.requestId,
       queryLogId: queryLogId ?? null,
       operationId: operationId ?? null,
+      fallbackSourceReceiptId: fallbackSourceReceiptId ?? null,
       listingSlug,
       buyerId: ctx.authMode === "api_key" ? ctx.buyerId : null,
       payerAddress: ctx.authMode === "x402" ? ctx.buyerAddress : null,
@@ -310,6 +320,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
         ...(ctx.callerCountry ? { callerCountry: ctx.callerCountry } : {}),
         ...(ctx.callerRegionBucket ? { callerRegionBucket: ctx.callerRegionBucket } : {}),
         ...(operationId ? { operationId } : {}),
+        ...(fallbackSourceReceiptId ? { fallbackSourceReceiptId } : {}),
       },
     };
   }
@@ -323,6 +334,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       listingSlug: string;
       queryLogId?: string;
       operationId?: string;
+      fallbackSourceReceiptId?: string;
       billingMode?: "INDIVIDUAL" | "BUNDLE_STEP";
       outcome: "SUCCESS" | "FAILED" | "REJECTED";
       settlementStatus?: "NONE" | "SETTLED" | "PENDING_RECONCILIATION" | "UPSTREAM_FAILED" | "DEFERRED_BUNDLE" | "ABANDONED";
@@ -350,7 +362,13 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     const retryable = input.retryable ?? false;
     const billingDecision = input.billingDecision ?? "not_charged";
     const receipt = await persistReceipt({
-      ...buildBaseReceipt(input.ctx, input.listingSlug, input.queryLogId, input.operationId),
+      ...buildBaseReceipt(
+        input.ctx,
+        input.listingSlug,
+        input.queryLogId,
+        input.operationId,
+        input.fallbackSourceReceiptId,
+      ),
       listingId: input.listingId ?? null,
       billingMode: input.billingMode ?? "INDIVIDUAL",
       outcome: input.outcome,
@@ -382,6 +400,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       requestId: input.ctx.requestId,
       queryId: input.queryLogId,
       operationId: input.operationId,
+      fallbackSourceReceiptId: input.fallbackSourceReceiptId,
       listingSlug: input.listingSlug,
       authMode: input.ctx.authMode === "x402" ? "x402" : "api_key",
       billingMode: (input.billingMode ?? "INDIVIDUAL") === "BUNDLE_STEP" ? "bundle_step" : "individual",
@@ -423,13 +442,20 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     const requestedOperationId = parseOperationIdHeader(
       req.headers["x-nexusx-operation-id"],
     );
+    const fallbackSourceReceiptId = parseReceiptIdHeader(
+      req.headers["x-nexusx-fallback-source-receipt-id"],
+    );
     const listingSlug = req.params.listingSlug as string;
     const sendOperationAwareResponse = (
-      input: Omit<Parameters<typeof sendGatewayResponse>[1], "operationId">,
+      input: Omit<
+        Parameters<typeof sendGatewayResponse>[1],
+        "operationId" | "fallbackSourceReceiptId"
+      >,
     ) =>
       sendGatewayResponse(res, {
         ...input,
         operationId: requestedOperationId,
+        fallbackSourceReceiptId,
       });
 
     // ─── 1. Resolve listing route ───
@@ -1008,7 +1034,13 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       settlementStatus,
     });
     const receipt = await persistReceipt({
-      ...buildBaseReceipt(ctx, listingSlug, discoveryQueryId, requestedOperationId),
+      ...buildBaseReceipt(
+        ctx,
+        listingSlug,
+        discoveryQueryId,
+        requestedOperationId,
+        fallbackSourceReceiptId,
+      ),
       listingId: route.listingId,
       billingMode,
       outcome: receiptOutcome,
@@ -1034,6 +1066,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
         method: req.method,
         upstreamPath,
         ...(requestedOperationId ? { operationId: requestedOperationId } : {}),
+        ...(fallbackSourceReceiptId ? { fallbackSourceReceiptId } : {}),
         failureClass: failureContract.failureClass,
         retryable: failureContract.retryable,
         billingDecision: failureContract.billingDecision,
@@ -1051,6 +1084,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       requestId: ctx.requestId,
       queryId: discoveryQueryId,
       operationId: requestedOperationId,
+      fallbackSourceReceiptId,
       listingSlug,
       authMode: ctx.authMode === "x402" ? "x402" : "api_key",
       billingMode: billingMode === "BUNDLE_STEP" ? "bundle_step" : "individual",
@@ -1111,6 +1145,10 @@ function parseOperationIdHeader(header: string | string[] | undefined): string |
   return /^[a-zA-Z0-9][a-zA-Z0-9:_./-]{0,127}$/.test(value)
     ? value
     : undefined;
+}
+
+function parseReceiptIdHeader(header: string | string[] | undefined): string | undefined {
+  return parseQueryIdHeader(header);
 }
 
 function parseStepIndex(raw: string | undefined): number | undefined {

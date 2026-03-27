@@ -75,6 +75,7 @@ export class GatewayClient {
     query?: Record<string, string>;
     queryId?: string;
     operationId?: string;
+    fallbackSourceReceiptId?: string;
     headers?: Record<string, string>;
     bundleSessionId?: string;
     bundleStepIndex?: number;
@@ -89,6 +90,7 @@ export class GatewayClient {
       query,
       queryId,
       operationId,
+      fallbackSourceReceiptId,
       headers: extraHeaders,
       bundleSessionId,
       bundleStepIndex,
@@ -128,6 +130,9 @@ export class GatewayClient {
     }
     if (operationId) {
       headers["X-NexusX-Operation-Id"] = operationId;
+    }
+    if (fallbackSourceReceiptId) {
+      headers["X-NexusX-Fallback-Source-Receipt-Id"] = fallbackSourceReceiptId;
     }
     if (bundleSessionId) {
       headers["X-NexusX-Bundle-Session-Id"] = bundleSessionId;
@@ -193,6 +198,9 @@ export class GatewayClient {
       const responseQueryId = response.headers.get("x-nexusx-query-id") || queryId;
       const responseOperationId =
         response.headers.get("x-nexusx-operation-id") || operationId;
+      const responseFallbackSourceReceiptId =
+        response.headers.get("x-nexusx-fallback-source-receipt-id") ||
+        fallbackSourceReceiptId;
       const authMode: "api_key" | "x402" =
         response.headers.get("x-nexusx-auth-mode") === "x402" ? "x402" : "api_key";
       const billingMode: "individual" | "bundle_step" =
@@ -241,6 +249,7 @@ export class GatewayClient {
             requestId,
             queryId: responseQueryId,
             operationId: responseOperationId,
+            fallbackSourceReceiptId: responseFallbackSourceReceiptId,
             listingSlug: response.headers.get("x-nexusx-listing") || slug,
             authMode,
             billingMode,
@@ -282,6 +291,7 @@ export class GatewayClient {
         billingDecision,
         receipt,
         metadata: {
+          receiptId,
           failureClass,
           retryable,
           billingDecision,
@@ -310,6 +320,7 @@ export class GatewayClient {
           billingDecision: "not_charged",
           receipt: null,
           metadata: {
+            receiptId: undefined,
             failureClass: "upstream_timeout",
             retryable: true,
             billingDecision: "not_charged",
@@ -336,6 +347,7 @@ export class GatewayClient {
         billingDecision: "not_charged",
         receipt: null,
         metadata: {
+          receiptId: undefined,
           failureClass: "connection_error",
           retryable: true,
           billingDecision: "not_charged",

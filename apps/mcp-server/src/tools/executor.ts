@@ -21,6 +21,7 @@ interface ExecuteToolArgs {
   body?: Record<string, unknown>;
   query?: Record<string, string>;
   operationId?: string;
+  fallbackSourceReceiptId?: string;
   headers?: Record<string, string>;
 }
 
@@ -35,6 +36,7 @@ export interface ToolCallResult {
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
   metadata?: {
+    receiptId?: string;
     failureClass?: string;
     retryable?: boolean;
     billingDecision?: "not_charged" | "charged" | "charged_pending_settlement" | "deferred_bundle";
@@ -82,7 +84,7 @@ export class ToolExecutor {
     listing: DiscoveredListing,
     args: ExecuteToolArgs,
   ): Promise<ToolCallResult> {
-    const { path, method, body, query, operationId, headers } = args;
+    const { path, method, body, query, operationId, fallbackSourceReceiptId, headers } = args;
 
     // Execute through gateway with automatic x402 payment retry
     const result = await this.callWithX402({
@@ -93,6 +95,7 @@ export class ToolExecutor {
       query,
       queryId: listing.queryId ?? undefined,
       operationId: operationId ?? listing.matchedOperations?.[0]?.operationId,
+      fallbackSourceReceiptId,
       headers,
     });
 
@@ -120,6 +123,7 @@ export class ToolExecutor {
         (typeof result.retryable === "boolean" ? `\nRetryable: ${result.retryable}` : "") +
         receiptLines.join(""),
         {
+          receiptId: result.receipt?.id,
           failureClass: result.failureClass,
           retryable: result.retryable,
           billingDecision: result.billingDecision,
@@ -177,6 +181,7 @@ export class ToolExecutor {
         { type: "text", text: metadataLines.join("\n") },
       ],
       metadata: {
+        receiptId: result.receipt?.id,
         failureClass: result.failureClass,
         retryable: result.retryable,
         billingDecision: result.billingDecision,

@@ -164,6 +164,7 @@ export interface ToolExecutionResult {
   receipt?: ExecutionReceiptSummary | null;
   /** Structured execution metadata for retry/fallback policy. */
   metadata?: {
+    receiptId?: string;
     failureClass?: string;
     retryable?: boolean;
     billingDecision?: "not_charged" | "charged" | "charged_pending_settlement" | "deferred_bundle";
@@ -175,6 +176,7 @@ export interface ExecutionReceiptSummary {
   requestId: string;
   queryId?: string;
   operationId?: string;
+  fallbackSourceReceiptId?: string;
   listingSlug: string;
   authMode: "api_key" | "x402";
   billingMode: "individual" | "bundle_step";

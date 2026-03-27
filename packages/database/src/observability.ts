@@ -1,4 +1,4 @@
-import type { Prisma, PrismaClient } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 
 const INDEXING_WARN_LAG_MS = 60_000;
 const INDEXING_CRITICAL_LAG_MS = 5 * 60_000;
@@ -89,6 +89,29 @@ export interface ListingOperationPerformanceSnapshot {
   lastSeenAt: string | null;
 }
 
+export interface OperationFallbackTelemetrySnapshot {
+  operationId: string | null;
+  windowHours: number;
+  attemptedCount: number;
+  successCount: number;
+  successRate: number;
+  avgLatencyDeltaMs: number | null;
+  avgPriceDeltaUsdc: number | null;
+  lastFallbackAt: string | null;
+}
+
+export interface ListingFallbackTelemetrySnapshot {
+  listingId: string;
+  windowHours: number;
+  attemptedCount: number;
+  successCount: number;
+  successRate: number;
+  avgLatencyDeltaMs: number | null;
+  avgPriceDeltaUsdc: number | null;
+  lastFallbackAt: string | null;
+  byOperation: OperationFallbackTelemetrySnapshot[];
+}
+
 export interface TrustPenaltyBreakdown {
   successPenalty: number;
   upstreamFailurePenalty: number;
@@ -138,6 +161,17 @@ function ageMs(value: Date | null | undefined): number | null {
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value));
+}
+
+function toNumericValue(value: unknown): number {
+  if (typeof value === "number") return value;
+  if (typeof value === "bigint") return Number(value);
+  if (value instanceof Prisma.Decimal) return value.toNumber();
+  if (typeof value === "string" && value.length > 0) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+  return 0;
 }
 
 function compoundMapKey(listingId: string, operationId: string): string {
@@ -983,6 +1017,117 @@ export async function getListingOperationPerformanceSnapshots(
       if (b.score !== a.score) return b.score - a.score;
       return b.executionCount - a.executionCount;
     });
+}
+
+export async function getListingFallbackTelemetry(
+  prisma: PrismaClient,
+  input: {
+    listingId: string;
+    windowHours?: number;
+  },
+): Promise<ListingFallbackTelemetrySnapshot> {
+  const windowHours = input.windowHours ?? DEFAULT_TRUST_WINDOW_HOURS;
+  const since = new Date(Date.now() - windowHours * 60 * 60 * 1000);
+
+  type FallbackSummaryRow = {
+    attemptedCount: bigint | number;
+    successCount: bigint | number;
+    avgLatencyDeltaMs: number | null;
+    avgPriceDeltaUsdc: number | null;
+    lastFallbackAt: Date | null;
+  };
+
+  type FallbackOperationRow = FallbackSummaryRow & {
+    operationId: string | null;
+  };
+
+  const [summaryRows, operationRows] = await Promise.all([
+    prisma.$queryRaw<FallbackSummaryRow[]>(Prisma.sql`
+      SELECT
+        COUNT(*)::bigint AS "attemptedCount",
+        COUNT(*) FILTER (WHERE fallback.outcome = 'SUCCESS')::bigint AS "successCount",
+        AVG(
+          CASE
+            WHEN fallback.latency_ms IS NOT NULL AND source.latency_ms IS NOT NULL
+            THEN (fallback.latency_ms - source.latency_ms)::double precision
+            ELSE NULL
+          END
+        ) AS "avgLatencyDeltaMs",
+        AVG(
+          (
+            COALESCE(fallback.charged_price_usdc, 0) -
+            COALESCE(source.quoted_price_usdc, source.charged_price_usdc, 0)
+          )::double precision
+        ) AS "avgPriceDeltaUsdc",
+        MAX(fallback.created_at) AS "lastFallbackAt"
+      FROM execution_receipts fallback
+      INNER JOIN execution_receipts source
+        ON fallback.fallback_source_receipt_id = source.id
+      WHERE source.listing_id = ${input.listingId}::uuid
+        AND fallback.created_at >= ${since}
+        AND fallback.sandbox = false
+    `),
+    prisma.$queryRaw<FallbackOperationRow[]>(Prisma.sql`
+      SELECT
+        source.operation_id AS "operationId",
+        COUNT(*)::bigint AS "attemptedCount",
+        COUNT(*) FILTER (WHERE fallback.outcome = 'SUCCESS')::bigint AS "successCount",
+        AVG(
+          CASE
+            WHEN fallback.latency_ms IS NOT NULL AND source.latency_ms IS NOT NULL
+            THEN (fallback.latency_ms - source.latency_ms)::double precision
+            ELSE NULL
+          END
+        ) AS "avgLatencyDeltaMs",
+        AVG(
+          (
+            COALESCE(fallback.charged_price_usdc, 0) -
+            COALESCE(source.quoted_price_usdc, source.charged_price_usdc, 0)
+          )::double precision
+        ) AS "avgPriceDeltaUsdc",
+        MAX(fallback.created_at) AS "lastFallbackAt"
+      FROM execution_receipts fallback
+      INNER JOIN execution_receipts source
+        ON fallback.fallback_source_receipt_id = source.id
+      WHERE source.listing_id = ${input.listingId}::uuid
+        AND fallback.created_at >= ${since}
+        AND fallback.sandbox = false
+      GROUP BY source.operation_id
+      ORDER BY COUNT(*) DESC, MAX(fallback.created_at) DESC
+    `),
+  ]);
+
+  const summary = summaryRows[0];
+  const attemptedCount = summary ? toNumericValue(summary.attemptedCount) : 0;
+  const successCount = summary ? toNumericValue(summary.successCount) : 0;
+
+  return {
+    listingId: input.listingId,
+    windowHours,
+    attemptedCount,
+    successCount,
+    successRate: attemptedCount > 0 ? successCount / attemptedCount : 0,
+    avgLatencyDeltaMs: summary?.avgLatencyDeltaMs ?? null,
+    avgPriceDeltaUsdc: summary?.avgPriceDeltaUsdc ?? null,
+    lastFallbackAt: summary?.lastFallbackAt?.toISOString() ?? null,
+    byOperation: operationRows.map((row) => {
+      const operationAttemptedCount = toNumericValue(row.attemptedCount);
+      const operationSuccessCount = toNumericValue(row.successCount);
+      return {
+        operationId: row.operationId,
+        windowHours,
+        attemptedCount: operationAttemptedCount,
+        successCount: operationSuccessCount,
+        successRate:
+          operationAttemptedCount > 0
+            ? operationSuccessCount / operationAttemptedCount
+            : 0,
+        avgLatencyDeltaMs: row.avgLatencyDeltaMs ?? null,
+        avgPriceDeltaUsdc: row.avgPriceDeltaUsdc ?? null,
+        lastFallbackAt: row.lastFallbackAt?.toISOString() ?? null,
+      };
+    }),
+  };
 }
 
 export async function getListingTrustSnapshots(

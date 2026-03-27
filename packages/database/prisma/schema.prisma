@@ -823,6 +823,7 @@ model ExecutionReceipt {
   queryLogId       String?                  @map("query_log_id") @db.Uuid
   listingId        String?                  @map("listing_id") @db.Uuid
   operationId      String?                  @map("operation_id")
+  fallbackSourceReceiptId String?           @map("fallback_source_receipt_id") @db.Uuid
   listingSlug      String                   @map("listing_slug")
   buyerId          String?                  @map("buyer_id") @db.Uuid
   payerAddress     String?                  @map("payer_address")
@@ -856,6 +857,7 @@ model ExecutionReceipt {
   @@index([listingId, operationId, createdAt])
   @@index([listingId, callerRegionBucket, createdAt])
   @@index([listingId, callerCountry, createdAt])
+  @@index([fallbackSourceReceiptId])
   @@index([buyerId, createdAt])
   @@index([queryLogId])
   @@index([outcome, createdAt])

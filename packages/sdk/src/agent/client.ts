@@ -405,6 +405,8 @@ export class NexusXAgent {
       const responseQueryId = response.headers.get("x-nexusx-query-id") || params.queryId;
       const responseOperationId =
         response.headers.get("x-nexusx-operation-id") || params.operationId;
+      const responseFallbackSourceReceiptId =
+        response.headers.get("x-nexusx-fallback-source-receipt-id") || undefined;
       const listingFromHeader = response.headers.get("x-nexusx-listing") || slug;
       const authMode = response.headers.get("x-nexusx-auth-mode") === "x402" ? "x402" : "api_key";
       const billingMode =
@@ -447,6 +449,7 @@ export class NexusXAgent {
             requestId,
             queryId: responseQueryId,
             operationId: responseOperationId,
+            fallbackSourceReceiptId: responseFallbackSourceReceiptId,
             listingSlug: listingFromHeader,
             authMode,
             billingMode,

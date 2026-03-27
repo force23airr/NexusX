@@ -105,6 +105,7 @@ export interface ExecutionReceiptRecord {
   queryLogId?: string | null;
   listingId?: string | null;
   operationId?: string | null;
+  fallbackSourceReceiptId?: string | null;
   listingSlug: string;
   buyerId?: string | null;
   payerAddress?: string | null;

@@ -116,6 +116,30 @@ export interface OperationPerformanceSnapshot {
   lastSeenAt: string | null;
 }
 
+export interface OperationFallbackTelemetrySnapshot {
+  operationId: string | null;
+  operationName?: string | null;
+  windowHours: number;
+  attemptedCount: number;
+  successCount: number;
+  successRate: number;
+  avgLatencyDeltaMs: number | null;
+  avgPriceDeltaUsdc: number | null;
+  lastFallbackAt: string | null;
+}
+
+export interface ListingFallbackTelemetrySnapshot {
+  listingId: string;
+  windowHours: number;
+  attemptedCount: number;
+  successCount: number;
+  successRate: number;
+  avgLatencyDeltaMs: number | null;
+  avgPriceDeltaUsdc: number | null;
+  lastFallbackAt: string | null;
+  byOperation: OperationFallbackTelemetrySnapshot[];
+}
+
 export interface OperationDiscoveryMatch {
   operationId: string;
   name: string;
@@ -340,6 +364,7 @@ export interface ProviderAnalytics {
     recentRuns: OperationVerificationRun[];
   };
   operationPerformance?: OperationPerformanceSnapshot[];
+  fallbackTelemetry?: ListingFallbackTelemetrySnapshot;
 }
 
 export interface TrustPenaltyBreakdown {
