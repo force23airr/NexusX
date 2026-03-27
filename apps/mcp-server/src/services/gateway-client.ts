@@ -169,6 +169,11 @@ export class GatewayClient {
           retryable: true,
           billingDecision: "not_charged",
           receipt: null,
+          metadata: {
+            failureClass: "payment_required",
+            retryable: true,
+            billingDecision: "not_charged",
+          },
         };
       }
 
@@ -276,6 +281,11 @@ export class GatewayClient {
         retryable,
         billingDecision,
         receipt,
+        metadata: {
+          failureClass,
+          retryable,
+          billingDecision,
+        },
         bundleSessionId: responseBundleSessionId,
         bundleStepIndex:
           typeof responseBundleStepIndex === "number" && Number.isFinite(responseBundleStepIndex)
@@ -299,6 +309,11 @@ export class GatewayClient {
           retryable: true,
           billingDecision: "not_charged",
           receipt: null,
+          metadata: {
+            failureClass: "upstream_timeout",
+            retryable: true,
+            billingDecision: "not_charged",
+          },
         };
       }
 
@@ -320,6 +335,11 @@ export class GatewayClient {
         retryable: true,
         billingDecision: "not_charged",
         receipt: null,
+        metadata: {
+          failureClass: "connection_error",
+          retryable: true,
+          billingDecision: "not_charged",
+        },
       };
     }
   }

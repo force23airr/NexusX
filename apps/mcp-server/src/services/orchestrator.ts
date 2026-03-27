@@ -201,16 +201,23 @@ export class OrchestratorService {
       });
 
       if (result.isError) {
-        // If this step failed, try a fallback in the same category
-        const fallback = await this.findFallback(listing, listing.categorySlug, priority_mode, budget_max_usdc);
+        // If this step failed, try a safe operation fallback before falling back by category.
+        const fallback = await this.findFallback(
+          listing,
+          listing.categorySlug,
+          priority_mode,
+          budget_max_usdc,
+          result.metadata,
+        );
         if (fallback) {
-          plan.push(`Step ${i + 1} (fallback): ${listing.categorySlug} → ${fallback.slug}`);
-          const fallbackToolName = this.findToolName(fallback.slug);
+          plan.push(`Step ${i + 1} (fallback): ${listing.categorySlug} → ${fallback.listing.slug}`);
+          const fallbackToolName = this.findToolName(fallback.listing.slug);
           if (fallbackToolName) {
             const fallbackResult = await this.executor.execute(fallbackToolName, {
               path: endpoint.path,
               method: endpoint.method,
               body: Object.keys(body).length > 0 ? body : undefined,
+              operationId: fallback.operationId,
             });
 
             if (!fallbackResult.isError) {
@@ -218,7 +225,7 @@ export class OrchestratorService {
               previousOutput = parseMaybeJson(fbBody);
               stepResults[stepResults.length - 1] = {
                 step: i + 1,
-                slug: fallback.slug,
+                slug: fallback.listing.slug,
                 success: true,
                 output: previousOutput,
               };
@@ -375,7 +382,34 @@ export class OrchestratorService {
     categorySlug: string,
     priorityMode: PriorityMode,
     budgetMax?: number,
-  ): Promise<DiscoveredListing | null> {
+    executionMetadata?: ToolCallResult["metadata"],
+  ): Promise<{ listing: DiscoveredListing; operationId?: string } | null> {
+    if (
+      executionMetadata?.retryable === true &&
+      executionMetadata.billingDecision === "not_charged" &&
+      primary.operationFallback?.autoFallbackSafe
+    ) {
+      const operationFallback = primary.operationFallback.candidates.find(
+        (candidate) =>
+          candidate.autoExecutable &&
+          (!budgetMax || candidate.currentPriceUsdc <= budgetMax),
+      );
+      if (operationFallback) {
+        const fallbackListing = this.registry
+          .getAllTools()
+          .filter((tool) => tool.kind === "listing" && tool.listing)
+          .map((tool) => tool.listing!)
+          .find((listing) => listing.slug === operationFallback.slug);
+
+        if (fallbackListing) {
+          return {
+            listing: fallbackListing,
+            operationId: operationFallback.operationId,
+          };
+        }
+      }
+    }
+
     const allTools = this.registry.getAllTools();
     const alternatives = allTools
       .filter(t => t.kind === "listing" && t.listing)
@@ -384,7 +418,7 @@ export class OrchestratorService {
       .filter(l => !budgetMax || l.currentPriceUsdc <= budgetMax);
 
     if (alternatives.length === 0) return null;
-    return this.rankByPriority(alternatives, priorityMode)[0];
+    return { listing: this.rankByPriority(alternatives, priorityMode)[0] };
   }
 
   // ─── External Bazaar Execution ───

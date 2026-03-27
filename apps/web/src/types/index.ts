@@ -121,9 +121,41 @@ export interface OperationDiscoveryMatch {
   name: string;
   method: string;
   path: string;
+  mode: string;
+  authScheme?: string | null;
+  idempotent: boolean;
+  sideEffect: boolean;
   score: number;
   executionScore?: number;
   reasons: string[];
+}
+
+export interface OperationFallbackCandidate {
+  listingId: string;
+  slug: string;
+  name: string;
+  operationId: string;
+  operationName: string;
+  method: string;
+  path: string;
+  mode: string;
+  score: number;
+  compatibilityScore: number;
+  trustScore?: number;
+  currentPriceUsdc: number;
+  operationExecutionScore?: number;
+  idempotent: boolean;
+  sideEffect: boolean;
+  autoExecutable: boolean;
+  reason: string;
+}
+
+export interface OperationFallbackPlan {
+  primaryOperationId?: string;
+  primaryOperationName?: string;
+  autoFallbackSafe: boolean;
+  blockedReason?: string;
+  candidates: OperationFallbackCandidate[];
 }
 
 export interface SearchMetadataFilters {
@@ -216,6 +248,7 @@ export interface RouteMatch {
   };
   matchReasons: string[];
   matchedOperations?: OperationDiscoveryMatch[];
+  operationFallback?: OperationFallbackPlan;
 }
 
 export interface RouteResult {

@@ -52,6 +52,7 @@ export interface DiscoveredListing {
   operationMatchScore?: number;
   operationExecutionScore?: number;
   matchedOperations?: OperationDiscoveryMatch[];
+  operationFallback?: OperationFallbackPlan;
   // Source tracking (for Bazaar-imported listings)
   sourceType: string | null;
   sourceResourceUrl: string | null;
@@ -63,9 +64,41 @@ export interface OperationDiscoveryMatch {
   name: string;
   method: string;
   path: string;
+  mode: string;
+  authScheme?: string | null;
+  idempotent: boolean;
+  sideEffect: boolean;
   score: number;
   executionScore?: number;
   reasons: string[];
+}
+
+export interface OperationFallbackCandidate {
+  listingId: string;
+  slug: string;
+  name: string;
+  operationId: string;
+  operationName: string;
+  method: string;
+  path: string;
+  mode: string;
+  score: number;
+  compatibilityScore: number;
+  trustScore?: number;
+  currentPriceUsdc: number;
+  operationExecutionScore?: number;
+  idempotent: boolean;
+  sideEffect: boolean;
+  autoExecutable: boolean;
+  reason: string;
+}
+
+export interface OperationFallbackPlan {
+  primaryOperationId?: string;
+  primaryOperationName?: string;
+  autoFallbackSafe: boolean;
+  blockedReason?: string;
+  candidates: OperationFallbackCandidate[];
 }
 
 /** One step inside a composite bundle. */
@@ -129,6 +162,12 @@ export interface ToolExecutionResult {
   paymentRequired?: X402PaymentRequirements[];
   /** Canonical gateway execution receipt summary. */
   receipt?: ExecutionReceiptSummary | null;
+  /** Structured execution metadata for retry/fallback policy. */
+  metadata?: {
+    failureClass?: string;
+    retryable?: boolean;
+    billingDecision?: "not_charged" | "charged" | "charged_pending_settlement" | "deferred_bundle";
+  };
 }
 
 export interface ExecutionReceiptSummary {

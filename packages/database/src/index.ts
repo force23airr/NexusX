@@ -142,6 +142,13 @@ export {
 } from "./operation-discovery";
 
 export {
+  planOperationFallbacks,
+  type OperationFallbackCandidate,
+  type OperationFallbackPlan,
+  type OperationFallbackPlanningInput,
+} from "./operation-fallback";
+
+export {
   buildDiscoverableListingWhere,
   buildExecutableListingWhere,
   combineListingWhere,

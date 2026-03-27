@@ -5,6 +5,10 @@ export interface OperationSearchMatch {
   name: string;
   method: string;
   path: string;
+  mode: string;
+  authScheme?: string | null;
+  idempotent: boolean;
+  sideEffect: boolean;
   score: number;
   executionScore?: number;
   reasons: string[];
@@ -17,6 +21,9 @@ interface ParsedOperationContract {
   method: string;
   path: string;
   mode: string;
+  authScheme: string | null;
+  idempotent: boolean;
+  sideEffect: boolean;
 }
 
 const STOP_WORDS = new Set([
@@ -78,6 +85,15 @@ function extractOperations(
       method,
       path,
       mode: asString(rawOperation.mode),
+      authScheme: asString(rawOperation.authScheme) || null,
+      idempotent:
+        typeof rawOperation.idempotent === "boolean"
+          ? rawOperation.idempotent
+          : method === "GET" || method === "PUT" || method === "DELETE",
+      sideEffect:
+        typeof rawOperation.sideEffect === "boolean"
+          ? rawOperation.sideEffect
+          : method !== "GET",
     });
   }
 
@@ -200,6 +216,10 @@ export function computeOperationSearchMatch(
         name: operation.name,
         method: operation.method,
         path: operation.path,
+        mode: operation.mode,
+        authScheme: operation.authScheme,
+        idempotent: operation.idempotent,
+        sideEffect: operation.sideEffect,
         score,
         reasons,
       };

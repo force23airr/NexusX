@@ -24,10 +24,12 @@ import {
   combineListingWhere,
   computeOperationSearchMatch,
   computeRegionAffinity,
+  planOperationFallbacks,
   recordUnmetDemand,
   searchListings,
   type EmbeddingConfig,
   type MetadataFilters,
+  type OperationFallbackPlan,
   type OperationSearchMatch,
   type PriorityMode,
   type SemanticSearchResult,
@@ -112,6 +114,7 @@ interface RankedMatch {
   scoreBreakdown: ScoreBreakdown;
   matchReasons: string[];
   matchedOperations: OperationSearchMatch[];
+  operationFallback?: OperationFallbackPlan;
 }
 
 const DEFAULT_WEIGHTS = {
@@ -966,6 +969,31 @@ function semanticResultsToMatches(
   });
 }
 
+function attachOperationFallbacks(matches: RankedMatch[]): RankedMatch[] {
+  if (matches.length === 0) return matches;
+
+  const fallbackPlans = planOperationFallbacks(
+    matches.map((match) => ({
+      listingId: match.listing.id,
+      slug: match.listing.slug,
+      name: match.listing.name,
+      rankingScore: match.score,
+      trustScore: match.listing.trustScore,
+      regionAffinityScore: match.scoreBreakdown.regionAffinityScore,
+      operationMatchScore: match.scoreBreakdown.operationMatch,
+      operationExecutionScore: match.scoreBreakdown.operationExecutionScore,
+      currentPriceUsdc: match.listing.currentPriceUsdc,
+      matchedOperations: match.matchedOperations,
+    })),
+    { maxCandidates: 3 },
+  );
+
+  return matches.map((match) => ({
+    ...match,
+    operationFallback: fallbackPlans.get(match.listing.id),
+  }));
+}
+
 // ─────────────────────────────────────────────────────────────
 // ROUTE HANDLER
 // ─────────────────────────────────────────────────────────────
@@ -1015,7 +1043,8 @@ export async function POST(req: NextRequest) {
   }
 
   const filteredMatches = allMatches.filter((m) => m.score >= 0.15);
-  const topMatches = filteredMatches.slice(0, limit);
+  const fallbackAwareMatches = attachOperationFallbacks(filteredMatches);
+  const topMatches = fallbackAwareMatches.slice(0, limit);
 
   // 4. Suggestions
   const suggestions = generateSuggestions(intent, topMatches, allMatches.length);
@@ -1097,6 +1126,7 @@ export async function POST(req: NextRequest) {
       scoreBreakdown: m.scoreBreakdown,
       matchReasons: m.matchReasons,
       matchedOperations: m.matchedOperations,
+      operationFallback: m.operationFallback,
     })),
     totalEvaluated: allMatches.length,
     routeTimeMs,

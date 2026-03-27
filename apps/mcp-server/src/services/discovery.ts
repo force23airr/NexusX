@@ -15,6 +15,7 @@ import {
   buildDiscoverableListingWhere,
   combineListingWhere,
   computeOperationSearchMatch,
+  planOperationFallbacks,
   searchListings,
   hasEmbeddings,
   type EmbeddingConfig,
@@ -263,7 +264,7 @@ export class DiscoveryService {
       const listings = results.map((r) => this.semanticToDiscovered(r));
       const queryId = await this.logDiscoveryQuery(query, listings);
       return {
-        listings: this.attachQueryId(listings, queryId),
+        listings: this.attachQueryId(this.attachOperationFallbacks(listings), queryId),
         source: "semantic",
         queryId,
       };
@@ -348,7 +349,7 @@ export class DiscoveryService {
     const queryId = await this.logDiscoveryQuery(query, listings);
 
     return {
-      listings: this.attachQueryId(listings, queryId),
+      listings: this.attachQueryId(this.attachOperationFallbacks(listings), queryId),
       source: "keyword",
       fallbackReason: reason,
       queryId,
@@ -361,6 +362,35 @@ export class DiscoveryService {
   ): DiscoveredListing[] {
     if (!queryId) return listings;
     return listings.map((listing) => ({ ...listing, queryId }));
+  }
+
+  private attachOperationFallbacks(
+    listings: DiscoveredListing[],
+  ): DiscoveredListing[] {
+    if (listings.length === 0) return listings;
+
+    const fallbackPlans = planOperationFallbacks(
+      listings.map((listing) => ({
+        listingId: listing.id,
+        slug: listing.slug,
+        name: listing.name,
+        rankingScore:
+          listing.operationExecutionScore ??
+          listing.operationMatchScore ??
+          listing.qualityScore,
+        trustScore: listing.qualityScore,
+        operationMatchScore: listing.operationMatchScore,
+        operationExecutionScore: listing.operationExecutionScore,
+        currentPriceUsdc: listing.currentPriceUsdc,
+        matchedOperations: listing.matchedOperations ?? [],
+      })),
+      { maxCandidates: 3 },
+    );
+
+    return listings.map((listing) => ({
+      ...listing,
+      operationFallback: fallbackPlans.get(listing.id),
+    }));
   }
 
   private async logDiscoveryQuery(

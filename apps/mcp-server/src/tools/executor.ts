@@ -20,6 +20,7 @@ interface ExecuteToolArgs {
   method?: string;
   body?: Record<string, unknown>;
   query?: Record<string, string>;
+  operationId?: string;
   headers?: Record<string, string>;
 }
 
@@ -33,6 +34,11 @@ const MAX_CHAINED_STEP_PAYLOAD_BYTES = 10 * 1024 * 1024; // 10MB
 export interface ToolCallResult {
   content: Array<{ type: "text"; text: string }>;
   isError?: boolean;
+  metadata?: {
+    failureClass?: string;
+    retryable?: boolean;
+    billingDecision?: "not_charged" | "charged" | "charged_pending_settlement" | "deferred_bundle";
+  };
 }
 
 export class ToolExecutor {
@@ -76,7 +82,7 @@ export class ToolExecutor {
     listing: DiscoveredListing,
     args: ExecuteToolArgs,
   ): Promise<ToolCallResult> {
-    const { path, method, body, query, headers } = args;
+    const { path, method, body, query, operationId, headers } = args;
 
     // Execute through gateway with automatic x402 payment retry
     const result = await this.callWithX402({
@@ -86,7 +92,7 @@ export class ToolExecutor {
       body,
       query,
       queryId: listing.queryId ?? undefined,
-      operationId: listing.matchedOperations?.[0]?.operationId,
+      operationId: operationId ?? listing.matchedOperations?.[0]?.operationId,
       headers,
     });
 
@@ -113,6 +119,11 @@ export class ToolExecutor {
         (result.failureClass ? `\nFailure Class: ${result.failureClass}` : "") +
         (typeof result.retryable === "boolean" ? `\nRetryable: ${result.retryable}` : "") +
         receiptLines.join(""),
+        {
+          failureClass: result.failureClass,
+          retryable: result.retryable,
+          billingDecision: result.billingDecision,
+        },
       );
     }
 
@@ -165,6 +176,11 @@ export class ToolExecutor {
         { type: "text", text: result.body },
         { type: "text", text: metadataLines.join("\n") },
       ],
+      metadata: {
+        failureClass: result.failureClass,
+        retryable: result.retryable,
+        billingDecision: result.billingDecision,
+      },
     };
   }
 
@@ -420,10 +436,14 @@ export class ToolExecutor {
     }
   }
 
-  private errorResult(message: string): ToolCallResult {
+  private errorResult(
+    message: string,
+    metadata?: ToolCallResult["metadata"],
+  ): ToolCallResult {
     return {
       content: [{ type: "text", text: message }],
       isError: true,
+      metadata,
     };
   }
 

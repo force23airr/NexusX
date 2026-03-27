@@ -44,6 +44,50 @@ function parseBooleanHeader(value: string | null): boolean | undefined {
   return undefined;
 }
 
+function parseOperationFallbackPlan(
+  value: unknown,
+): SearchMatch["operationFallback"] | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const rawPlan = value as Record<string, unknown>;
+  const rawCandidates = Array.isArray(rawPlan.candidates) ? rawPlan.candidates : [];
+
+  return {
+    primaryOperationId: readOptionalString(rawPlan.primaryOperationId),
+    primaryOperationName: readOptionalString(rawPlan.primaryOperationName),
+    autoFallbackSafe: rawPlan.autoFallbackSafe === true,
+    blockedReason: readOptionalString(rawPlan.blockedReason),
+    candidates: rawCandidates.map((candidate) => {
+      const rawCandidate = candidate as Record<string, unknown>;
+      return {
+        listingId: String(rawCandidate.listingId ?? ""),
+        slug: String(rawCandidate.slug ?? ""),
+        name: String(rawCandidate.name ?? ""),
+        operationId: String(rawCandidate.operationId ?? ""),
+        operationName: String(rawCandidate.operationName ?? ""),
+        method: String(rawCandidate.method ?? ""),
+        path: String(rawCandidate.path ?? ""),
+        mode: String(rawCandidate.mode ?? ""),
+        score: Number(rawCandidate.score ?? 0),
+        compatibilityScore: Number(rawCandidate.compatibilityScore ?? 0),
+        trustScore:
+          rawCandidate.trustScore === undefined ? undefined : Number(rawCandidate.trustScore ?? 0),
+        currentPriceUsdc: Number(rawCandidate.currentPriceUsdc ?? 0),
+        operationExecutionScore:
+          rawCandidate.operationExecutionScore === undefined
+            ? undefined
+            : Number(rawCandidate.operationExecutionScore ?? 0),
+        idempotent: rawCandidate.idempotent === true,
+        sideEffect: rawCandidate.sideEffect === true,
+        autoExecutable: rawCandidate.autoExecutable === true,
+        reason: String(rawCandidate.reason ?? ""),
+      };
+    }),
+  };
+}
+
 // ─────────────────────────────────────────────────────────────
 // CLIENT
 // ─────────────────────────────────────────────────────────────
@@ -205,6 +249,10 @@ export class NexusXAgent {
             name: String((op as Record<string, unknown>)?.name ?? ""),
             method: String((op as Record<string, unknown>)?.method ?? ""),
             path: String((op as Record<string, unknown>)?.path ?? ""),
+            mode: String((op as Record<string, unknown>)?.mode ?? ""),
+            authScheme: readOptionalString((op as Record<string, unknown>)?.authScheme),
+            idempotent: (op as Record<string, unknown>)?.idempotent === true,
+            sideEffect: (op as Record<string, unknown>)?.sideEffect === true,
             score: Number((op as Record<string, unknown>)?.score ?? 0),
             executionScore: Number((op as Record<string, unknown>)?.executionScore ?? 0),
             reasons: Array.isArray((op as Record<string, unknown>)?.reasons)
@@ -212,6 +260,7 @@ export class NexusXAgent {
               : [],
           }))
         : [],
+      operationFallback: parseOperationFallbackPlan(m.operationFallback),
     }));
 
     return {
