@@ -184,6 +184,7 @@ export default function MarketplaceSearchPage() {
                   listing={match.listing}
                   matchScore={match.score}
                   matchReasons={match.matchReasons}
+                  matchedOperations={match.matchedOperations}
                   style={{ animationDelay: `${i * 50}ms` }}
                 />
               ))}

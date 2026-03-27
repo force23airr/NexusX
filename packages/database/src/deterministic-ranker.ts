@@ -28,11 +28,19 @@ function classifyCapabilityTier(
   result: SemanticSearchResult,
   queryTokens: Set<string>,
 ): CapabilityTier {
+  if (result.operationMatchScore >= 0.8) {
+    return "HIGH";
+  }
+
   // HIGH: exact intent match OR very high semantic similarity
   const intentTokens = new Set(result.intents.map((i) => i.toLowerCase()));
   const hasIntentMatch = Array.from(queryTokens).some((qt) => intentTokens.has(qt));
   if (hasIntentMatch || result.similarity >= 0.8) {
     return "HIGH";
+  }
+
+  if (result.operationMatchScore >= 0.45) {
+    return "MEDIUM";
   }
 
   // MEDIUM: tag overlap > 50% OR category match via composite score indicator
@@ -179,7 +187,12 @@ export function deterministicRank(
       availabilityRegions: result.availabilityRegions,
       domainMetadata: result.domainMetadata,
     });
-    const withinTierScore = tiebreaker + explorationBonus + demandGapBoost + regionAffinity.score * 0.08;
+    const withinTierScore =
+      tiebreaker +
+      result.operationMatchScore * 0.18 +
+      explorationBonus +
+      demandGapBoost +
+      regionAffinity.score * 0.08;
 
     return { result, tierRank, providerMatch, trustRank, withinTierScore, regionAffinity };
   });

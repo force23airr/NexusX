@@ -49,10 +49,21 @@ export interface DiscoveredListing {
   schemaSpec: Record<string, unknown> | null;
   docsUrl: string | null;
   providerName: string;
+  operationMatchScore?: number;
+  matchedOperations?: OperationDiscoveryMatch[];
   // Source tracking (for Bazaar-imported listings)
   sourceType: string | null;
   sourceResourceUrl: string | null;
   baseUrl: string;
+}
+
+export interface OperationDiscoveryMatch {
+  operationId: string;
+  name: string;
+  method: string;
+  path: string;
+  score: number;
+  reasons: string[];
 }
 
 /** One step inside a composite bundle. */

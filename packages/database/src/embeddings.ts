@@ -16,6 +16,7 @@
 
 import { createHash } from "crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { computeOperationSearchMatch, type OperationSearchMatch } from "./operation-discovery";
 import { buildDiscoverableListingWhere, combineListingWhere } from "./public-supply";
 
 // ─── Types ───────────────────────────────────────────────────
@@ -59,6 +60,8 @@ export interface SemanticSearchResult {
   domainMetadata: Prisma.JsonValue | null;
   trustScore: number;
   trustState: "trusted" | "degraded" | "high_risk" | "unproven";
+  operationMatchScore: number;
+  matchedOperations: OperationSearchMatch[];
   regionAffinityScore?: number;
   regionAffinityReason?: string | null;
   similarity: number;
@@ -103,12 +106,13 @@ const RERANK_WEIGHTS: Record<PriorityMode, {
   price: number;
   quality: number;
   trust: number;
+  operationMatch: number;
   nameTagOverlap: number;
   popularity: number;
 }> = {
-  frugal:           { similarity: 0.28, price: 0.30, quality: 0.10, trust: 0.12, nameTagOverlap: 0.13, popularity: 0.07 },
-  balanced:         { similarity: 0.34, price: 0.14, quality: 0.16, trust: 0.14, nameTagOverlap: 0.12, popularity: 0.06 },
-  mission_critical: { similarity: 0.38, price: 0.05, quality: 0.18, trust: 0.22, nameTagOverlap: 0.10, popularity: 0.04 },
+  frugal:           { similarity: 0.24, price: 0.26, quality: 0.10, trust: 0.12, operationMatch: 0.12, nameTagOverlap: 0.10, popularity: 0.06 },
+  balanced:         { similarity: 0.28, price: 0.12, quality: 0.16, trust: 0.14, operationMatch: 0.16, nameTagOverlap: 0.10, popularity: 0.04 },
+  mission_critical: { similarity: 0.30, price: 0.05, quality: 0.18, trust: 0.22, operationMatch: 0.21, nameTagOverlap: 0.08, popularity: 0.03 },
 };
 
 // ─── Embedding Text Builder ──────────────────────────────────
@@ -308,6 +312,7 @@ interface VectorSearchRow {
   discoveryImpressions: number;
   publishedAt: Date | null;
   domainMetadata: Prisma.JsonValue | null;
+  schemaSpec: Prisma.JsonValue | null;
   trustScore?: number;
   trustState?: "trusted" | "degraded" | "high_risk" | "unproven";
   similarity: number;
@@ -373,6 +378,7 @@ async function vectorSearch(
       l.discovery_impressions                           AS "discoveryImpressions",
       l.published_at                                    AS "publishedAt",
       l.domain_metadata                                 AS "domainMetadata",
+      l.schema_spec                                     AS "schemaSpec",
       1 - (l.embedding <=> ${vectorStr}::vector)         AS similarity
     FROM listings l
     JOIN categories c ON c.id = l.category_id
@@ -460,6 +466,7 @@ function rerank(
     // Quality score (already 0-1)
     const qualScore = row.qualityScore;
     const trustScore = row.trustScore ?? 0.82;
+    const operationMatch = computeOperationSearchMatch(query, row.schemaSpec);
 
     // Name/tag keyword overlap
     const nameTokens = new Set(row.name.toLowerCase().split(/\s+/));
@@ -503,6 +510,7 @@ function rerank(
       priceScore * weights.price +
       qualScore * weights.quality +
       trustScore * weights.trust +
+      operationMatch.score * weights.operationMatch +
       nameTagOverlap * weights.nameTagOverlap +
       popScore * weights.popularity +
       intentBoost + providerBoost + tagBoost;
@@ -530,6 +538,8 @@ function rerank(
       discoveryImpressions: row.discoveryImpressions,
       publishedAt: row.publishedAt,
       domainMetadata: row.domainMetadata,
+      operationMatchScore: operationMatch.score,
+      matchedOperations: operationMatch.matches,
       trustScore,
       trustState: row.trustState ?? "unproven",
       similarity: row.similarity,

@@ -103,6 +103,15 @@ export interface OperationVerificationRun {
   createdAt: string;
 }
 
+export interface OperationDiscoveryMatch {
+  operationId: string;
+  name: string;
+  method: string;
+  path: string;
+  score: number;
+  reasons: string[];
+}
+
 export interface SearchMetadataFilters {
   availabilityRegion?: string;
   complianceRequired?: string[];
@@ -188,8 +197,10 @@ export interface RouteMatch {
     popularityScore: number;
     latencyScore: number;
     capabilityMatch: number;
+    operationMatch: number;
   };
   matchReasons: string[];
+  matchedOperations?: OperationDiscoveryMatch[];
 }
 
 export interface RouteResult {

@@ -15,7 +15,7 @@
 import { useState, useCallback, type FormEvent, type CSSProperties } from "react";
 import Link from "next/link";
 import { cn, formatPricePerCall, formatNumber, formatLatency, formatPercent, listingTypeLabel, listingTypeIcon, listingStatusColor } from "@/lib/utils";
-import type { Listing, PriceTick } from "@/types";
+import type { Listing, OperationDiscoveryMatch, PriceTick } from "@/types";
 
 export function SearchBar({
   onSearch,
@@ -134,11 +134,13 @@ export function ListingCard({
   listing,
   matchScore,
   matchReasons,
+  matchedOperations,
   style,
 }: {
   listing: Listing;
   matchScore?: number;
   matchReasons?: string[];
+  matchedOperations?: OperationDiscoveryMatch[];
   style?: CSSProperties;
 }) {
   return (
@@ -203,6 +205,15 @@ export function ListingCard({
                 <span>✓</span> {reason}
               </p>
             ))}
+            {matchedOperations && matchedOperations.length > 0 && (
+              <p className="text-2xs text-zinc-400 flex items-center gap-1">
+                <span>→</span>
+                <span>{matchedOperations[0].name}</span>
+                <span className="font-mono text-zinc-500">
+                  {matchedOperations[0].method} {matchedOperations[0].path}
+                </span>
+              </p>
+            )}
           </div>
         )}
       </div>

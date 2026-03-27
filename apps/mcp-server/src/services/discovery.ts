@@ -7,12 +7,14 @@
 // packages/database/src/helpers.ts with extra fields for MCP.
 // ═══════════════════════════════════════════════════════════════
 
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import { randomUUID } from "crypto";
 import {
+  buildOperationSearchText,
   buildMetadataWhereClause,
   buildDiscoverableListingWhere,
   combineListingWhere,
+  computeOperationSearchMatch,
   searchListings,
   hasEmbeddings,
   type EmbeddingConfig,
@@ -92,6 +94,8 @@ export class DiscoveryService {
         schemaSpec: l.schemaSpec as Record<string, unknown> | null,
         docsUrl: l.docsUrl,
         providerName: l.provider.displayName,
+        operationMatchScore: 0,
+        matchedOperations: [],
         sourceType: l.sourceType ?? null,
         sourceResourceUrl: l.sourceResourceUrl ?? null,
         baseUrl: l.baseUrl,
@@ -290,7 +294,8 @@ export class DiscoveryService {
     return listings
       .map((l) => {
         let score = 0;
-        const searchText = `${l.name} ${l.description} ${l.tags.join(" ")} ${l.categorySlug}`.toLowerCase();
+        const searchText = `${l.name} ${l.description} ${l.tags.join(" ")} ${l.categorySlug} ${buildOperationSearchText(l.schemaSpec as Prisma.JsonValue | null)}`.toLowerCase();
+        const operationMatch = computeOperationSearchMatch(query, l.schemaSpec as Prisma.JsonValue | null);
 
         const queryWords = q.split(/\s+/);
         for (const word of queryWords) {
@@ -305,7 +310,16 @@ export class DiscoveryService {
           score = -1;
         }
 
-        return { listing: l, score };
+        score += operationMatch.score * 25;
+
+        return {
+          listing: {
+            ...l,
+            operationMatchScore: operationMatch.score,
+            matchedOperations: operationMatch.matches,
+          },
+          score,
+        };
       })
       .filter((s) => s.score > 0)
       .sort((a, b) => b.score - a.score)
@@ -397,6 +411,8 @@ export class DiscoveryService {
       qualityScore: r.qualityScore,
       avgLatencyMs: r.avgLatencyMs,
       uptimePercent: r.uptimePercent,
+      operationMatchScore: r.operationMatchScore,
+      matchedOperations: r.matchedOperations,
       sampleRequest: null,
       sampleResponse: null,
       schemaSpec: null,

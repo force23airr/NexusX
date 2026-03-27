@@ -136,6 +136,12 @@ export {
 } from "./region-affinity";
 
 export {
+  buildOperationSearchText,
+  computeOperationSearchMatch,
+  type OperationSearchMatch,
+} from "./operation-discovery";
+
+export {
   buildDiscoverableListingWhere,
   buildExecutableListingWhere,
   combineListingWhere,

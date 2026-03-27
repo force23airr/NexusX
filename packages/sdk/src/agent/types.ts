@@ -185,8 +185,19 @@ export interface SearchMatch {
   trustScore?: number;
   trustState?: "trusted" | "degraded" | "high_risk" | "unproven";
   regionAffinityScore?: number;
+  operationMatchScore?: number;
   score: number;
   matchReasons: string[];
+  matchedOperations?: OperationDiscoveryMatch[];
+}
+
+export interface OperationDiscoveryMatch {
+  operationId: string;
+  name: string;
+  method: string;
+  path: string;
+  score: number;
+  reasons: string[];
 }
 
 export interface SearchMetadataFilters {

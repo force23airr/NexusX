@@ -192,8 +192,21 @@ export class NexusXAgent {
       trustState: readOptionalString((m.listing as Record<string, unknown>)?.trustState) as
         "trusted" | "degraded" | "high_risk" | "unproven" | undefined,
       regionAffinityScore: Number((m.scoreBreakdown as Record<string, unknown> | undefined)?.regionAffinityScore ?? 0),
+      operationMatchScore: Number((m.scoreBreakdown as Record<string, unknown> | undefined)?.operationMatch ?? 0),
       score: Number(m.score ?? 0),
       matchReasons: Array.isArray(m.matchReasons) ? m.matchReasons.map(String) : [],
+      matchedOperations: Array.isArray(m.matchedOperations)
+        ? m.matchedOperations.map((op) => ({
+            operationId: String((op as Record<string, unknown>)?.operationId ?? ""),
+            name: String((op as Record<string, unknown>)?.name ?? ""),
+            method: String((op as Record<string, unknown>)?.method ?? ""),
+            path: String((op as Record<string, unknown>)?.path ?? ""),
+            score: Number((op as Record<string, unknown>)?.score ?? 0),
+            reasons: Array.isArray((op as Record<string, unknown>)?.reasons)
+              ? ((op as Record<string, unknown>).reasons as unknown[]).map(String)
+              : [],
+          }))
+        : [],
     }));
 
     return {

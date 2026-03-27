@@ -18,14 +18,17 @@ import { getCurrentUser } from "@/lib/auth";
 import { getUserFromApiKey } from "@/lib/apiKeyAuth";
 import { randomUUID } from "crypto";
 import {
+  buildOperationSearchText,
   buildMetadataWhereClause,
   buildDiscoverableListingWhere,
   combineListingWhere,
+  computeOperationSearchMatch,
   computeRegionAffinity,
   recordUnmetDemand,
   searchListings,
   type EmbeddingConfig,
   type MetadataFilters,
+  type OperationSearchMatch,
   type PriorityMode,
   type SemanticSearchResult,
 } from "@nexusx/database";
@@ -85,6 +88,8 @@ interface IndexedListing {
   providerId: string;
   availabilityRegions: string[];
   domainMetadata?: Prisma.JsonValue | null;
+  schemaSpec?: Prisma.JsonValue | null;
+  operationSearchText?: string;
 }
 
 interface ScoreBreakdown {
@@ -97,6 +102,7 @@ interface ScoreBreakdown {
   popularityScore: number;
   latencyScore: number;
   capabilityMatch: number;
+  operationMatch: number;
 }
 
 interface RankedMatch {
@@ -104,6 +110,7 @@ interface RankedMatch {
   score: number;
   scoreBreakdown: ScoreBreakdown;
   matchReasons: string[];
+  matchedOperations: OperationSearchMatch[];
 }
 
 const DEFAULT_WEIGHTS = {
@@ -115,20 +122,21 @@ const DEFAULT_WEIGHTS = {
   popularityScore: 0.08,
   latencyScore: 0.05,
   capabilityMatch: 0.02,
+  operationMatch: 0.08,
 };
 
 const INTENT_WEIGHTS: Record<string, typeof DEFAULT_WEIGHTS> = {
   PRICE_COMPARISON: {
     textRelevance: 0.12, categoryMatch: 0.12, priceScore: 0.35,
-    qualityScore: 0.08, trustScore: 0.12, popularityScore: 0.10, latencyScore: 0.06, capabilityMatch: 0.05,
+    qualityScore: 0.08, trustScore: 0.12, popularityScore: 0.08, latencyScore: 0.05, capabilityMatch: 0.04, operationMatch: 0.10,
   },
   CAPABILITY_SEARCH: {
     textRelevance: 0.18, categoryMatch: 0.14, priceScore: 0.05,
-    qualityScore: 0.12, trustScore: 0.16, popularityScore: 0.08, latencyScore: 0.05, capabilityMatch: 0.22,
+    qualityScore: 0.10, trustScore: 0.14, popularityScore: 0.06, latencyScore: 0.05, capabilityMatch: 0.18, operationMatch: 0.20,
   },
   MODEL_INFERENCE: {
     textRelevance: 0.22, categoryMatch: 0.18, priceScore: 0.08,
-    qualityScore: 0.16, trustScore: 0.16, popularityScore: 0.08, latencyScore: 0.08, capabilityMatch: 0.04,
+    qualityScore: 0.16, trustScore: 0.14, popularityScore: 0.06, latencyScore: 0.08, capabilityMatch: 0.03, operationMatch: 0.05,
   },
 };
 
@@ -434,6 +442,8 @@ async function loadListings(metadataFilters?: MetadataFilters): Promise<IndexedL
       providerId: l.providerId,
       availabilityRegions: l.availabilityRegions,
       domainMetadata: l.domainMetadata as Prisma.JsonValue | null,
+      schemaSpec: l.schemaSpec as Prisma.JsonValue | null,
+      operationSearchText: buildOperationSearchText(l.schemaSpec as Prisma.JsonValue | null),
     };
   });
 }
@@ -449,7 +459,9 @@ function buildInvertedIndex(listings: IndexedListing[]) {
 
   for (const listing of listings) {
     // Text index
-    const tokens = tokenize(`${listing.name} ${listing.description} ${listing.tags.join(" ")} ${listing.providerName}`);
+    const tokens = tokenize(
+      `${listing.name} ${listing.description} ${listing.tags.join(" ")} ${listing.providerName} ${listing.operationSearchText ?? ""}`,
+    );
     const freqs = new Map<string, number>();
     for (const t of tokens) freqs.set(t, (freqs.get(t) || 0) + 1);
     const maxFreq = Math.max(...freqs.values(), 1);
@@ -597,6 +609,11 @@ function rankListings(
       capabilityMatch = matched.length / intent.entities.capabilities.length;
     }
 
+    const operationMatch = computeOperationSearchMatch(
+      intent.normalizedQuery,
+      listing.schemaSpec ?? null,
+    );
+
     const breakdown: ScoreBreakdown = {
       textRelevance: clamp01(textRelevance),
       categoryMatch: clamp01(categoryMatch),
@@ -607,6 +624,7 @@ function rankListings(
       popularityScore: clamp01(popularityScore),
       latencyScore: clamp01(latencyScore),
       capabilityMatch: clamp01(capabilityMatch),
+      operationMatch: clamp01(operationMatch.score),
     };
 
     const compositeScore = clamp01(
@@ -618,7 +636,8 @@ function rankListings(
       (breakdown.regionAffinityScore ?? 0) * 0.05 +
       breakdown.popularityScore * weights.popularityScore +
       breakdown.latencyScore * weights.latencyScore +
-      breakdown.capabilityMatch * weights.capabilityMatch
+      breakdown.capabilityMatch * weights.capabilityMatch +
+      breakdown.operationMatch * weights.operationMatch
     );
 
     // Match reasons
@@ -632,10 +651,19 @@ function rankListings(
     if (breakdown.popularityScore > 0.7) reasons.push(`Popular: ${listing.totalCalls.toLocaleString()} total calls`);
     if (breakdown.latencyScore > 0.8) reasons.push(`Fast: ${listing.avgLatencyMs}ms average latency`);
     if (breakdown.capabilityMatch > 0.7 && intent.entities.capabilities.length > 0) reasons.push("Matches required capabilities");
+    if (breakdown.operationMatch >= 0.55 && operationMatch.matches[0]) {
+      reasons.push(`Supports action: ${operationMatch.matches[0].name}`);
+    }
     if (listing.uptimePercent > 99.5) reasons.push(`${listing.uptimePercent.toFixed(1)}% uptime`);
     if (reasons.length === 0) reasons.push("Matches general search criteria");
 
-    results.push({ listing, score: compositeScore, scoreBreakdown: breakdown, matchReasons: reasons });
+    results.push({
+      listing,
+      score: compositeScore,
+      scoreBreakdown: breakdown,
+      matchReasons: reasons,
+      matchedOperations: operationMatch.matches,
+    });
   }
 
   results.sort((a, b) => b.score - a.score);
@@ -849,6 +877,7 @@ function semanticResultsToMatches(
       popularityScore: clamp01(popularityScore),
       latencyScore: clamp01(latencyScore),
       capabilityMatch: clamp01(capabilityMatch),
+      operationMatch: clamp01(result.operationMatchScore),
     };
 
     const matchReasons: string[] = [];
@@ -871,6 +900,9 @@ function semanticResultsToMatches(
     }
     if ((result.regionAffinityScore ?? 0) >= 0.7 && result.regionAffinityReason) {
       matchReasons.push(result.regionAffinityReason);
+    }
+    if (result.operationMatchScore >= 0.55 && result.matchedOperations[0]) {
+      matchReasons.push(`Supports action: ${result.matchedOperations[0].name}`);
     }
     if (result.avgLatencyMs > 0 && scoreBreakdown.latencyScore >= 0.8) {
       matchReasons.push(`Fast: ${result.avgLatencyMs}ms average latency`);
@@ -910,11 +942,18 @@ function semanticResultsToMatches(
       (scoreBreakdown.regionAffinityScore ?? 0) * 0.05 +
       scoreBreakdown.categoryMatch * 0.10 +
       scoreBreakdown.capabilityMatch * 0.10 +
+      scoreBreakdown.operationMatch * 0.15 +
       scoreBreakdown.priceScore * 0.05 +
       scoreBreakdown.latencyScore * 0.05,
     );
 
-    return { listing, score, scoreBreakdown, matchReasons };
+    return {
+      listing,
+      score,
+      scoreBreakdown,
+      matchReasons,
+      matchedOperations: result.matchedOperations,
+    };
   });
 }
 
@@ -1048,6 +1087,7 @@ export async function POST(req: NextRequest) {
       score: m.score,
       scoreBreakdown: m.scoreBreakdown,
       matchReasons: m.matchReasons,
+      matchedOperations: m.matchedOperations,
     })),
     totalEvaluated: allMatches.length,
     routeTimeMs,
