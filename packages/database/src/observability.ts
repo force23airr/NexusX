@@ -85,6 +85,11 @@ export interface ListingOperationPerformanceSnapshot {
   executionCount: number;
   successCount: number;
   successRate: number;
+  fallbackAttemptCount: number;
+  fallbackSuccessCount: number;
+  fallbackRecoveryRate: number;
+  avgFallbackLatencyDeltaMs: number | null;
+  avgFallbackPriceDeltaUsdc: number | null;
   avgLatencyMs: number | null;
   lastSeenAt: string | null;
 }
@@ -119,6 +124,7 @@ export interface TrustPenaltyBreakdown {
   settlementPenalty: number;
   disputePenalty: number;
   latencyPenalty: number;
+  fallbackPenalty: number;
 }
 
 export interface ListingTrustSnapshot {
@@ -133,6 +139,10 @@ export interface ListingTrustSnapshot {
   settlementPendingRate: number;
   disputeRate: number;
   refundRate: number;
+  fallbackAttemptRate: number;
+  fallbackRecoveryRate: number;
+  avgFallbackLatencyDeltaMs: number | null;
+  avgFallbackPriceDeltaUsdc: number | null;
   p50LatencyMs: number | null;
   p99LatencyMs: number | null;
   latencyStability: number | null;
@@ -237,6 +247,10 @@ function buildTrustReasons(
     settlementPendingRate: number;
     disputeRate: number;
     refundRate: number;
+    fallbackAttemptRate: number;
+    fallbackRecoveryRate: number;
+    avgFallbackLatencyDeltaMs: number | null;
+    avgFallbackPriceDeltaUsdc: number | null;
     latencyStability: number | null;
     p99LatencyMs: number | null;
   },
@@ -260,6 +274,19 @@ function buildTrustReasons(
   if (penalties.disputePenalty >= 0.03) {
     reasons.push(
       `Refund/dispute rate is ${((rates.disputeRate + rates.refundRate) * 100).toFixed(1)}% of billed calls.`,
+    );
+  }
+  if (penalties.fallbackPenalty >= 0.03) {
+    reasons.push(
+      `Fallback was needed on ${(rates.fallbackAttemptRate * 100).toFixed(1)}% of executions; recovery rate was ${(rates.fallbackRecoveryRate * 100).toFixed(1)}%.`,
+    );
+  } else if (
+    rates.fallbackAttemptRate > 0 &&
+    rates.fallbackRecoveryRate >= 0.8 &&
+    (rates.avgFallbackLatencyDeltaMs ?? 0) <= 1200
+  ) {
+    reasons.push(
+      `Fallback recovery is strong when this listing degrades (${(rates.fallbackRecoveryRate * 100).toFixed(1)}% recovered).`,
     );
   }
   if (
@@ -291,6 +318,10 @@ function buildListingTrustSnapshot(input: {
   billedTransactionCount: number;
   disputedCount: number;
   refundedCount: number;
+  fallbackAttemptCount: number;
+  fallbackSuccessCount: number;
+  avgFallbackLatencyDeltaMs: number | null;
+  avgFallbackPriceDeltaUsdc: number | null;
   p50LatencyMs: number | null;
   p99LatencyMs: number | null;
 }): ListingTrustSnapshot {
@@ -306,6 +337,10 @@ function buildListingTrustSnapshot(input: {
     billedTransactionCount,
     disputedCount,
     refundedCount,
+    fallbackAttemptCount,
+    fallbackSuccessCount,
+    avgFallbackLatencyDeltaMs,
+    avgFallbackPriceDeltaUsdc,
     p50LatencyMs,
     p99LatencyMs,
   } = input;
@@ -323,6 +358,10 @@ function buildListingTrustSnapshot(input: {
       settlementPendingRate: 0,
       disputeRate: 0,
       refundRate: 0,
+      fallbackAttemptRate: 0,
+      fallbackRecoveryRate: 0,
+      avgFallbackLatencyDeltaMs: null,
+      avgFallbackPriceDeltaUsdc: null,
       p50LatencyMs,
       p99LatencyMs,
       latencyStability: null,
@@ -333,6 +372,7 @@ function buildListingTrustSnapshot(input: {
         settlementPenalty: 0,
         disputePenalty: 0,
         latencyPenalty: 0,
+        fallbackPenalty: 0,
       },
       penaltyTotal: 1 - TRUST_NEUTRAL_SCORE,
       reasons: ["Not enough execution history yet. Using a neutral trust prior."],
@@ -349,6 +389,9 @@ function buildListingTrustSnapshot(input: {
     : 0;
   const disputeRate = billedTransactionCount > 0 ? disputedCount / billedTransactionCount : 0;
   const refundRate = billedTransactionCount > 0 ? refundedCount / billedTransactionCount : 0;
+  const fallbackAttemptRate = totalExecutions > 0 ? fallbackAttemptCount / totalExecutions : 0;
+  const fallbackRecoveryRate =
+    fallbackAttemptCount > 0 ? fallbackSuccessCount / fallbackAttemptCount : 0;
   const latencyStability =
     p50LatencyMs && p50LatencyMs > 0 && p99LatencyMs && p99LatencyMs > 0
       ? p99LatencyMs / p50LatencyMs
@@ -363,6 +406,19 @@ function buildListingTrustSnapshot(input: {
     ? 0.02
     : clamp01((latencyStability - 3) / 5) * 0.07 +
       clamp01(((p99LatencyMs ?? 0) - 2500) / 5500) * 0.05;
+  const fallbackPressurePenalty = clamp01(fallbackAttemptRate / 0.18) * 0.08;
+  const fallbackRecoveryRelief = fallbackPressurePenalty * fallbackRecoveryRate * 0.55;
+  const fallbackLatencyPenalty =
+    avgFallbackLatencyDeltaMs === null
+      ? 0
+      : clamp01(avgFallbackLatencyDeltaMs / 2500) * 0.025;
+  const fallbackCostPenalty =
+    avgFallbackPriceDeltaUsdc === null
+      ? 0
+      : clamp01(avgFallbackPriceDeltaUsdc / 0.02) * 0.015;
+  const fallbackPenalty = clamp01(
+    fallbackPressurePenalty - fallbackRecoveryRelief + fallbackLatencyPenalty + fallbackCostPenalty,
+  );
 
   const penalties: TrustPenaltyBreakdown = {
     successPenalty,
@@ -371,6 +427,7 @@ function buildListingTrustSnapshot(input: {
     settlementPenalty,
     disputePenalty,
     latencyPenalty,
+    fallbackPenalty,
   };
 
   const penaltyTotal = Object.values(penalties).reduce((sum, penalty) => sum + penalty, 0);
@@ -388,6 +445,10 @@ function buildListingTrustSnapshot(input: {
     settlementPendingRate,
     disputeRate,
     refundRate,
+    fallbackAttemptRate,
+    fallbackRecoveryRate,
+    avgFallbackLatencyDeltaMs,
+    avgFallbackPriceDeltaUsdc,
     p50LatencyMs,
     p99LatencyMs,
     latencyStability,
@@ -400,6 +461,10 @@ function buildListingTrustSnapshot(input: {
       settlementPendingRate,
       disputeRate,
       refundRate,
+      fallbackAttemptRate,
+      fallbackRecoveryRate,
+      avgFallbackLatencyDeltaMs,
+      avgFallbackPriceDeltaUsdc,
       latencyStability,
       p99LatencyMs,
     }),
@@ -956,7 +1021,16 @@ export async function getListingOperationPerformanceSnapshots(
     outcome: { in: ["SUCCESS", "FAILED"] },
   };
 
-  const [totals, successes] = await Promise.all([
+  type OperationFallbackRow = {
+    listingId: string | null;
+    operationId: string | null;
+    attemptedCount: bigint | number;
+    successCount: bigint | number;
+    avgLatencyDeltaMs: number | null;
+    avgPriceDeltaUsdc: number | null;
+  };
+
+  const [totals, successes, fallbackRows] = await Promise.all([
     prisma.executionReceipt.groupBy({
       by: ["listingId", "operationId"],
       where: baseWhere,
@@ -972,12 +1046,63 @@ export async function getListingOperationPerformanceSnapshots(
       },
       _count: { _all: true },
     }),
+    prisma.$queryRaw<OperationFallbackRow[]>(Prisma.sql`
+      SELECT
+        source.listing_id AS "listingId",
+        source.operation_id AS "operationId",
+        COUNT(*)::bigint AS "attemptedCount",
+        COUNT(*) FILTER (WHERE fallback.outcome = 'SUCCESS')::bigint AS "successCount",
+        AVG(
+          CASE
+            WHEN fallback.latency_ms IS NOT NULL AND source.latency_ms IS NOT NULL
+            THEN (fallback.latency_ms - source.latency_ms)::double precision
+            ELSE NULL
+          END
+        ) AS "avgLatencyDeltaMs",
+        AVG(
+          (
+            COALESCE(fallback.charged_price_usdc, 0) -
+            COALESCE(source.quoted_price_usdc, source.charged_price_usdc, 0)
+          )::double precision
+        ) AS "avgPriceDeltaUsdc"
+      FROM execution_receipts fallback
+      INNER JOIN execution_receipts source
+        ON fallback.fallback_source_receipt_id = source.id
+      WHERE source.listing_id IN (${Prisma.join(listingIds.map((listingId) => Prisma.sql`${listingId}::uuid`))})
+        AND source.created_at >= ${since}
+        AND fallback.created_at >= ${since}
+        AND source.sandbox = false
+        AND fallback.sandbox = false
+        ${operationIds
+          ? Prisma.sql`AND source.operation_id IN (${Prisma.join(operationIds.map((operationId) => Prisma.sql`${operationId}`))})`
+          : Prisma.empty}
+      GROUP BY source.listing_id, source.operation_id
+    `),
   ]);
 
   const successMap = new Map<string, number>();
   for (const row of successes) {
     if (!row.listingId || !row.operationId) continue;
     successMap.set(compoundMapKey(row.listingId, row.operationId), row._count._all);
+  }
+
+  const fallbackMap = new Map<
+    string,
+    {
+      attemptedCount: number;
+      successCount: number;
+      avgLatencyDeltaMs: number | null;
+      avgPriceDeltaUsdc: number | null;
+    }
+  >();
+  for (const row of fallbackRows) {
+    if (!row.listingId || !row.operationId) continue;
+    fallbackMap.set(compoundMapKey(row.listingId, row.operationId), {
+      attemptedCount: toNumericValue(row.attemptedCount),
+      successCount: toNumericValue(row.successCount),
+      avgLatencyDeltaMs: row.avgLatencyDeltaMs ?? null,
+      avgPriceDeltaUsdc: row.avgPriceDeltaUsdc ?? null,
+    });
   }
 
   return totals
@@ -994,11 +1119,35 @@ export async function getListingOperationPerformanceSnapshots(
       const successRate = executionCount > 0 ? successCount / executionCount : 0;
       const smoothedSuccessRate = (successCount + 2) / (executionCount + 3);
       const avgLatencyMs = row._avg.latencyMs ?? null;
+      const fallback = fallbackMap.get(key);
+      const fallbackAttemptCount = fallback?.attemptedCount ?? 0;
+      const fallbackSuccessCount = fallback?.successCount ?? 0;
+      const fallbackRecoveryRate =
+        fallbackAttemptCount > 0 ? fallbackSuccessCount / fallbackAttemptCount : 0;
+      const avgFallbackLatencyDeltaMs = fallback?.avgLatencyDeltaMs ?? null;
+      const avgFallbackPriceDeltaUsdc = fallback?.avgPriceDeltaUsdc ?? null;
+      const fallbackAttemptRate = executionCount > 0 ? fallbackAttemptCount / executionCount : 0;
       const latencyScore =
         avgLatencyMs === null ? 0.6 : clamp01(1 - avgLatencyMs / 2500);
       const confidenceBonus = Math.min(executionCount / 20, 1) * 0.05;
+      const fallbackPenalty = clamp01(fallbackAttemptRate / 0.18) * 0.12;
+      const fallbackRecoveryRelief = fallbackPenalty * fallbackRecoveryRate * 0.55;
+      const fallbackLatencyPenalty =
+        avgFallbackLatencyDeltaMs === null
+          ? 0
+          : clamp01(avgFallbackLatencyDeltaMs / 2500) * 0.04;
+      const fallbackCostPenalty =
+        avgFallbackPriceDeltaUsdc === null
+          ? 0
+          : clamp01(avgFallbackPriceDeltaUsdc / 0.02) * 0.02;
       const score = clamp01(
-        smoothedSuccessRate * 0.75 + latencyScore * 0.20 + confidenceBonus,
+        smoothedSuccessRate * 0.75 +
+          latencyScore * 0.20 +
+          confidenceBonus -
+          fallbackPenalty +
+          fallbackRecoveryRelief -
+          fallbackLatencyPenalty -
+          fallbackCostPenalty,
       );
 
       return {
@@ -1009,6 +1158,11 @@ export async function getListingOperationPerformanceSnapshots(
         executionCount,
         successCount,
         successRate,
+        fallbackAttemptCount,
+        fallbackSuccessCount,
+        fallbackRecoveryRate,
+        avgFallbackLatencyDeltaMs,
+        avgFallbackPriceDeltaUsdc,
         avgLatencyMs,
         lastSeenAt: row._max.createdAt?.toISOString() ?? null,
       };
@@ -1150,6 +1304,14 @@ export async function getListingTrustSnapshots(
     outcome: { in: ["SUCCESS", "FAILED"] },
   };
 
+  type ListingFallbackRow = {
+    listingId: string | null;
+    attemptedCount: bigint | number;
+    successCount: bigint | number;
+    avgLatencyDeltaMs: number | null;
+    avgPriceDeltaUsdc: number | null;
+  };
+
   const [
     totalExecutions,
     successfulExecutions,
@@ -1161,6 +1323,7 @@ export async function getListingTrustSnapshots(
     disputedTransactions,
     refundedTransactions,
     qualitySnapshots,
+    fallbackRows,
   ] = await Promise.all([
     prisma.executionReceipt.groupBy({
       by: ["listingId"],
@@ -1251,6 +1414,34 @@ export async function getListingTrustSnapshots(
         p99LatencyMs: true,
       },
     }),
+    prisma.$queryRaw<ListingFallbackRow[]>(Prisma.sql`
+      SELECT
+        source.listing_id AS "listingId",
+        COUNT(*)::bigint AS "attemptedCount",
+        COUNT(*) FILTER (WHERE fallback.outcome = 'SUCCESS')::bigint AS "successCount",
+        AVG(
+          CASE
+            WHEN fallback.latency_ms IS NOT NULL AND source.latency_ms IS NOT NULL
+            THEN (fallback.latency_ms - source.latency_ms)::double precision
+            ELSE NULL
+          END
+        ) AS "avgLatencyDeltaMs",
+        AVG(
+          (
+            COALESCE(fallback.charged_price_usdc, 0) -
+            COALESCE(source.quoted_price_usdc, source.charged_price_usdc, 0)
+          )::double precision
+        ) AS "avgPriceDeltaUsdc"
+      FROM execution_receipts fallback
+      INNER JOIN execution_receipts source
+        ON fallback.fallback_source_receipt_id = source.id
+      WHERE source.listing_id IN (${Prisma.join(listingIds.map((listingId) => Prisma.sql`${listingId}::uuid`))})
+        AND source.created_at >= ${since}
+        AND fallback.created_at >= ${since}
+        AND source.sandbox = false
+        AND fallback.sandbox = false
+      GROUP BY source.listing_id
+    `),
   ]);
 
   const totalMap = mapGroupCount(totalExecutions);
@@ -1263,12 +1454,30 @@ export async function getListingTrustSnapshots(
   const disputedMap = mapGroupCount(disputedTransactions);
   const refundedMap = mapGroupCount(refundedTransactions);
   const qualityMap = new Map<string, { p50LatencyMs: number | null; p99LatencyMs: number | null }>();
+  const fallbackMap = new Map<
+    string,
+    {
+      attemptedCount: number;
+      successCount: number;
+      avgFallbackLatencyDeltaMs: number | null;
+      avgFallbackPriceDeltaUsdc: number | null;
+    }
+  >();
 
   for (const snapshot of qualitySnapshots) {
     if (qualityMap.has(snapshot.listingId)) continue;
     qualityMap.set(snapshot.listingId, {
       p50LatencyMs: Number(snapshot.medianLatencyMs),
       p99LatencyMs: Number(snapshot.p99LatencyMs),
+    });
+  }
+  for (const row of fallbackRows) {
+    if (typeof row.listingId !== "string") continue;
+    fallbackMap.set(row.listingId, {
+      attemptedCount: toNumericValue(row.attemptedCount),
+      successCount: toNumericValue(row.successCount),
+      avgFallbackLatencyDeltaMs: row.avgLatencyDeltaMs ?? null,
+      avgFallbackPriceDeltaUsdc: row.avgPriceDeltaUsdc ?? null,
     });
   }
 
@@ -1285,6 +1494,10 @@ export async function getListingTrustSnapshots(
       billedTransactionCount: billedTransactionMap.get(listingId) ?? 0,
       disputedCount: disputedMap.get(listingId) ?? 0,
       refundedCount: refundedMap.get(listingId) ?? 0,
+      fallbackAttemptCount: fallbackMap.get(listingId)?.attemptedCount ?? 0,
+      fallbackSuccessCount: fallbackMap.get(listingId)?.successCount ?? 0,
+      avgFallbackLatencyDeltaMs: fallbackMap.get(listingId)?.avgFallbackLatencyDeltaMs ?? null,
+      avgFallbackPriceDeltaUsdc: fallbackMap.get(listingId)?.avgFallbackPriceDeltaUsdc ?? null,
       p50LatencyMs: qualityMap.get(listingId)?.p50LatencyMs ?? null,
       p99LatencyMs: qualityMap.get(listingId)?.p99LatencyMs ?? null,
     }),

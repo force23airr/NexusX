@@ -112,6 +112,11 @@ export interface OperationPerformanceSnapshot {
   executionCount: number;
   successCount: number;
   successRate: number;
+  fallbackAttemptCount: number;
+  fallbackSuccessCount: number;
+  fallbackRecoveryRate: number;
+  avgFallbackLatencyDeltaMs: number | null;
+  avgFallbackPriceDeltaUsdc: number | null;
   avgLatencyMs: number | null;
   lastSeenAt: string | null;
 }
@@ -374,6 +379,7 @@ export interface TrustPenaltyBreakdown {
   settlementPenalty: number;
   disputePenalty: number;
   latencyPenalty: number;
+  fallbackPenalty: number;
 }
 
 export interface ListingTrustSnapshot {
@@ -388,6 +394,10 @@ export interface ListingTrustSnapshot {
   settlementPendingRate: number;
   disputeRate: number;
   refundRate: number;
+  fallbackAttemptRate: number;
+  fallbackRecoveryRate: number;
+  avgFallbackLatencyDeltaMs: number | null;
+  avgFallbackPriceDeltaUsdc: number | null;
   p50LatencyMs: number | null;
   p99LatencyMs: number | null;
   latencyStability: number | null;

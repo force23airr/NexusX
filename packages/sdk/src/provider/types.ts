@@ -181,6 +181,11 @@ export interface OperationPerformanceSnapshot {
   executionCount: number;
   successCount: number;
   successRate: number;
+  fallbackAttemptCount: number;
+  fallbackSuccessCount: number;
+  fallbackRecoveryRate: number;
+  avgFallbackLatencyDeltaMs: number | null;
+  avgFallbackPriceDeltaUsdc: number | null;
   avgLatencyMs: number | null;
   lastSeenAt: string | null;
 }
