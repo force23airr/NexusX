@@ -22,6 +22,17 @@ import type {
   X402ExecutionRecord,
 } from "../src/types";
 
+// The proxy's SSRF guard (safeFetch) performs a real DNS lookup before
+// fetching. Stub dns/promises so test upstream hosts resolve to a public
+// address — the upstream itself is still mocked via the global fetch.
+vi.mock("dns/promises", async (importActual) => {
+  const actual = await importActual<typeof import("dns/promises")>();
+  return {
+    ...actual,
+    lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
+  };
+});
+
 // -----------------------------------------------------------------
 // TEST FIXTURES (shared across all security test suites)
 // -----------------------------------------------------------------
@@ -178,6 +189,22 @@ function createMockRedis() {
       hashStore.set(key, bucket);
       return 1;
     }),
+    hget: vi.fn(async (key: string, field: string) => {
+      return hashStore.get(key)?.get(field) ?? null;
+    }),
+    hdel: vi.fn(async (key: string, ...fields: string[]) => {
+      const bucket = hashStore.get(key);
+      if (!bucket) return 0;
+      let count = 0;
+      for (const field of fields) {
+        if (bucket.delete(field)) count += 1;
+      }
+      return count;
+    }),
+    hgetall: vi.fn(async (key: string) => {
+      const bucket = hashStore.get(key);
+      return bucket ? Object.fromEntries(bucket) : {};
+    }),
     del: vi.fn(async (...keys: string[]) => {
       let count = 0;
       for (const key of keys) {
@@ -319,10 +346,21 @@ describe("H-1: Payment Replay Protection", () => {
   });
 
   it("should allow requests when Redis is unavailable (defense-in-depth fallback)", async () => {
+    // Simulate a fully unavailable Redis: every operation rejects with a
+    // connection error (a real outage fails them all, not just some).
+    const fail = async () => { throw new Error("Redis connection refused"); };
     const brokenRedis = {
-      set: vi.fn(async () => { throw new Error("Redis connection refused"); }),
-      get: vi.fn(async () => null),
-      del: vi.fn(async () => 0),
+      set: vi.fn(fail),
+      get: vi.fn(fail),
+      del: vi.fn(fail),
+      incr: vi.fn(fail),
+      pexpire: vi.fn(fail),
+      pttl: vi.fn(fail),
+      eval: vi.fn(fail),
+      hget: vi.fn(fail),
+      hset: vi.fn(fail),
+      hdel: vi.fn(fail),
+      hgetall: vi.fn(fail),
       quit: vi.fn(async () => "OK"),
       disconnect: vi.fn(),
       status: "ready" as const,

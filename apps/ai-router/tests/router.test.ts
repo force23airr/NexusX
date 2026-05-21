@@ -545,8 +545,9 @@ describe("QueryRouter (E2E)", () => {
   });
 
   it("returns suggestions for weak matches", async () => {
-    const result = await router.route("buyer_001", "quantum computing simulation API");
-    // No quantum listings in test data.
+    // A query with no vocabulary overlap with any test listing — and
+    // no generic term like "API" that would broadly match listings.
+    const result = await router.route("buyer_001", "weekend weather forecast lookup");
     expect(result.suggestions.length).toBeGreaterThan(0);
   });
 

@@ -93,46 +93,78 @@ class InMemoryCircuitBreakerStore implements CircuitBreakerStore {
 class RedisCircuitBreakerStore implements CircuitBreakerStore {
   constructor(private readonly redis: CircuitBreakerRedisClient) {}
 
+  /**
+   * Run a Redis operation, failing open. The circuit breaker is a
+   * defense-in-depth safety net — if its own state store is unavailable,
+   * it must never take down the request path. On error we log once and
+   * return the supplied fallback (treated as "no circuit state").
+   */
+  private async safe<T>(op: () => Promise<T>, fallback: T): Promise<T> {
+    try {
+      return await op();
+    } catch (err) {
+      console.warn(
+        "[CircuitBreaker] Redis store unavailable, failing open:",
+        err instanceof Error ? err.message : err,
+      );
+      return fallback;
+    }
+  }
+
   async getState(slug: string): Promise<SharedCircuitState | null> {
-    return parseSharedCircuitState(
-      await this.redis.hget(CIRCUIT_BREAKER_STATE_HASH_KEY, slug),
+    return this.safe(
+      async () =>
+        parseSharedCircuitState(
+          await this.redis.hget(CIRCUIT_BREAKER_STATE_HASH_KEY, slug),
+        ),
+      null,
     );
   }
 
   async setState(slug: string, state: SharedCircuitState): Promise<void> {
-    await this.redis.hset(
-      CIRCUIT_BREAKER_STATE_HASH_KEY,
-      slug,
-      serializeSharedCircuitState(state),
-    );
+    await this.safe(async () => {
+      await this.redis.hset(
+        CIRCUIT_BREAKER_STATE_HASH_KEY,
+        slug,
+        serializeSharedCircuitState(state),
+      );
+    }, undefined);
   }
 
   async deleteState(slug: string): Promise<void> {
-    await this.redis.hdel(CIRCUIT_BREAKER_STATE_HASH_KEY, slug);
-    await this.redis.del(getCircuitProbeKey(slug));
+    await this.safe(async () => {
+      await this.redis.hdel(CIRCUIT_BREAKER_STATE_HASH_KEY, slug);
+      await this.redis.del(getCircuitProbeKey(slug));
+    }, undefined);
   }
 
   async tryAcquireProbe(slug: string, ttlMs: number): Promise<boolean> {
-    const result = await this.redis.set(getCircuitProbeKey(slug), "1", "PX", ttlMs, "NX");
-    return result === "OK";
+    return this.safe(async () => {
+      const result = await this.redis.set(getCircuitProbeKey(slug), "1", "PX", ttlMs, "NX");
+      return result === "OK";
+    }, false);
   }
 
   async releaseProbe(slug: string): Promise<void> {
-    await this.redis.del(getCircuitProbeKey(slug));
+    await this.safe(async () => {
+      await this.redis.del(getCircuitProbeKey(slug));
+    }, undefined);
   }
 
   async listStates(): Promise<Record<string, SharedCircuitState>> {
-    const raw = await this.redis.hgetall(CIRCUIT_BREAKER_STATE_HASH_KEY);
-    const result: Record<string, SharedCircuitState> = {};
+    return this.safe(async () => {
+      const raw = await this.redis.hgetall(CIRCUIT_BREAKER_STATE_HASH_KEY);
+      const result: Record<string, SharedCircuitState> = {};
 
-    for (const [slug, value] of Object.entries(raw)) {
-      const parsed = parseSharedCircuitState(value);
-      if (parsed) {
-        result[slug] = parsed;
+      for (const [slug, value] of Object.entries(raw)) {
+        const parsed = parseSharedCircuitState(value);
+        if (parsed) {
+          result[slug] = parsed;
+        }
       }
-    }
 
-    return result;
+      return result;
+    }, {});
   }
 }
 

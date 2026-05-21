@@ -28,6 +28,17 @@ import type {
 import * as fs from "fs";
 import * as path from "path";
 
+// The proxy's SSRF guard (safeFetch) performs a real DNS lookup before
+// fetching. Stub dns/promises so test upstream hosts resolve to a public
+// address — the upstream itself is still mocked via the global fetch.
+vi.mock("dns/promises", async (importActual) => {
+  const actual = await importActual<typeof import("dns/promises")>();
+  return {
+    ...actual,
+    lookup: vi.fn(async () => [{ address: "93.184.216.34", family: 4 }]),
+  };
+});
+
 // -----------------------------------------------------------------
 // SHARED TEST FIXTURES
 // -----------------------------------------------------------------
@@ -430,10 +441,12 @@ describe("API Key Auth Security", () => {
 // (Verifies the web app's API key auth follows security patterns)
 // =================================================================
 
-describe("apiKeyAuth.ts Static Security Analysis", () => {
+describe("api-key-utils.ts Static Security Analysis", () => {
+  // The web app's apiKeyAuth.ts now delegates to @nexusx/database;
+  // the hashing / validation logic lives in api-key-utils.ts.
   const apiKeyAuthPath = path.resolve(
     __dirname,
-    "../../../apps/web/src/lib/apiKeyAuth.ts"
+    "../../../packages/database/src/api-key-utils.ts"
   );
 
   let source: string;
@@ -455,7 +468,8 @@ describe("apiKeyAuth.ts Static Security Analysis", () => {
 
   it("should check key status before granting access", () => {
     if (!source) return;
-    expect(source).toContain('key.status !== "ACTIVE"');
+    // ACTIVE status is enforced in the keyed lookup query.
+    expect(source).toContain('status: "ACTIVE"');
   });
 
   it("should check key expiry", () => {
@@ -466,12 +480,16 @@ describe("apiKeyAuth.ts Static Security Analysis", () => {
 
   it("should only accept Bearer tokens starting with nxs_", () => {
     if (!source) return;
-    expect(source).toContain('startsWith("Bearer nxs_")');
+    expect(source).toContain('startsWith("Bearer ")');
+    // Key format is enforced by API_KEY_PATTERN, anchored on the nxs_ prefix.
+    expect(source).toContain("nxs_");
   });
 
-  it("should validate minimum key length", () => {
+  it("should validate key format before lookup", () => {
     if (!source) return;
-    expect(source).toContain("rawKey.length < 12");
+    // A strict regex (API_KEY_PATTERN) validates the full key shape.
+    expect(source).toContain("API_KEY_PATTERN");
+    expect(source).toContain("isValidApiKeyFormat");
   });
 
   it("should use prefix-then-hash lookup pattern (not full key lookup)", () => {
@@ -730,33 +748,24 @@ describe("Listings Endpoint Input Validation", () => {
   // ---------------------------------------------------------------
   // Attack: XSS via listing name/description stored in DB.
   // ---------------------------------------------------------------
-  it("should store raw body values (XSS mitigation is at render time)", () => {
+  it("should store name values for render-time XSS mitigation", () => {
     if (!source) return;
-    // The POST handler stores body.name and body.description directly.
-    // This is acceptable IF the frontend sanitizes output (React does
-    // this by default with JSX). However, if any server-side rendering
-    // interpolates these values, XSS is possible.
-    expect(source).toContain("name: body.name");
-    // FINDING: Server-side XSS mitigation is the frontend's job
-    // (React auto-escapes). The API is a data passthrough.
+    // The POST handler stores the listing name (via extractListingWriteData,
+    // falling back to body.name). Output escaping is the frontend's job —
+    // React auto-escapes JSX. The API is a data passthrough for text fields.
+    expect(source).toContain("body.name");
   });
 
   // ---------------------------------------------------------------
   // Attack: SSRF via baseUrl -- listing points to internal services.
   // ---------------------------------------------------------------
-  it("should document that baseUrl is not validated for SSRF", () => {
+  it("should validate baseUrl for SSRF before storing the listing", () => {
     if (!source) return;
-    // FINDING: The POST handler accepts any baseUrl without validation.
-    // An attacker with provider access could create a listing pointing
-    // to internal services (e.g., http://169.254.169.254/metadata).
-    //
-    // The gateway's proxy service later uses this URL to forward requests,
-    // making this a potential SSRF vector.
-    //
-    // Recommendation: Validate baseUrl against an allowlist or block
-    // private IP ranges (10.x, 172.16.x, 192.168.x, 169.254.x, localhost).
-    expect(source).toContain("baseUrl: body.baseUrl");
-    // No URL validation exists -- document as finding.
+    // FIXED: the POST handler no longer stores baseUrl raw. It runs the
+    // body through extractListingWriteData(), which calls assertSafeHttpUrl
+    // (see providerListing.ts) — rejecting private/reserved hosts such as
+    // http://169.254.169.254/metadata before the listing is created.
+    expect(source).toContain("extractListingWriteData");
   });
 });
 
@@ -1287,9 +1296,12 @@ describe("MCP HTTP Transport Source Code Audit", () => {
     expect(source).not.toContain("bearer !== authToken");
   });
 
-  it("should bind to 0.0.0.0 (network exposure documented)", () => {
+  it("should guard non-loopback binding with auth (no hardcoded 0.0.0.0)", () => {
     if (!source) return;
-    expect(source).toContain('"0.0.0.0"');
+    // The transport no longer hardcodes 0.0.0.0: the bind host is
+    // configurable, and binding a non-loopback host is guarded.
+    expect(source).toContain("isLoopbackHost");
+    expect(source).toContain("requiresAuth");
   });
 
   it("should set CORS wildcard (*) for Access-Control-Allow-Origin", () => {
@@ -1316,7 +1328,8 @@ describe("MCP HTTP Transport Source Code Audit", () => {
 
   it("should use express.json() for body parsing (no raw eval)", () => {
     if (!source) return;
-    expect(source).toContain("express.json()");
+    // express.json({ limit }) — parsed with a body-size cap.
+    expect(source).toContain("express.json(");
     expect(source).not.toContain("eval(");
     expect(source).not.toContain("Function(");
   });

@@ -291,7 +291,11 @@ describe("MCP HTTP Auth Token Validation", () => {
 describe("MCP HTTP CORS Policy", () => {
   it("should allow wildcard CORS only for loopback-bound transports", async () => {
     const app = createMcpHttpApp({ allowedOrigins: ["*"] });
-    const res = await request(app).get("/health");
+    // CORS headers are only emitted in response to a cross-origin request,
+    // i.e. one that carries an Origin header.
+    const res = await request(app)
+      .get("/health")
+      .set("Origin", "https://agent.example");
 
     expect(res.headers["access-control-allow-origin"]).toBe("*");
   });
