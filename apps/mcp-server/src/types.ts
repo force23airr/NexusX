@@ -13,6 +13,8 @@ export interface McpServerConfig {
   httpAllowedOrigins: string[];
   registryRefreshMs: number;
   sessionBudgetUsdc: number;
+  maxPricePerCallUsdc: number;
+  maxSlippagePct: number;
   sandbox: boolean;
   redisUrl: string;
   databaseUrl: string;
@@ -201,6 +203,8 @@ export interface ExecutionReceiptSummary {
 /** Session-scoped budget state. */
 export interface BudgetState {
   limitUsdc: number;
+  maxPricePerCallUsdc: number;
+  maxSlippagePct: number;
   spentUsdc: number;
   remainingUsdc: number;
   callCount: number;

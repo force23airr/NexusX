@@ -69,7 +69,10 @@ export async function createMcpServer(
   const searchBuyerId = await resolveBuyerIdFromApiKey(prisma, config.apiKey);
   const discovery = new DiscoveryService(prisma, searchBuyerId);
   const bundleEngine = new BundleEngine(prisma);
-  const budget = new BudgetTracker(config.sessionBudgetUsdc);
+  const budget = new BudgetTracker(config.sessionBudgetUsdc, {
+    maxPricePerCallUsdc: config.maxPricePerCallUsdc,
+    maxSlippagePct: config.maxSlippagePct,
+  });
   const priceSubscriber = new PriceSubscriber(config.redisUrl, config.gatewayUrl);
 
   // Create Redis client for version-based registry refresh

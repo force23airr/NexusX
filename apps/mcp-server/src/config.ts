@@ -26,6 +26,8 @@ const configSchema = z.object({
     .default(""),
   registryRefreshMs: z.coerce.number().int().positive().default(60_000),
   sessionBudgetUsdc: z.coerce.number().min(0).default(0),
+  maxPricePerCallUsdc: z.coerce.number().min(0).default(0),
+  maxSlippagePct: z.coerce.number().min(0).default(25),
   sandbox: z
     .string()
     .transform((v) => v === "true")
@@ -55,6 +57,8 @@ export function loadConfig(): McpServerConfig {
     httpAllowedOrigins: process.env.MCP_ALLOWED_ORIGINS,
     registryRefreshMs: process.env.NEXUSX_REGISTRY_REFRESH_MS,
     sessionBudgetUsdc: process.env.NEXUSX_SESSION_BUDGET_USDC,
+    maxPricePerCallUsdc: process.env.NEXUSX_MAX_PRICE_PER_CALL_USDC,
+    maxSlippagePct: process.env.NEXUSX_MAX_PRICE_SLIPPAGE_PCT,
     sandbox: process.env.NEXUSX_SANDBOX,
     redisUrl: process.env.REDIS_URL,
     databaseUrl: process.env.DATABASE_URL,

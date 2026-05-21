@@ -98,6 +98,8 @@ export class NexusXAgent {
   private readonly apiKey: string | null;
   private readonly wallet: WalletSigner | null;
   private readonly budgetLimit: number;
+  private readonly maxPricePerCall: number;
+  private readonly maxSlippagePct: number;
   private readonly timeoutMs: number;
   private readonly sandbox: boolean;
   private readonly _debug: boolean;
@@ -118,6 +120,8 @@ export class NexusXAgent {
     this.apiKey = config.apiKey ?? null;
     this.wallet = config.wallet ?? null;
     this.budgetLimit = config.budgetUsdc ?? 0;
+    this.maxPricePerCall = config.maxPricePerCallUsdc ?? 0;
+    this.maxSlippagePct = config.maxSlippagePct ?? 25;
     this.timeoutMs = config.timeoutMs ?? 30_000;
     this.sandbox = config.sandbox ?? false;
     this._debug = config.debug ?? false;
@@ -337,6 +341,12 @@ export class NexusXAgent {
     }
 
     // Sign and retry
+    const quotePriceUsdc = this.x402AtomicToUsdc(requirements[0].maxAmountRequired);
+    const policyRejection = this.getPaymentPolicyRejection(quotePriceUsdc, params);
+    if (policyRejection) {
+      return this.paymentPolicyRejection(first, quotePriceUsdc, policyRejection);
+    }
+
     this.log(`Signing x402 payment: ${requirements[0].maxAmountRequired} to ${requirements[0].payTo}`);
     const xPayment = await this.wallet.buildPaymentHeader(requirements[0]);
     return this.rawCall(slug, path, params, xPayment);
@@ -549,6 +559,74 @@ export class NexusXAgent {
       throw new Error(
         `NexusX budget exceeded: spent $${this._spent.toFixed(6)} of $${this.budgetLimit.toFixed(6)} USDC`,
       );
+    }
+  }
+
+  private getPaymentPolicyRejection(quotePriceUsdc: number, params: CallParams): string | null {
+    if (!Number.isFinite(quotePriceUsdc) || quotePriceUsdc < 0) {
+      return "Live x402 quote is malformed.";
+    }
+
+    const maxForCall = params.maxPriceUsdc ?? this.maxPricePerCall;
+    if (maxForCall > 0 && quotePriceUsdc > maxForCall + 0.0000005) {
+      return `Live quote $${quotePriceUsdc.toFixed(6)} USDC exceeds max allowed $${maxForCall.toFixed(6)} USDC.`;
+    }
+
+    if (this.budgetLimit > 0 && this._spent + quotePriceUsdc > this.budgetLimit + 0.0000005) {
+      return `Live quote $${quotePriceUsdc.toFixed(6)} USDC would exceed remaining budget $${this.remaining.toFixed(6)} USDC.`;
+    }
+
+    const expected = params.expectedPriceUsdc;
+    if (
+      typeof expected === "number" &&
+      expected > 0 &&
+      this.maxSlippagePct >= 0
+    ) {
+      const maxWithSlippage = expected * (1 + this.maxSlippagePct / 100);
+      if (quotePriceUsdc > maxWithSlippage + 0.0000005) {
+        return (
+          `Live quote $${quotePriceUsdc.toFixed(6)} USDC exceeds expected ` +
+          `$${expected.toFixed(6)} USDC by more than ${this.maxSlippagePct}%.`
+        );
+      }
+    }
+
+    return null;
+  }
+
+  private paymentPolicyRejection(
+    first: CallResult,
+    quotePriceUsdc: number,
+    message: string,
+  ): CallResult {
+    const data = {
+      error: "PAYMENT_POLICY_REJECTED",
+      message,
+      quotedPriceUsdc: quotePriceUsdc,
+      spentUsdc: this._spent,
+      remainingUsdc: this.remaining,
+    };
+
+    return {
+      ...first,
+      success: false,
+      statusCode: 402,
+      data,
+      raw: JSON.stringify(data),
+      priceUsdc: 0,
+      quotedPriceUsdc: quotePriceUsdc,
+      billingDecision: "not_charged",
+      failureClass: "payment_policy_rejected",
+      retryable: false,
+      receipt: null,
+    };
+  }
+
+  private x402AtomicToUsdc(maxAmountRequired: string): number {
+    try {
+      return Number(BigInt(maxAmountRequired)) / 1_000_000;
+    } catch {
+      return Number.NaN;
     }
   }
 

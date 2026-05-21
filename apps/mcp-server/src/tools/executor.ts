@@ -23,6 +23,9 @@ interface ExecuteToolArgs {
   operationId?: string;
   fallbackSourceReceiptId?: string;
   headers?: Record<string, string>;
+  maxPriceUsdc?: number;
+  max_price_usdc?: number;
+  expectedPriceUsdc?: number;
 }
 
 interface BundleExecuteArgs extends ExecuteToolArgs {
@@ -85,6 +88,8 @@ export class ToolExecutor {
     args: ExecuteToolArgs,
   ): Promise<ToolCallResult> {
     const { path, method, body, query, operationId, fallbackSourceReceiptId, headers } = args;
+    const maxQuoteUsdc = readOptionalNumber(args.maxPriceUsdc ?? args.max_price_usdc);
+    const expectedPriceUsdc = readOptionalNumber(args.expectedPriceUsdc) ?? listing.currentPriceUsdc;
 
     // Execute through gateway with automatic x402 payment retry
     const result = await this.callWithX402({
@@ -97,6 +102,8 @@ export class ToolExecutor {
       operationId: operationId ?? listing.matchedOperations?.[0]?.operationId,
       fallbackSourceReceiptId,
       headers,
+      expectedPriceUsdc,
+      maxQuoteUsdc,
     });
 
     // 4. Post-call budget update
@@ -250,6 +257,8 @@ export class ToolExecutor {
         headers: args.headers,
         bundleSessionId: registration.bundleSessionId,
         bundleStepIndex: i,
+        expectedPriceUsdc: step.currentPriceUsdc,
+        maxQuoteUsdc: readOptionalNumber(args.maxPriceUsdc ?? args.max_price_usdc),
       });
 
       const quotedPriceUsdc =
@@ -363,7 +372,12 @@ export class ToolExecutor {
    *      c. Retry once with X-Payment header.
    *   3. Any other status code is returned directly.
    */
-  private async callWithX402(params: CallListingParams): Promise<ToolExecutionResult> {
+  private async callWithX402(
+    params: CallListingParams & {
+      expectedPriceUsdc?: number;
+      maxQuoteUsdc?: number;
+    },
+  ): Promise<ToolExecutionResult> {
     const first = await this.gateway.callListing(params);
 
     // Not a 402 or no CDP wallet — return as-is
@@ -375,6 +389,33 @@ export class ToolExecutor {
     if (!requirements || requirements.length === 0) {
       // 402 but no parseable payment requirements — surface as error
       return first;
+    }
+
+    const quotePriceUsdc = x402AtomicToUsdc(requirements[0].maxAmountRequired);
+    const policy = this.budget.checkQuote({
+      quotePriceUsdc,
+      expectedPriceUsdc: params.expectedPriceUsdc,
+      maxQuoteUsdc: params.maxQuoteUsdc,
+    });
+    if (!policy.allowed) {
+      return {
+        ...first,
+        body: JSON.stringify({
+          error: "PAYMENT_POLICY_REJECTED",
+          message: policy.reason ?? "Live x402 quote violates spending policy.",
+          quotedPriceUsdc: quotePriceUsdc,
+        }),
+        priceUsdc: 0,
+        quotedPriceUsdc: Number.isFinite(quotePriceUsdc) ? quotePriceUsdc : 0,
+        failureClass: "payment_policy_rejected",
+        retryable: false,
+        billingDecision: "not_charged",
+        metadata: {
+          failureClass: "payment_policy_rejected",
+          retryable: false,
+          billingDecision: "not_charged",
+        },
+      };
     }
 
     // Sign the first accepted payment requirement
@@ -519,6 +560,25 @@ function parseMaybeJson(body: string): unknown {
 
 function round6(value: number): number {
   return Math.round(value * 1_000_000) / 1_000_000;
+}
+
+function x402AtomicToUsdc(maxAmountRequired: string): number {
+  try {
+    return Number(BigInt(maxAmountRequired)) / 1_000_000;
+  } catch {
+    return Number.NaN;
+  }
+}
+
+function readOptionalNumber(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "string" && value.trim().length > 0) {
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
 }
 
 function estimatePayloadBytes(payload: unknown): number {

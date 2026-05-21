@@ -26,6 +26,15 @@ export interface NexusXAgentConfig {
   /** Session spending limit in USDC. 0 = unlimited. Default: 0. */
   budgetUsdc?: number;
 
+  /** Maximum allowed price for any single paid call in USDC. 0 = unlimited. Default: 0. */
+  maxPricePerCallUsdc?: number;
+
+  /**
+   * Maximum allowed increase between an expected price and the live x402 quote.
+   * Only applies when expectedPriceUsdc is provided on a call. Default: 25.
+   */
+  maxSlippagePct?: number;
+
   /** Request timeout in ms. Default: 30_000. */
   timeoutMs?: number;
 
@@ -78,6 +87,10 @@ export interface CallParams {
   operationId?: string;
   /** Extra headers. */
   headers?: Record<string, string>;
+  /** Maximum acceptable live x402 quote for this call in USDC. */
+  maxPriceUsdc?: number;
+  /** Expected price from discovery, used to reject excessive live quote movement. */
+  expectedPriceUsdc?: number;
 }
 
 export interface CallResult {

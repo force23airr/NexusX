@@ -142,9 +142,13 @@ export class OrchestratorService {
 
     for (let i = 0; i < rawSteps.length; i++) {
       const stepText = rawSteps[i];
+      const remainingTaskBudget =
+        typeof budget_max_usdc === "number"
+          ? Math.max(0, budget_max_usdc - totalCost)
+          : undefined;
 
       // Resolve API via semantic search
-      const resolved = await this.resolveApi(stepText, input, priority_mode, budget_max_usdc, previousOutput);
+      const resolved = await this.resolveApi(stepText, input, priority_mode, remainingTaskBudget, previousOutput);
       if (!resolved) {
         plan.push(`Step ${i + 1}: "${stepText}" — No API found`);
         return {
@@ -157,13 +161,28 @@ export class OrchestratorService {
       }
 
       const { listing, endpoint, body } = resolved;
+      if (remainingTaskBudget !== undefined && listing.currentPriceUsdc > remainingTaskBudget) {
+        return {
+          content: [{
+            type: "text",
+            text:
+              `Budget limit reached before step ${i + 1}. ` +
+              `Next API "${listing.slug}" is currently $${listing.currentPriceUsdc.toFixed(6)} USDC, ` +
+              `but only $${remainingTaskBudget.toFixed(6)} USDC remains for this task.`,
+          }],
+          isError: true,
+        };
+      }
       plan.push(`Step ${i + 1}: ${listing.categorySlug} → ${listing.slug} ($${listing.currentPriceUsdc.toFixed(6)})`);
 
       let result: ToolCallResult;
 
       if (listing.sourceType === "bazaar") {
         // Bazaar listing — call external URL directly with x402 payment
-        result = await this.executeExternal(listing, endpoint, body);
+        result = await this.executeExternal(listing, endpoint, body, {
+          expectedPriceUsdc: listing.currentPriceUsdc,
+          maxQuoteUsdc: remainingTaskBudget,
+        });
       } else {
         // Native listing — go through gateway via executor
         const toolName = this.findToolName(listing.slug);
@@ -178,6 +197,8 @@ export class OrchestratorService {
           path: endpoint.path,
           method: endpoint.method,
           body: Object.keys(body).length > 0 ? body : undefined,
+          expectedPriceUsdc: listing.currentPriceUsdc,
+          maxPriceUsdc: remainingTaskBudget,
         });
       }
 
@@ -206,7 +227,7 @@ export class OrchestratorService {
           listing,
           listing.categorySlug,
           priority_mode,
-          budget_max_usdc,
+          typeof budget_max_usdc === "number" ? Math.max(0, budget_max_usdc - totalCost) : undefined,
           result.metadata,
         );
         if (fallback) {
@@ -219,6 +240,8 @@ export class OrchestratorService {
               body: Object.keys(body).length > 0 ? body : undefined,
               operationId: fallback.operationId,
               fallbackSourceReceiptId: result.metadata?.receiptId,
+              expectedPriceUsdc: fallback.listing.currentPriceUsdc,
+              maxPriceUsdc: typeof budget_max_usdc === "number" ? Math.max(0, budget_max_usdc - totalCost) : undefined,
             });
 
             if (!fallbackResult.isError) {
@@ -432,6 +455,7 @@ export class OrchestratorService {
     listing: DiscoveredListing,
     endpoint: { method: string; path: string },
     body: Record<string, unknown>,
+    policy: { expectedPriceUsdc?: number; maxQuoteUsdc?: number } = {},
   ): Promise<ToolCallResult> {
     const baseUrl = listing.baseUrl.replace(/\/+$/, "");
     const path = endpoint.path.startsWith("/") ? endpoint.path : `/${endpoint.path}`;
@@ -461,6 +485,18 @@ export class OrchestratorService {
 
         if (requirements && Array.isArray(requirements) && requirements.length > 0) {
           try {
+            const quotePriceUsdc = x402AtomicToUsdc(requirements[0].maxAmountRequired);
+            const policyRejection = getExternalPaymentPolicyRejection(quotePriceUsdc, policy);
+            if (policyRejection) {
+              return {
+                content: [{
+                  type: "text",
+                  text: `Payment policy rejected Bazaar service ${listing.slug}: ${policyRejection}`,
+                }],
+                isError: true,
+              };
+            }
+
             const xPayment = await this.cdpWallet.buildPaymentHeader(requirements[0]);
             const retryHeaders: Record<string, string> = {
               "Content-Type": "application/json",
@@ -623,4 +659,45 @@ function parseMaybeJson(body: string): unknown {
   } catch {
     return body;
   }
+}
+
+function x402AtomicToUsdc(maxAmountRequired: string): number {
+  try {
+    return Number(BigInt(maxAmountRequired)) / 1_000_000;
+  } catch {
+    return Number.NaN;
+  }
+}
+
+function getExternalPaymentPolicyRejection(
+  quotePriceUsdc: number,
+  policy: { expectedPriceUsdc?: number; maxQuoteUsdc?: number },
+): string | null {
+  if (!Number.isFinite(quotePriceUsdc) || quotePriceUsdc < 0) {
+    return "live x402 quote is malformed.";
+  }
+
+  if (
+    typeof policy.maxQuoteUsdc === "number" &&
+    policy.maxQuoteUsdc > 0 &&
+    quotePriceUsdc > policy.maxQuoteUsdc + 0.0000005
+  ) {
+    return (
+      `live quote $${quotePriceUsdc.toFixed(6)} USDC exceeds remaining task budget ` +
+      `$${policy.maxQuoteUsdc.toFixed(6)} USDC.`
+    );
+  }
+
+  if (
+    typeof policy.expectedPriceUsdc === "number" &&
+    policy.expectedPriceUsdc > 0 &&
+    quotePriceUsdc > policy.expectedPriceUsdc * 1.25 + 0.0000005
+  ) {
+    return (
+      `live quote $${quotePriceUsdc.toFixed(6)} USDC exceeds expected ` +
+      `$${policy.expectedPriceUsdc.toFixed(6)} USDC by more than 25%.`
+    );
+  }
+
+  return null;
 }
