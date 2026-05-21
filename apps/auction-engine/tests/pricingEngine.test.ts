@@ -145,14 +145,16 @@ describe("PricingEngine", () => {
       const quality = createQualityMetrics();
       const supply = createSupplyState();
 
-      // Get prices at 25, 50, 75 demand
-      const prices = [25, 50, 75].map((score) => {
+      // Get prices at 0, 25, 50 demand
+      const prices = [0, 25, 50].map((score) => {
         const demand = createDemandState({ score });
         return engine.computePrice(floorPrice, null, demand, quality, supply, null);
       });
 
-      // Price increase from 50→75 should be larger than 25→50
-      // (sigmoid curve is steeper in the middle-to-high range)
+      // The sigmoid is point-symmetric about its midpoint (score 50), so it
+      // accelerates from the flat tail toward the steep midpoint: the price
+      // jump from 25→50 must exceed the jump from 0→25. A linear curve would
+      // make those two jumps equal.
       const jump1 = prices[1].price - prices[0].price;
       const jump2 = prices[2].price - prices[1].price;
 
@@ -396,7 +398,7 @@ describe("PricingEngine", () => {
         const result = engine.simulatePrice(s.floor, s.demand, s.competitors, s.quality);
 
         expect(result.price).toBeGreaterThanOrEqual(s.floor);
-        expect(result.price).toBeFinite();
+        expect(Number.isFinite(result.price)).toBe(true);
         expect(result.price).not.toBeNaN();
         expect(result.multipliers.combined).toBeGreaterThan(0);
       }
