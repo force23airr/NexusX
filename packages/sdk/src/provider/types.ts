@@ -402,6 +402,41 @@ export interface HealthReporterConfig {
   probeTimeoutMs?: number;
 }
 
+export interface UsageMeteredEvent {
+  listingIdOrSlug: string;
+  operationId?: string | null;
+  statusCode: number;
+  latencyMs: number;
+  requestBytes: number;
+  responseBytes: number;
+  timestamp: string;
+}
+
+export interface UsageMeterSnapshot {
+  listingIdOrSlug: string;
+  successCount: number;
+  failureCount: number;
+  medianLatencyMs: number;
+  p99LatencyMs: number;
+  requestBytes: number;
+  responseBytes: number;
+  totalBytes: number;
+  periodStart: string;
+  periodEnd: string;
+}
+
+export interface UsageMeterOptions {
+  listingIdOrSlug: string;
+  operationId?: string | ((req: unknown) => string | undefined);
+  successStatusMax?: number;
+  now?: () => Date;
+}
+
+export interface NodeMeteringMiddlewareOptions extends UsageMeterOptions {
+  requestBytes?: (req: unknown) => number;
+  responseBytes?: (res: unknown) => number;
+}
+
 // ─────────────────────────────────────────────────────────────
 // WEBHOOKS
 // ─────────────────────────────────────────────────────────────

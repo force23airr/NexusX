@@ -14,6 +14,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createHmac } from "crypto";
 import { NexusXProvider } from "../src/provider/client";
+import { UsageMeter, createNodeMeteringMiddleware } from "../src/provider/metering";
 import {
   WebhookHandler,
   verifyWebhookSignature,
@@ -312,6 +313,80 @@ describe("Health Metric Validation", () => {
 // ─────────────────────────────────────────────────────────────
 // WEBHOOK SIGNATURE VERIFICATION
 // ─────────────────────────────────────────────────────────────
+
+describe("UsageMeter", () => {
+  it("summarizes observed traffic into health metric reports", () => {
+    const dates = [
+      new Date("2026-05-21T12:00:00.000Z"),
+      new Date("2026-05-21T12:05:00.000Z"),
+      new Date("2026-05-21T12:05:00.000Z"),
+    ];
+    const meter = new UsageMeter({
+      listingIdOrSlug: "my-test-api",
+      now: () => dates.shift() ?? new Date("2026-05-21T12:05:00.000Z"),
+    });
+
+    meter.record({
+      statusCode: 200,
+      latencyMs: 50,
+      requestBytes: 10,
+      responseBytes: 100,
+    });
+    meter.record({
+      statusCode: 503,
+      latencyMs: 300,
+      requestBytes: 20,
+      responseBytes: 30,
+    });
+
+    const snapshot = meter.snapshot();
+    expect(snapshot.successCount).toBe(1);
+    expect(snapshot.failureCount).toBe(1);
+    expect(snapshot.totalBytes).toBe(160);
+    expect(snapshot.medianLatencyMs).toBe(50);
+    expect(snapshot.p99LatencyMs).toBe(300);
+
+    const report = meter.toHealthMetricReport(true);
+    expect(report.listingIdOrSlug).toBe("my-test-api");
+    expect(report.successCount).toBe(1);
+    expect(report.failureCount).toBe(1);
+    expect(report.totalMinutes).toBe(5);
+  });
+
+  it("records Node-style middleware observations on response finish", () => {
+    const meter = new UsageMeter({ listingIdOrSlug: "my-test-api" });
+    let finishHandler: (() => void) | undefined;
+    const req = {
+      headers: {
+        "content-length": "12",
+      },
+    };
+    const res = {
+      statusCode: 201,
+      getHeader: (name: string) => (name === "content-length" ? "34" : undefined),
+      once: (_event: "finish", listener: () => void) => {
+        finishHandler = listener;
+      },
+    };
+
+    const middleware = createNodeMeteringMiddleware(meter, {
+      listingIdOrSlug: "my-test-api",
+      operationId: "create-item",
+    });
+    let nextCalled = false;
+
+    middleware(req, res, () => {
+      nextCalled = true;
+    });
+    finishHandler?.();
+
+    expect(nextCalled).toBe(true);
+    const snapshot = meter.snapshot();
+    expect(snapshot.successCount).toBe(1);
+    expect(snapshot.requestBytes).toBe(12);
+    expect(snapshot.responseBytes).toBe(34);
+  });
+});
 
 describe("Webhook Signature Verification", () => {
   const secret = "test-secret-key-that-is-at-least-32-chars-long!!";

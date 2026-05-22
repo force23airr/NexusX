@@ -9,6 +9,7 @@
 
 // ─── Provider Client ───
 export { NexusXProvider } from "./provider/client";
+export { UsageMeter, createNodeMeteringMiddleware } from "./provider/metering";
 
 // ─── Webhook Utilities ───
 export {
@@ -37,6 +38,10 @@ export type {
   // Health
   HealthMetricReport,
   HealthReporterConfig,
+  UsageMeteredEvent,
+  UsageMeterSnapshot,
+  UsageMeterOptions,
+  NodeMeteringMiddlewareOptions,
   // Webhooks
   WebhookEventType,
   RegisterWebhookInput,
