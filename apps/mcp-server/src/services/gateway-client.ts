@@ -224,7 +224,7 @@ export class GatewayClient {
       const failureClass = readOptionalString(response.headers.get("x-nexusx-failure-class"));
       const retryable = parseBooleanHeader(response.headers.get("x-nexusx-retryable"));
       const billingDecisionHeader = response.headers.get("x-nexusx-billing-decision");
-      const billingDecision =
+      const billingDecision: ToolExecutionResult["billingDecision"] =
         billingDecisionHeader === "not_charged" ||
         billingDecisionHeader === "charged" ||
         billingDecisionHeader === "charged_pending_settlement" ||

@@ -98,6 +98,8 @@ export async function createMcpServer(
     name: "nexusx",
     version: "1.0.0",
   });
+  const registerTool = server.tool.bind(server) as any;
+  const registerPrompt = server.prompt.bind(server) as any;
 
   // ─── Initialize ───
   await registry.initialize();
@@ -120,7 +122,7 @@ export async function createMcpServer(
   // ─── Register Dynamic Tools ───
   // Register each discovered listing as an MCP tool
   for (const tool of registry.getAllTools()) {
-    server.tool(
+    registerTool(
       tool.toolName,
       tool.description,
       {
@@ -132,7 +134,7 @@ export async function createMcpServer(
         fail_fast: z.boolean().optional().describe("Bundle tools only: stop immediately when a step fails (default true)."),
         return_intermediate: z.boolean().optional().describe("Bundle tools only: include intermediate step outputs."),
       },
-      async (args) => {
+      async (args: Record<string, unknown>) => {
         return executor.execute(tool.toolName, args);
       },
     );
@@ -147,7 +149,7 @@ export async function createMcpServer(
     orchestrator.setCdpWallet(cdpWallet);
   }
 
-  server.tool(
+  registerTool(
     "nexusx",
     "NexusX AI API Orchestrator — describe what you need in natural language and I'll select the optimal API(s), chain them if needed, and return the result. Handles payment automatically. Examples: \"translate this to French\", \"analyze the sentiment of this text\", \"translate to Spanish then analyze sentiment\", \"generate embeddings for this text\".",
     {
@@ -156,7 +158,7 @@ export async function createMcpServer(
       budget_max_usdc: z.number().optional().describe("Maximum USDC to spend on this task"),
       priority_mode: z.enum(["frugal", "balanced", "mission_critical"]).optional().describe("API selection priority: frugal (cheapest), balanced (price × quality), mission_critical (best quality)"),
     },
-    async (args) => orchestrator.execute(args as any),
+    async (args: Record<string, unknown>) => orchestrator.execute(args as any),
   );
 
   // ─── Register Resources ───
@@ -252,15 +254,15 @@ export async function createMcpServer(
   // ─── Register Prompts ───
 
   const setBudgetHandler = createSetBudgetHandler(budget);
-  server.prompt(
+  registerPrompt(
     "nexusx_set_budget",
     "Set a spending limit for this session in USDC. Use 0 for unlimited.",
     { limit_usdc: z.string().describe("Budget limit in USDC (e.g., '1.00'). Use '0' for unlimited.") },
-    (args) => setBudgetHandler(args),
+    (args: { limit_usdc: string }) => setBudgetHandler(args),
   );
 
   const budgetStatusHandler = createBudgetStatusHandler(budget);
-  server.prompt(
+  registerPrompt(
     "nexusx_budget_status",
     "View your current session budget, spending, and recent API calls.",
     {},
@@ -268,37 +270,37 @@ export async function createMcpServer(
   );
 
   const priceCheckHandler = createPriceCheckHandler(gateway, budget);
-  server.prompt(
+  registerPrompt(
     "nexusx_price_check",
     "Check the current price and fee breakdown for an API listing.",
     { listing: z.string().describe("Listing slug (e.g., 'openai-gpt4-turbo')") },
-    async (args) => priceCheckHandler(args),
+    async (args: { listing: string }) => priceCheckHandler(args),
   );
 
   const findApiHandler = createFindApiHandler(discovery);
-  server.prompt(
+  registerPrompt(
     "nexusx_find_api",
     "Search for APIs on the NexusX marketplace by describing what you need.",
     {
       query: z.string().describe("Natural language search query (e.g., 'translation API with low latency')"),
       budget_max_usdc: z.string().optional().describe("Maximum price per call in USDC (e.g., '0.01')"),
     },
-    async (args) => findApiHandler(args),
+    async (args: { query: string; budget_max_usdc?: string }) => findApiHandler(args),
   );
 
   const priceTrajectoryHandler = createPriceTrajectoryHandler(priceSubscriber, budget);
-  server.prompt(
+  registerPrompt(
     "nexusx_price_trajectory",
     "Analyze the price trajectory for an API listing. Returns multiplier breakdown, demand trends, and a recommendation on whether to execute now or wait for a better price.",
     {
       slug: z.string().describe("Listing slug (e.g., 'openai-gpt4-turbo')"),
       budget_max_usdc: z.string().optional().describe("Your maximum acceptable price per call in USDC (e.g., '0.01')"),
     },
-    async (args) => priceTrajectoryHandler(args),
+    async (args: { slug: string; budget_max_usdc?: string }) => priceTrajectoryHandler(args),
   );
 
   const compareToolsHandler = createCompareToolsHandler(discovery, gateway);
-  server.prompt(
+  registerPrompt(
     "nexusx_compare_tools",
     "Compare tools by category or search query. Returns a ranked table combining price and live reliability scores to find the best option.",
     {
@@ -306,7 +308,11 @@ export async function createMcpServer(
       budget_max_usdc: z.string().optional().describe("Maximum price per call in USDC (e.g., '0.01')"),
       priority_mode: z.enum(["frugal", "balanced", "mission_critical"]).optional().describe("Ranking priority: 'frugal' favours cheapest, 'balanced' is default, 'mission_critical' favours highest quality"),
     },
-    async (args) => compareToolsHandler(args),
+    async (args: {
+      category_or_query: string;
+      budget_max_usdc?: string;
+      priority_mode?: string;
+    }) => compareToolsHandler(args),
   );
 
   // ─── Cleanup ───
