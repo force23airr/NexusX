@@ -7,7 +7,7 @@
   "types": "src/index.ts",
   "scripts": {
     "build": "tsc",
-    "test": "jest",
+    "test": "vitest run",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
@@ -23,8 +23,6 @@
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "jest": "^29.7.0",
-    "ts-jest": "^29.2.0",
     "typescript": "^5.6.0"
   }
 }
