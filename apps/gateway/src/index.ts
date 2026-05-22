@@ -22,6 +22,7 @@ import type { GatewayDependencies } from "./server";
 import type { BundleSessionFinalizeResult, BundleSessionRecord } from "./types";
 import { PriceWebSocketServer } from "./services/priceWebSocket";
 import { persistX402ExecutionRecord } from "./services/x402ExecutionLedger";
+import { decodeReceiptSigningPrivateKey } from "./services/executionReceiptSigner";
 
 const prisma = new PrismaClient();
 
@@ -587,6 +588,11 @@ startGateway(deps, {
   paymentAbuseThreshold: parseInt(process.env.PAYMENT_ABUSE_THRESHOLD || "4", 10),
   paymentAbuseWindowMs: parseInt(process.env.PAYMENT_ABUSE_WINDOW_MS || "600000", 10),
   paymentAbuseBlockMs: parseInt(process.env.PAYMENT_ABUSE_BLOCK_MS || "1800000", 10),
+  receiptSigningEnabled: process.env.NEXUSX_RECEIPT_SIGNING_ENABLED === "true",
+  receiptSignerId: process.env.NEXUSX_RECEIPT_SIGNER_ID || "nexusx-gateway",
+  receiptSigningPrivateKeyPem: decodeReceiptSigningPrivateKey(
+    process.env.NEXUSX_RECEIPT_SIGNING_PRIVATE_KEY || "",
+  ),
 }, priceWs);
 
 async function loadFinalizedResult(

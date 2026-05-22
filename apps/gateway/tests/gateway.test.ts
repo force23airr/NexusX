@@ -7,7 +7,7 @@
 // running server — tests Express middleware and services.
 // ═══════════════════════════════════════════════════════════════
 
-import { createHash, randomUUID } from "crypto";
+import { createHash, generateKeyPairSync, randomUUID } from "crypto";
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import request from "supertest";
 import { createGatewayApp, type GatewayDependencies } from "../src/server";
@@ -992,6 +992,54 @@ describe("Proxy Bundle Billing", () => {
     expect(res.headers["x-nexusx-failure-class"]).toBe("none");
     expect(res.headers["x-nexusx-retryable"]).toBe("false");
     expect(res.headers["x-nexusx-billing-decision"]).toBe("deferred_bundle");
+
+    cleanup();
+  });
+
+  it("signs execution receipts when receipt signing is enabled", async () => {
+    const { privateKey } = generateKeyPairSync("ed25519");
+    const privateKeyPem = privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+    const { rawKey, keyHash } = generateApiKey();
+    const { deps, receipts } = createMockDeps({
+      lookupApiKey: async (prefix) => {
+        if (prefix !== rawKey.slice(4, 12)) return null;
+        return {
+          id: "key_001",
+          userId: "usr_001",
+          keyHash,
+          status: "ACTIVE",
+          rateLimitRpm: 60,
+          allowedIps: [],
+          expiresAt: null,
+          walletAddress: "0xBuyerWallet",
+        };
+      },
+    });
+
+    const { app, cleanup } = createGatewayApp(deps, {
+      receiptSigningEnabled: true,
+      receiptSignerId: "gateway-test",
+      receiptSigningPrivateKeyPem: privateKeyPem,
+    });
+
+    const res = await request(app)
+      .post("/v1/test-api/echo")
+      .set("Authorization", `Bearer ${rawKey}`)
+      .send({ hello: "world" });
+
+    expect(res.status).toBe(200);
+    expect(res.headers["x-nexusx-response-hash"]).toHaveLength(64);
+    expect(res.headers["x-nexusx-receipt-payload-hash"]).toHaveLength(64);
+    expect(res.headers["x-nexusx-receipt-signature"]).toBeTruthy();
+    expect(res.headers["x-nexusx-receipt-signer"]).toBe("gateway-test");
+    expect(res.headers["x-nexusx-receipt-signature-alg"]).toBe("ed25519");
+
+    expect(receipts).toHaveLength(1);
+    const signature = receipts[0].metadata?.receiptSignature as Record<string, unknown>;
+    expect(signature.signer).toBe("gateway-test");
+    expect(signature.responseHash).toBe(res.headers["x-nexusx-response-hash"]);
+    expect(signature.payloadHash).toBe(res.headers["x-nexusx-receipt-payload-hash"]);
+    expect(signature.signature).toBe(res.headers["x-nexusx-receipt-signature"]);
 
     cleanup();
   });

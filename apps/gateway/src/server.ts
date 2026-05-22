@@ -23,6 +23,7 @@ import { PriceWebSocketServer } from "./services/priceWebSocket";
 import { ReliabilityAggregator } from "./services/reliability-aggregator";
 import { CircuitBreakerService } from "./services/circuitBreaker";
 import { AbuseMonitor } from "./services/abuseMonitor";
+import { ExecutionReceiptSigner } from "./services/executionReceiptSigner";
 import { createProxyRoute, extractListingSlug } from "./routes/proxy";
 import { createBundleSessionRoutes } from "./routes/bundle-sessions";
 import { createHealthRoutes } from "./routes/health";
@@ -182,6 +183,13 @@ export function createGatewayApp(
       await deps.bumpListingDegradationVersion();
     }
   });
+  const receiptSigner =
+    cfg.receiptSigningEnabled && cfg.receiptSigningPrivateKeyPem
+      ? new ExecutionReceiptSigner({
+          privateKeyPem: cfg.receiptSigningPrivateKeyPem,
+          signerId: cfg.receiptSignerId,
+        })
+      : undefined;
 
   // ─── Public routes (no auth) ───
   app.use(
@@ -255,6 +263,9 @@ export function createGatewayApp(
     persistTransaction: deps.persistTransaction,
     persistX402Execution: deps.persistX402Execution,
     persistExecutionReceipt: deps.persistExecutionReceipt,
+    signExecutionReceipt: receiptSigner
+      ? (input) => receiptSigner.sign(input)
+      : undefined,
     markQuerySelection: deps.markQuerySelection,
   });
 
@@ -340,6 +351,9 @@ export function startGateway(
     console.log(`[Gateway] Upstream timeout: ${cfg.upstreamTimeoutMs}ms`);
     console.log(`[Gateway] Route cache TTL: ${cfg.routeCacheTtlMs}ms`);
     console.log(`[Gateway] x402 enabled: ${cfg.x402Enabled}`);
+    console.log(
+      `[Gateway] Receipt signing: ${cfg.receiptSigningEnabled && cfg.receiptSigningPrivateKeyPem ? "enabled" : "disabled"}`,
+    );
     console.log(
       `[Gateway] Circuit breaker: ${cfg.circuitBreakerEnabled ? "enabled" : "disabled"} ` +
       `(threshold=${cfg.circuitBreakerFailureThreshold}, cooldown=${cfg.circuitBreakerCooldownMs}ms)`,

@@ -19,9 +19,11 @@ import type {
   TransactionRecord,
   X402ExecutionRecord,
   ExecutionReceiptRecord,
+  ExecutionReceiptSignatureInput,
   GatewayConfig,
   PersistedExecutionReceiptRef,
   ProxyResult,
+  SignedExecutionReceipt,
 } from "../types";
 import type { RouteResolver } from "../services/routeResolver";
 import type { ProxyService } from "../services/proxyService";
@@ -57,6 +59,8 @@ export interface ProxyRouteConfig {
   persistX402Execution?: (record: X402ExecutionRecord) => Promise<void>;
   /** Persist canonical execution receipts for agent-visible call tracing. */
   persistExecutionReceipt?: (record: ExecutionReceiptRecord) => Promise<PersistedExecutionReceiptRef>;
+  /** Sign execution receipts for independent agent-side verification. */
+  signExecutionReceipt?: (input: ExecutionReceiptSignatureInput) => SignedExecutionReceipt | null;
   /** Mark a discovery query as converted once execution reaches the provider. */
   markQuerySelection?: (input: {
     queryLogId: string;
@@ -155,6 +159,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       failureClass: FailureClass;
       retryable: boolean;
       billingDecision: BillingDecision;
+      receiptSignature?: SignedExecutionReceipt | null;
     },
   ): void {
     if (input.receiptId) {
@@ -207,6 +212,33 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
     res.setHeader("X-NexusX-Failure-Class", input.failureClass);
     res.setHeader("X-NexusX-Retryable", input.retryable ? "true" : "false");
     res.setHeader("X-NexusX-Billing-Decision", input.billingDecision);
+    if (input.receiptSignature) {
+      res.setHeader("X-NexusX-Response-Hash", input.receiptSignature.responseHash);
+      res.setHeader("X-NexusX-Receipt-Payload-Hash", input.receiptSignature.payloadHash);
+      res.setHeader("X-NexusX-Receipt-Signature", input.receiptSignature.signature);
+      res.setHeader("X-NexusX-Receipt-Signer", input.receiptSignature.signer);
+      res.setHeader("X-NexusX-Receipt-Signature-Alg", input.receiptSignature.algorithm);
+    }
+  }
+
+  function signReceipt(
+    input: Omit<ExecutionReceiptSignatureInput, "responseBody"> & {
+      responseBody: Buffer;
+    },
+  ): SignedExecutionReceipt | null {
+    if (!config.signExecutionReceipt) {
+      return null;
+    }
+
+    try {
+      return config.signExecutionReceipt(input);
+    } catch (err) {
+      console.error("[Proxy] Execution receipt signing error:", err, {
+        requestId: input.requestId,
+        listingSlug: input.listingSlug,
+      });
+      return null;
+    }
   }
 
   function listingUnavailableFailureClass(status: string): FailureClass {
@@ -1033,6 +1065,25 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       billingMode,
       settlementStatus,
     });
+    const receiptSignature = signReceipt({
+      requestId: ctx.requestId,
+      listingId: route.listingId,
+      listingSlug,
+      authMode: ctx.authMode === "x402" ? "X402" : "API_KEY",
+      billingMode,
+      outcome: receiptOutcome,
+      settlementStatus,
+      quotedPriceUsdc,
+      chargedPriceUsdc,
+      platformFeeUsdc,
+      providerAmountUsdc,
+      httpStatus: proxyResult.statusCode,
+      upstreamStatus: proxyResult.statusCode,
+      latencyMs: proxyResult.latencyMs,
+      bytesTransferred: proxyResult.bytesTransferred,
+      txHash: ctx.x402?.txHash ?? null,
+      responseBody: proxyResult.body,
+    });
     const receipt = await persistReceipt({
       ...buildBaseReceipt(
         ctx,
@@ -1070,6 +1121,19 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
         failureClass: failureContract.failureClass,
         retryable: failureContract.retryable,
         billingDecision: failureContract.billingDecision,
+        ...(receiptSignature
+          ? {
+              receiptSignature: {
+                version: receiptSignature.version,
+                algorithm: receiptSignature.algorithm,
+                signer: receiptSignature.signer,
+                responseHash: receiptSignature.responseHash,
+                payloadHash: receiptSignature.payloadHash,
+                signature: receiptSignature.signature,
+                payload: receiptSignature.payload,
+              },
+            }
+          : {}),
       },
     });
 
@@ -1104,6 +1168,7 @@ export function createProxyRoute(config: ProxyRouteConfig): Router {
       failureClass: failureContract.failureClass,
       retryable: failureContract.retryable,
       billingDecision: failureContract.billingDecision,
+      receiptSignature,
     });
 
     res.status(proxyResult.statusCode).send(proxyResult.body);

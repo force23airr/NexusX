@@ -139,6 +139,36 @@ export interface PersistedExecutionReceiptRef {
   requestId: string;
 }
 
+export interface ExecutionReceiptSignatureInput {
+  requestId: string;
+  listingId?: string | null;
+  listingSlug: string;
+  authMode: "API_KEY" | "X402";
+  billingMode: "INDIVIDUAL" | "BUNDLE_STEP";
+  outcome: ExecutionReceiptOutcome;
+  settlementStatus: ExecutionReceiptSettlementStatus;
+  quotedPriceUsdc: number;
+  chargedPriceUsdc: number;
+  platformFeeUsdc: number;
+  providerAmountUsdc: number;
+  httpStatus: number;
+  upstreamStatus?: number | null;
+  latencyMs: number;
+  bytesTransferred?: number | null;
+  txHash?: string | null;
+  responseBody: Buffer;
+}
+
+export interface SignedExecutionReceipt {
+  version: 1;
+  algorithm: "ed25519";
+  signer: string;
+  responseHash: string;
+  payloadHash: string;
+  signature: string;
+  payload: Record<string, unknown>;
+}
+
 /** Resolved listing details for proxying. */
 export interface ListingRoute {
   listingId: string;
@@ -317,6 +347,12 @@ export interface GatewayConfig {
   paymentAbuseWindowMs: number;
   /** Payment abuse block duration in milliseconds. */
   paymentAbuseBlockMs: number;
+  /** Whether to sign execution receipts for agent-side verification. */
+  receiptSigningEnabled: boolean;
+  /** Stable signer identifier exposed in receipt headers. */
+  receiptSignerId: string;
+  /** PEM-encoded Ed25519 private key used to sign receipt payload hashes. */
+  receiptSigningPrivateKeyPem: string;
 }
 
 export const DEFAULT_GATEWAY_CONFIG: GatewayConfig = {
@@ -343,4 +379,7 @@ export const DEFAULT_GATEWAY_CONFIG: GatewayConfig = {
   paymentAbuseThreshold: 4,
   paymentAbuseWindowMs: 10 * 60 * 1000,
   paymentAbuseBlockMs: 30 * 60 * 1000,
+  receiptSigningEnabled: false,
+  receiptSignerId: "nexusx-gateway",
+  receiptSigningPrivateKeyPem: "",
 };
