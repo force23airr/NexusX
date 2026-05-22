@@ -18,6 +18,7 @@ import type { ToolExecutor, ToolCallResult } from "../tools/executor";
 import type { DiscoveryService } from "./discovery";
 import type { ToolRegistry } from "../tools/registry";
 import type { CdpWalletService } from "./cdp-wallet";
+import type { BudgetTracker } from "./budget-tracker";
 import type { DiscoveredListing, X402PaymentRequirements } from "../types";
 
 // ─────────────────────────────────────────────────────────────
@@ -107,6 +108,7 @@ export class OrchestratorService {
     private executor: ToolExecutor,
     private discovery: DiscoveryService,
     private registry: ToolRegistry,
+    private budget: BudgetTracker,
   ) {}
 
   /** Inject CDP wallet for direct external Bazaar calls. */
@@ -486,12 +488,16 @@ export class OrchestratorService {
         if (requirements && Array.isArray(requirements) && requirements.length > 0) {
           try {
             const quotePriceUsdc = x402AtomicToUsdc(requirements[0].maxAmountRequired);
-            const policyRejection = getExternalPaymentPolicyRejection(quotePriceUsdc, policy);
-            if (policyRejection) {
+            const policyResult = this.budget.checkQuote({
+              quotePriceUsdc,
+              expectedPriceUsdc: policy.expectedPriceUsdc,
+              maxQuoteUsdc: policy.maxQuoteUsdc,
+            });
+            if (!policyResult.allowed) {
               return {
                 content: [{
                   type: "text",
-                  text: `Payment policy rejected Bazaar service ${listing.slug}: ${policyRejection}`,
+                  text: `Payment policy rejected Bazaar service ${listing.slug}: ${policyResult.reason ?? "live x402 quote violates spending policy."}`,
                 }],
                 isError: true,
               };
@@ -667,37 +673,4 @@ function x402AtomicToUsdc(maxAmountRequired: string): number {
   } catch {
     return Number.NaN;
   }
-}
-
-function getExternalPaymentPolicyRejection(
-  quotePriceUsdc: number,
-  policy: { expectedPriceUsdc?: number; maxQuoteUsdc?: number },
-): string | null {
-  if (!Number.isFinite(quotePriceUsdc) || quotePriceUsdc < 0) {
-    return "live x402 quote is malformed.";
-  }
-
-  if (
-    typeof policy.maxQuoteUsdc === "number" &&
-    policy.maxQuoteUsdc > 0 &&
-    quotePriceUsdc > policy.maxQuoteUsdc + 0.0000005
-  ) {
-    return (
-      `live quote $${quotePriceUsdc.toFixed(6)} USDC exceeds remaining task budget ` +
-      `$${policy.maxQuoteUsdc.toFixed(6)} USDC.`
-    );
-  }
-
-  if (
-    typeof policy.expectedPriceUsdc === "number" &&
-    policy.expectedPriceUsdc > 0 &&
-    quotePriceUsdc > policy.expectedPriceUsdc * 1.25 + 0.0000005
-  ) {
-    return (
-      `live quote $${quotePriceUsdc.toFixed(6)} USDC exceeds expected ` +
-      `$${policy.expectedPriceUsdc.toFixed(6)} USDC by more than 25%.`
-    );
-  }
-
-  return null;
 }

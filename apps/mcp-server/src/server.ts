@@ -142,7 +142,7 @@ export async function createMcpServer(
   // The `nexusx` tool is the single entry point for any agent.
   // It interprets natural language tasks, selects optimal APIs,
   // chains them if needed, and handles payment automatically.
-  const orchestrator = new OrchestratorService(executor, discovery, registry);
+  const orchestrator = new OrchestratorService(executor, discovery, registry, budget);
   if (cdpWallet) {
     orchestrator.setCdpWallet(cdpWallet);
   }
